@@ -1,31 +1,24 @@
 import type {
   AttachmentMeta,
-  AuthContext,
+  Caller,
   EmailAddress,
   ListMessagesQuery,
-  Message,
-  MessageRepositoryPort,
+  MessageRepository,
   MessageSummary,
   Page,
   RfcMessageId,
   ThreadId,
   Ulid,
 } from "@mailworker/core";
-import { Message as MessageVO, PREVIEW_SOURCE_LENGTH } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1";
-import {
-  afterCursor,
-  pageLimit,
-  toDate,
-  toIsoText,
-  toPage,
-} from "@web/workers/infrastructure/d1";
-import type { AttachmentRow, MessageRow } from "@web/workers/infrastructure/schema";
-import { attachments, messages } from "@web/workers/infrastructure/schema";
+import { Message, PREVIEW_SOURCE_LENGTH } from "@mailworker/core";
+import type { Db } from "@web/workers/adapters/d1";
+import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
+import type { AttachmentRow, MessageRow } from "@web/workers/adapters/schema";
+import { attachments, messages } from "@web/workers/adapters/schema";
 import type { SQL } from "drizzle-orm";
 import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 
-export class D1Messages implements MessageRepositoryPort {
+export class D1Messages implements MessageRepository {
   constructor(private readonly db: Db) {}
 
   /**
@@ -38,7 +31,7 @@ export class D1Messages implements MessageRepositoryPort {
    *
    * A duplicate is not an error. It is ordinary traffic.
    */
-  async insert(ctx: AuthContext, message: Message): Promise<{ stored: boolean }> {
+  async insert(ctx: Caller, message: Message): Promise<{ stored: boolean }> {
     const inserted = await this.db
       .insert(messages)
       .values(toRow(ctx, message))
@@ -61,7 +54,7 @@ export class D1Messages implements MessageRepositoryPort {
     return { stored: true };
   }
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<Message | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<Message | null> {
     const [row] = await this.db
       .select()
       .from(messages)
@@ -71,7 +64,7 @@ export class D1Messages implements MessageRepositoryPort {
     return toMessage(row, await this.attachmentsFor(ctx, [id]));
   }
 
-  async findByRfcMessageId(ctx: AuthContext, rfcId: RfcMessageId): Promise<Message | null> {
+  async findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null> {
     const [row] = await this.db
       .select()
       .from(messages)
@@ -89,7 +82,7 @@ export class D1Messages implements MessageRepositoryPort {
    * inbound path. Returning the map lets `ThreadingPolicy` stay a pure function.
    */
   async findThreadIds(
-    ctx: AuthContext,
+    ctx: Caller,
     rfcIds: readonly RfcMessageId[],
   ): Promise<ReadonlyMap<string, ThreadId>> {
     if (rfcIds.length === 0) return new Map();
@@ -110,7 +103,7 @@ export class D1Messages implements MessageRepositoryPort {
    * megabytes of mail those fifty happen to be. The domain declares the bound so
    * the in-memory store truncates identically and the two agree exactly.
    */
-  async list(ctx: AuthContext, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
+  async list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
     const limit = pageLimit(query);
     const rows = await this.db
       .select({
@@ -147,14 +140,14 @@ export class D1Messages implements MessageRepositoryPort {
         attachmentCount: Number(r.attachmentCount),
         hasText: Boolean(r.hasText),
         hasHtml: Boolean(r.hasHtml),
-        preview: MessageVO.previewFrom(r.previewSource),
+        preview: Message.previewFrom(r.previewSource),
       }),
     );
     return toPage(items, limit);
   }
 
   /** Ascending: a thread reads oldest first, unlike every other listing. */
-  async listThread(ctx: AuthContext, threadId: ThreadId): Promise<Message[]> {
+  async listThread(ctx: Caller, threadId: ThreadId): Promise<Message[]> {
     const rows = await this.db
       .select()
       .from(messages)
@@ -167,7 +160,7 @@ export class D1Messages implements MessageRepositoryPort {
     return rows.map((row) => toMessage(row, byMessage));
   }
 
-  async setSeen(ctx: AuthContext, id: Ulid, seen: boolean): Promise<void> {
+  async setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void> {
     await this.db
       .update(messages)
       .set({ seen })
@@ -182,7 +175,7 @@ export class D1Messages implements MessageRepositoryPort {
    * `notbob@corp.com` and quietly throttle sends to an innocent recipient.
    */
   async countSentBetween(
-    ctx: AuthContext,
+    ctx: Caller,
     from: EmailAddress,
     to: EmailAddress,
     since: Date,
@@ -209,7 +202,7 @@ export class D1Messages implements MessageRepositoryPort {
    * blobs after. A blob whose row is gone is an orphan the sweeper collects; a
    * row whose blob is gone is a message that renders as an error forever.
    */
-  async deleteByInbox(ctx: AuthContext, inboxId: Ulid): Promise<{ storageKeys: string[] }> {
+  async deleteByInbox(ctx: Caller, inboxId: Ulid): Promise<{ storageKeys: string[] }> {
     const doomed = await this.db
       .select({ id: messages.id, rawKey: messages.rawKey })
       .from(messages)
@@ -244,7 +237,7 @@ export class D1Messages implements MessageRepositoryPort {
   }
 
   private async attachmentsFor(
-    ctx: AuthContext,
+    ctx: Caller,
     messageIds: readonly Ulid[],
   ): Promise<Map<string, AttachmentMeta[]>> {
     const byMessage = new Map<string, AttachmentMeta[]>();
@@ -305,7 +298,7 @@ export function fullTextFilter(q: string): SQL {
   )`;
 }
 
-function toRow(ctx: AuthContext, message: Message): typeof messages.$inferInsert {
+function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {
   return {
     id: message.id,
     accountId: ctx.accountId,
@@ -390,7 +383,7 @@ export function toMessage(row: MessageRow, byMessage: Map<string, AttachmentMeta
 }
 
 function toAttachmentRow(
-  ctx: AuthContext,
+  ctx: Caller,
   messageId: Ulid,
   attachment: AttachmentMeta,
 ): typeof attachments.$inferInsert {

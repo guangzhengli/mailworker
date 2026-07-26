@@ -1,22 +1,18 @@
 import type {
   AgentIdentity,
   ApiKey,
-  ApiKeyRepositoryPort,
-  AuthContext,
-  DomainRepositoryPort,
+  ApiKeyRepository,
+  Caller,
+  DomainRepository,
   DomainRouting,
-  IdentityRepositoryPort,
+  IdentityRepository,
   Scope,
   Ulid,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1";
-import { toDate, toIsoText } from "@web/workers/infrastructure/d1";
-import type {
-  AgentIdentityRow,
-  ApiKeyRow,
-  DomainRow,
-} from "@web/workers/infrastructure/schema";
-import { agentIdentities, apiKeys, domains } from "@web/workers/infrastructure/schema";
+import type { Db } from "@web/workers/adapters/d1";
+import { toDate, toIsoText } from "@web/workers/adapters/d1";
+import type { AgentIdentityRow, ApiKeyRow, DomainRow } from "@web/workers/adapters/schema";
+import { agentIdentities, apiKeys, domains } from "@web/workers/adapters/schema";
 import { and, asc, eq } from "drizzle-orm";
 
 /**
@@ -25,10 +21,10 @@ import { and, asc, eq } from "drizzle-orm";
  * than a few queries. Three files here would be three imports and no clarity.
  */
 
-export class D1Identities implements IdentityRepositoryPort {
+export class D1Identities implements IdentityRepository {
   constructor(private readonly db: Db) {}
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<AgentIdentity | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<AgentIdentity | null> {
     const [row] = await this.db
       .select()
       .from(agentIdentities)
@@ -37,7 +33,7 @@ export class D1Identities implements IdentityRepositoryPort {
     return row === undefined ? null : toIdentity(row);
   }
 
-  async findByName(ctx: AuthContext, name: string): Promise<AgentIdentity | null> {
+  async findByName(ctx: Caller, name: string): Promise<AgentIdentity | null> {
     const [row] = await this.db
       .select()
       .from(agentIdentities)
@@ -46,7 +42,7 @@ export class D1Identities implements IdentityRepositoryPort {
     return row === undefined ? null : toIdentity(row);
   }
 
-  async insert(ctx: AuthContext, identity: AgentIdentity): Promise<void> {
+  async insert(ctx: Caller, identity: AgentIdentity): Promise<void> {
     await this.db.insert(agentIdentities).values({
       id: identity.id,
       accountId: ctx.accountId,
@@ -60,7 +56,7 @@ export class D1Identities implements IdentityRepositoryPort {
     });
   }
 
-  async list(ctx: AuthContext): Promise<AgentIdentity[]> {
+  async list(ctx: Caller): Promise<AgentIdentity[]> {
     const rows = await this.db
       .select()
       .from(agentIdentities)
@@ -70,12 +66,12 @@ export class D1Identities implements IdentityRepositoryPort {
   }
 }
 
-export class D1ApiKeys implements ApiKeyRepositoryPort {
+export class D1ApiKeys implements ApiKeyRepository {
   constructor(private readonly db: Db) {}
 
   /**
    * The one query in this package with no `account_id` filter, and the only one
-   * entitled to skip it: this is how an AuthContext comes into existence, so
+   * entitled to skip it: this is how an Caller comes into existence, so
    * there is no account known yet to scope by.
    *
    * That is why `prefix` carries a GLOBAL unique index rather than a per-account
@@ -93,11 +89,11 @@ export class D1ApiKeys implements ApiKeyRepositoryPort {
     return row === undefined ? null : toApiKey(row);
   }
 
-  async insert(ctx: AuthContext, key: ApiKey): Promise<void> {
+  async insert(ctx: Caller, key: ApiKey): Promise<void> {
     await this.db.insert(apiKeys).values(toApiKeyRow(ctx, key));
   }
 
-  async update(ctx: AuthContext, key: ApiKey): Promise<void> {
+  async update(ctx: Caller, key: ApiKey): Promise<void> {
     const { id: _id, accountId: _accountId, ...mutable } = toApiKeyRow(ctx, key);
     await this.db
       .update(apiKeys)
@@ -105,7 +101,7 @@ export class D1ApiKeys implements ApiKeyRepositoryPort {
       .where(and(eq(apiKeys.accountId, ctx.accountId), eq(apiKeys.id, key.id)));
   }
 
-  async list(ctx: AuthContext): Promise<ApiKey[]> {
+  async list(ctx: Caller): Promise<ApiKey[]> {
     const rows = await this.db
       .select()
       .from(apiKeys)
@@ -115,11 +111,11 @@ export class D1ApiKeys implements ApiKeyRepositoryPort {
   }
 }
 
-export class D1Domains implements DomainRepositoryPort {
+export class D1Domains implements DomainRepository {
   constructor(private readonly db: Db) {}
 
   /** Hostnames are compared lowercased; DNS is case-insensitive and callers are not. */
-  async findRouting(ctx: AuthContext, domain: string): Promise<DomainRouting | null> {
+  async findRouting(ctx: Caller, domain: string): Promise<DomainRouting | null> {
     const [row] = await this.db
       .select()
       .from(domains)
@@ -128,7 +124,7 @@ export class D1Domains implements DomainRepositoryPort {
     return row === undefined ? null : toRouting(row);
   }
 
-  async list(ctx: AuthContext): Promise<DomainRouting[]> {
+  async list(ctx: Caller): Promise<DomainRouting[]> {
     const rows = await this.db
       .select()
       .from(domains)
@@ -153,7 +149,7 @@ function toIdentity(row: AgentIdentityRow): AgentIdentity {
   };
 }
 
-function toApiKeyRow(ctx: AuthContext, key: ApiKey): typeof apiKeys.$inferInsert {
+function toApiKeyRow(ctx: Caller, key: ApiKey): typeof apiKeys.$inferInsert {
   return {
     id: key.id,
     accountId: ctx.accountId,

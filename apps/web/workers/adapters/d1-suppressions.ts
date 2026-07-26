@@ -1,16 +1,11 @@
-import type {
-  AuthContext,
-  EmailAddress,
-  SuppressionEntry,
-  SuppressionListPort,
-} from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1";
-import { toDate, toIsoText } from "@web/workers/infrastructure/d1";
-import type { SuppressionRow } from "@web/workers/infrastructure/schema";
-import { suppressions } from "@web/workers/infrastructure/schema";
+import type { Caller, EmailAddress, SuppressionEntry, SuppressionList } from "@mailworker/core";
+import type { Db } from "@web/workers/adapters/d1";
+import { toDate, toIsoText } from "@web/workers/adapters/d1";
+import type { SuppressionRow } from "@web/workers/adapters/schema";
+import { suppressions } from "@web/workers/adapters/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
-export class D1Suppressions implements SuppressionListPort {
+export class D1Suppressions implements SuppressionList {
   constructor(private readonly db: Db) {}
 
   /**
@@ -19,7 +14,7 @@ export class D1Suppressions implements SuppressionListPort {
    * between an agent and an irreversible action.
    */
   async filterSuppressed(
-    ctx: AuthContext,
+    ctx: Caller,
     addresses: readonly EmailAddress[],
   ): Promise<EmailAddress[]> {
     if (addresses.length === 0) return [];
@@ -45,7 +40,7 @@ export class D1Suppressions implements SuppressionListPort {
    * on Friday: the original reason is what explains why the address is here, and
    * that is the question anyone asking has.
    */
-  async add(ctx: AuthContext, entry: SuppressionEntry): Promise<void> {
+  async add(ctx: Caller, entry: SuppressionEntry): Promise<void> {
     await this.db
       .insert(suppressions)
       .values({
@@ -58,13 +53,13 @@ export class D1Suppressions implements SuppressionListPort {
       .onConflictDoNothing();
   }
 
-  async remove(ctx: AuthContext, address: EmailAddress): Promise<void> {
+  async remove(ctx: Caller, address: EmailAddress): Promise<void> {
     await this.db
       .delete(suppressions)
       .where(and(eq(suppressions.accountId, ctx.accountId), eq(suppressions.address, address)));
   }
 
-  async list(ctx: AuthContext): Promise<SuppressionEntry[]> {
+  async list(ctx: Caller): Promise<SuppressionEntry[]> {
     const rows = await this.db
       .select()
       .from(suppressions)

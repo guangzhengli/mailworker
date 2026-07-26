@@ -5,7 +5,7 @@ by the CLI, the SDK and the dashboard:
 
 - `fetch` — React Router SSR + Hono API under `/v1` — **not written yet**
 - `email` — inbound handler behind one catch-all Email Routing rule — **not written yet**
-- `queue` — outbound dispatch, Email Sending event subscriptions, webhooks — **not written yet**
+- `queue` — delivery dispatch, Email Sending event subscriptions, webhooks — **not written yet**
 - `scheduled` — retention sweep, suppression sync — **not written yet**
 
 **Built so far:** the D1 and R2 adapters for the storage ports declared in
@@ -17,7 +17,7 @@ NOT the marketing site — that is a separate repo (`../mailworker-web`).
 
 ## The schema
 
-`workers/infrastructure/schema.ts` is the source of truth. `drizzle-kit generate`
+`workers/adapters/schema.ts` is the source of truth. `drizzle-kit generate`
 turns it into `migrations/`, and `wrangler d1 migrations apply` runs them — the
 same command locally and remotely, which is also what `mailworker deploy` will
 call.
@@ -84,6 +84,6 @@ them.
 
 ## Layout
 
-`workers/infrastructure/` is flat, with a `d1-` / `r2-` prefix instead of a
+`workers/adapters/` is flat, with a `d1-` / `r2-` prefix instead of a
 folder per technology. The prefix already answers "which service is this", so a
 directory answering it again would only add a level to every path.

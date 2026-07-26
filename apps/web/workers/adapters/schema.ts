@@ -196,8 +196,8 @@ export const attachments = sqliteTable(
  * we query, count against quota and transition, so keeping it narrow keeps all
  * three cheap.
  */
-export const outboundMessages = sqliteTable(
-  "outbound_messages",
+export const deliveries = sqliteTable(
+  "deliveries",
   {
     id: id(),
     accountId: accountId(),
@@ -223,11 +223,11 @@ export const outboundMessages = sqliteTable(
   },
   (t) => [
     // A retried submission returns the original instead of sending twice.
-    uniqueIndex("uq_outbound_idempotency").on(t.accountId, t.idempotencyKey),
-    index("idx_outbound_status").on(t.accountId, t.status, t.createdAt),
+    uniqueIndex("uq_delivery_idempotency").on(t.accountId, t.idempotencyKey),
+    index("idx_delivery_status").on(t.accountId, t.status, t.createdAt),
     // How a provider delivery event finds the send it belongs to.
-    index("idx_outbound_provider_id").on(t.accountId, t.providerMsgId),
-    index("idx_outbound_quota").on(t.accountId, t.identityId, t.createdAt),
+    index("idx_delivery_provider_id").on(t.accountId, t.providerMsgId),
+    index("idx_delivery_quota").on(t.accountId, t.identityId, t.createdAt),
   ],
 );
 
@@ -243,7 +243,7 @@ export const deliveryEvents = sqliteTable(
   {
     id: id(),
     accountId: accountId(),
-    outboundId: text("outbound_id"),
+    deliveryId: text("delivery_id"),
     providerMsgId: text("provider_msg_id"),
     recipient: text("recipient"),
     /** delivered | deferred | bounced | failed | rejected | complained */
@@ -255,7 +255,7 @@ export const deliveryEvents = sqliteTable(
     /** The provider's original payload, verbatim, for forensics. */
     raw: text("raw"),
   },
-  (t) => [index("idx_events_outbound").on(t.accountId, t.outboundId, t.occurredAt)],
+  (t) => [index("idx_events_delivery").on(t.accountId, t.deliveryId, t.occurredAt)],
 );
 
 /**
@@ -342,7 +342,7 @@ export const webhooks = sqliteTable(
 export type InboxRow = typeof inboxes.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type AttachmentRow = typeof attachments.$inferSelect;
-export type OutboundRow = typeof outboundMessages.$inferSelect;
+export type DeliveryRow = typeof deliveries.$inferSelect;
 export type DeliveryEventRow = typeof deliveryEvents.$inferSelect;
 export type SuppressionRow = typeof suppressions.$inferSelect;
 export type AgentIdentityRow = typeof agentIdentities.$inferSelect;

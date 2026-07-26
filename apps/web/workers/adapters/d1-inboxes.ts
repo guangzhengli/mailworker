@@ -1,28 +1,22 @@
 import type {
-  AuthContext,
+  Caller,
   EmailAddress,
   Inbox,
-  InboxRepositoryPort,
+  InboxRepository,
   ListInboxesQuery,
   Page,
   Ulid,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1";
-import {
-  afterCursor,
-  pageLimit,
-  toDate,
-  toIsoText,
-  toPage,
-} from "@web/workers/infrastructure/d1";
-import type { InboxRow } from "@web/workers/infrastructure/schema";
-import { inboxes } from "@web/workers/infrastructure/schema";
+import type { Db } from "@web/workers/adapters/d1";
+import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
+import type { InboxRow } from "@web/workers/adapters/schema";
+import { inboxes } from "@web/workers/adapters/schema";
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 
-export class D1Inboxes implements InboxRepositoryPort {
+export class D1Inboxes implements InboxRepository {
   constructor(private readonly db: Db) {}
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<Inbox | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<Inbox | null> {
     const [row] = await this.db
       .select()
       .from(inboxes)
@@ -37,7 +31,7 @@ export class D1Inboxes implements InboxRepositoryPort {
    * into `MailboxAddress` is what keeps this a single indexed equality rather
    * than a pattern match.
    */
-  async findByAddress(ctx: AuthContext, address: EmailAddress): Promise<Inbox | null> {
+  async findByAddress(ctx: Caller, address: EmailAddress): Promise<Inbox | null> {
     const [row] = await this.db
       .select()
       .from(inboxes)
@@ -52,11 +46,11 @@ export class D1Inboxes implements InboxRepositoryPort {
     return row === undefined ? null : toInbox(row);
   }
 
-  async insert(ctx: AuthContext, inbox: Inbox): Promise<void> {
+  async insert(ctx: Caller, inbox: Inbox): Promise<void> {
     await this.db.insert(inboxes).values(toRow(ctx, inbox));
   }
 
-  async update(ctx: AuthContext, inbox: Inbox): Promise<void> {
+  async update(ctx: Caller, inbox: Inbox): Promise<void> {
     const { id: _id, accountId: _accountId, ...mutable } = toRow(ctx, inbox);
     await this.db
       .update(inboxes)
@@ -64,7 +58,7 @@ export class D1Inboxes implements InboxRepositoryPort {
       .where(and(eq(inboxes.accountId, ctx.accountId), eq(inboxes.id, inbox.id)));
   }
 
-  async list(ctx: AuthContext, query: ListInboxesQuery): Promise<Page<Inbox>> {
+  async list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>> {
     const limit = pageLimit(query);
     const rows = await this.db
       .select()
@@ -90,7 +84,7 @@ export class D1Inboxes implements InboxRepositoryPort {
   }
 
   /** Oldest expiry first — the retention sweep works through the backlog in order. */
-  async findExpired(ctx: AuthContext, expiredBefore: Date, limit: number): Promise<Inbox[]> {
+  async findExpired(ctx: Caller, expiredBefore: Date, limit: number): Promise<Inbox[]> {
     const rows = await this.db
       .select()
       .from(inboxes)
@@ -106,14 +100,14 @@ export class D1Inboxes implements InboxRepositoryPort {
     return rows.map(toInbox);
   }
 
-  async deleteById(ctx: AuthContext, id: Ulid): Promise<void> {
+  async deleteById(ctx: Caller, id: Ulid): Promise<void> {
     await this.db
       .delete(inboxes)
       .where(and(eq(inboxes.accountId, ctx.accountId), eq(inboxes.id, id)));
   }
 }
 
-function toRow(ctx: AuthContext, inbox: Inbox): typeof inboxes.$inferInsert {
+function toRow(ctx: Caller, inbox: Inbox): typeof inboxes.$inferInsert {
   return {
     id: inbox.id,
     // From the request-scoped context, never from the aggregate. An entity that

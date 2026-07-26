@@ -1,4 +1,4 @@
-import type { AuthContext, BlobMeta, BlobStorePort } from "@mailworker/core";
+import type { BlobMeta, BlobStore, Caller } from "@mailworker/core";
 
 /** R2 refuses a delete of more than a thousand keys in one call. */
 const MAX_DELETE_KEYS = 1000;
@@ -11,7 +11,7 @@ const MAX_DELETE_KEYS = 1000;
  * closed loop, so a strange production message becomes a regression test, and a
  * parser change can be replayed against everything ever received.
  */
-export class R2Blobs implements BlobStorePort {
+export class R2Blobs implements BlobStore {
   constructor(private readonly bucket: R2Bucket) {}
 
   /**
@@ -19,7 +19,7 @@ export class R2Blobs implements BlobStorePort {
    * one tenant's objects out of another's reach. `ctx` is still on the signature
    * so the port cannot be implemented by something that forgets to care.
    */
-  async put(ctx: AuthContext, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
+  async put(ctx: Caller, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
     assertOwned(ctx, key);
     await this.bucket.put(key, body, {
       httpMetadata: {
@@ -31,14 +31,14 @@ export class R2Blobs implements BlobStorePort {
     });
   }
 
-  async get(ctx: AuthContext, key: string): Promise<Uint8Array | null> {
+  async get(ctx: Caller, key: string): Promise<Uint8Array | null> {
     assertOwned(ctx, key);
     const object = await this.bucket.get(key);
     if (object === null) return null;
     return new Uint8Array(await object.arrayBuffer());
   }
 
-  async delete(ctx: AuthContext, keys: readonly string[]): Promise<void> {
+  async delete(ctx: Caller, keys: readonly string[]): Promise<void> {
     const owned = keys.filter((key) => isOwned(ctx, key));
     for (let i = 0; i < owned.length; i += MAX_DELETE_KEYS) {
       await this.bucket.delete(owned.slice(i, i + MAX_DELETE_KEYS));
@@ -46,7 +46,7 @@ export class R2Blobs implements BlobStorePort {
   }
 }
 
-function isOwned(ctx: AuthContext, key: string): boolean {
+function isOwned(ctx: Caller, key: string): boolean {
   // `raw/{account}/…`, `att/{account}/…`, `out/{account}/…`
   return key.split("/")[1] === ctx.accountId;
 }
@@ -60,7 +60,7 @@ function isOwned(ctx: AuthContext, key: string): boolean {
  * read another tenant's mail. Deletes filter instead of throwing, since a sweep
  * over a mixed key list should remove what it may and leave the rest.
  */
-function assertOwned(ctx: AuthContext, key: string): void {
+function assertOwned(ctx: Caller, key: string): void {
   if (!isOwned(ctx, key)) {
     throw new Error(`Blob key ${key} does not belong to account ${ctx.accountId}.`);
   }

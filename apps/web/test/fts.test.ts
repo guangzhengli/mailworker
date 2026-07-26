@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
-import type { AuthContext, Ulid } from "@mailworker/core";
+import type { Caller, Ulid } from "@mailworker/core";
 import { AccountId, EmailAddress, Message, RfcMessageId, ThreadId } from "@mailworker/core";
-import { createDb, D1Messages, schema } from "@web/workers/infrastructure";
+import { createDb, D1Messages, schema } from "@web/workers/adapters";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
  * deleted months ago.
  */
 
-const ctx: AuthContext = {
+const ctx: Caller = {
   accountId: AccountId.parse("alice"),
   identityId: null,
   scopes: ["admin"],
@@ -115,7 +115,7 @@ describe("messages_fts triggers", () => {
 
   it("keeps one account's mail out of another's search results", async () => {
     await messages.insert(ctx, aMessage("Invoice 4821", "Payment is overdue."));
-    const bob: AuthContext = { ...ctx, accountId: AccountId.parse("bob") };
+    const bob: Caller = { ...ctx, accountId: AccountId.parse("bob") };
 
     // FTS5 knows nothing about tenancy — the index spans every account. The
     // account filter lives in the outer query, which is exactly why this is

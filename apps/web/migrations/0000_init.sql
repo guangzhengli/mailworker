@@ -47,7 +47,7 @@ CREATE INDEX `idx_attachments_message` ON `attachments` (`account_id`,`message_i
 CREATE TABLE `delivery_events` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
-	`outbound_id` text,
+	`delivery_id` text,
 	`provider_msg_id` text,
 	`recipient` text,
 	`type` text NOT NULL,
@@ -58,7 +58,7 @@ CREATE TABLE `delivery_events` (
 	`raw` text
 );
 --> statement-breakpoint
-CREATE INDEX `idx_events_outbound` ON `delivery_events` (`account_id`,`outbound_id`,`occurred_at`);--> statement-breakpoint
+CREATE INDEX `idx_events_delivery` ON `delivery_events` (`account_id`,`delivery_id`,`occurred_at`);--> statement-breakpoint
 CREATE TABLE `domains` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -130,7 +130,7 @@ CREATE UNIQUE INDEX `uq_messages_account_rfc_id` ON `messages` (`account_id`,`rf
 CREATE INDEX `idx_messages_inbox` ON `messages` (`account_id`,`inbox_id`,`id`);--> statement-breakpoint
 CREATE INDEX `idx_messages_thread` ON `messages` (`account_id`,`thread_id`,`id`);--> statement-breakpoint
 CREATE INDEX `idx_messages_sent_between` ON `messages` (`account_id`,`direction`,`from_addr`,`received_at`);--> statement-breakpoint
-CREATE TABLE `outbound_messages` (
+CREATE TABLE `deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
 	`inbox_id` text,
@@ -151,10 +151,10 @@ CREATE TABLE `outbound_messages` (
 	`status_changed_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `uq_outbound_idempotency` ON `outbound_messages` (`account_id`,`idempotency_key`);--> statement-breakpoint
-CREATE INDEX `idx_outbound_status` ON `outbound_messages` (`account_id`,`status`,`created_at`);--> statement-breakpoint
-CREATE INDEX `idx_outbound_provider_id` ON `outbound_messages` (`account_id`,`provider_msg_id`);--> statement-breakpoint
-CREATE INDEX `idx_outbound_quota` ON `outbound_messages` (`account_id`,`identity_id`,`created_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_delivery_idempotency` ON `deliveries` (`account_id`,`idempotency_key`);--> statement-breakpoint
+CREATE INDEX `idx_delivery_status` ON `deliveries` (`account_id`,`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_delivery_provider_id` ON `deliveries` (`account_id`,`provider_msg_id`);--> statement-breakpoint
+CREATE INDEX `idx_delivery_quota` ON `deliveries` (`account_id`,`identity_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `suppressions` (
 	`account_id` text NOT NULL,
 	`address` text NOT NULL,

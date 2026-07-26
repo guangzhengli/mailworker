@@ -3,14 +3,14 @@ import { runRepositoryConformance } from "@mailworker/core/testing";
 import {
   createDb,
   D1ApiKeys,
+  D1Deliveries,
   D1Identities,
   D1Inboxes,
   D1Messages,
-  D1Outbound,
   D1Suppressions,
   R2Blobs,
   schema,
-} from "@web/workers/infrastructure";
+} from "@web/workers/adapters";
 
 /**
  * The same suite `packages/core` runs against the in-memory adapters, run here
@@ -40,7 +40,7 @@ async function reset(): Promise<void> {
     db.delete(schema.attachments),
     db.delete(schema.messages),
     db.delete(schema.deliveryEvents),
-    db.delete(schema.outboundMessages),
+    db.delete(schema.deliveries),
     db.delete(schema.inboxes),
     db.delete(schema.agentIdentities),
     db.delete(schema.apiKeys),
@@ -63,7 +63,7 @@ runRepositoryConformance("D1 + R2", async () => {
   return {
     inboxes: new D1Inboxes(db),
     messages: new D1Messages(db),
-    outbound: new D1Outbound(db),
+    deliveries: new D1Deliveries(db),
     identities: new D1Identities(db),
     apiKeys: new D1ApiKeys(db),
     suppressions: new D1Suppressions(db),

@@ -1,6 +1,6 @@
 import type { Page, PageRequest, Ulid } from "@mailworker/core";
 import { clampLimit } from "@mailworker/core";
-import * as schema from "@web/workers/infrastructure/schema";
+import * as schema from "@web/workers/adapters/schema";
 import type { SQL } from "drizzle-orm";
 import { gt, lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
