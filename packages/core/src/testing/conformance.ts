@@ -1,30 +1,23 @@
-import type {
-  AgentIdentity,
-  AuthContext,
-  Inbox,
-  Message,
-  OutboundMessage,
-  Ulid,
-} from "@core/domain";
+import type { Caller, Ulid } from "@core/domain";
 import {
   AccountId,
-  AgentIdentity as AgentIdentityVO,
-  EmailAddress as EmailAddressVO,
-  Inbox as InboxVO,
-  Message as MessageVO,
-  OutboundMessage as OutboundVO,
+  AgentIdentity,
+  Delivery,
+  EmailAddress,
+  Inbox,
+  Message,
   RfcMessageId,
   ThreadId,
 } from "@core/domain";
 import type {
-  ApiKeyRepositoryPort,
-  BlobStorePort,
-  IdentityRepositoryPort,
-  InboxRepositoryPort,
-  MessageRepositoryPort,
-  OutboundRepositoryPort,
-  SuppressionListPort,
-} from "@core/ports";
+  ApiKeyRepository,
+  BlobStore,
+  DeliveryRepository,
+  IdentityRepository,
+  InboxRepository,
+  MessageRepository,
+  SuppressionList,
+} from "@core/domain/ports";
 import { beforeEach, describe, expect, it } from "vitest";
 
 /**
@@ -44,26 +37,26 @@ import { beforeEach, describe, expect, it } from "vitest";
  */
 
 export interface ConformanceSubject {
-  readonly inboxes: InboxRepositoryPort;
-  readonly messages: MessageRepositoryPort;
-  readonly outbound: OutboundRepositoryPort;
-  readonly identities: IdentityRepositoryPort;
-  readonly apiKeys: ApiKeyRepositoryPort;
-  readonly suppressions: SuppressionListPort;
-  readonly blobs: BlobStorePort;
+  readonly inboxes: InboxRepository;
+  readonly messages: MessageRepository;
+  readonly deliveries: DeliveryRepository;
+  readonly identities: IdentityRepository;
+  readonly apiKeys: ApiKeyRepository;
+  readonly suppressions: SuppressionList;
+  readonly blobs: BlobStore;
 }
 
 export const CONFORMANCE_DOMAIN = "mail.example.com";
 const NOW = new Date("2026-07-01T12:00:00.000Z");
 
 /** Two tenants, so every read can be checked for leaking across the boundary. */
-const ALICE: AuthContext = {
+const ALICE: Caller = {
   accountId: AccountId.parse("alice"),
   identityId: null,
   scopes: ["admin"],
   subject: "test:alice",
 };
-const BOB: AuthContext = {
+const BOB: Caller = {
   accountId: AccountId.parse("bob"),
   identityId: null,
   scopes: ["admin"],
@@ -96,7 +89,7 @@ export function runRepositoryConformance(
     });
 
     const anInbox = (address: string, overrides: Partial<Inbox> = {}): Inbox => ({
-      ...InboxVO.create({
+      ...Inbox.create({
         id: nextId(),
         accountId: ALICE.accountId,
         address,
@@ -107,7 +100,7 @@ export function runRepositoryConformance(
     });
 
     const aMessage = (overrides: Partial<Message> = {}): Message =>
-      MessageVO.create({
+      Message.create({
         id: nextId(),
         accountId: ALICE.accountId,
         inboxId: nextId(),
@@ -115,17 +108,17 @@ export function runRepositoryConformance(
         threadId: ThreadId.parse(`m${nextId()}@corp.com`),
         direction: "inbound",
         fromHeader: '"Corp" <noreply@corp.com>',
-        from: EmailAddressVO.parse("noreply@corp.com"),
+        from: EmailAddress.parse("noreply@corp.com"),
         toHeader: `agent@${CONFORMANCE_DOMAIN}`,
         receivedAt: NOW,
         ...overrides,
       });
 
-    const anOutbound = (overrides: Partial<OutboundMessage> = {}): OutboundMessage => ({
-      ...OutboundVO.create({
+    const aDelivery = (overrides: Partial<Delivery> = {}): Delivery => ({
+      ...Delivery.create({
         id: nextId(),
         accountId: ALICE.accountId,
-        recipients: [EmailAddressVO.parse("human@corp.com")],
+        recipients: [EmailAddress.parse("human@corp.com")],
         now: NOW,
       }),
       ...overrides,
@@ -150,7 +143,7 @@ export function runRepositoryConformance(
         await s.inboxes.insert(ALICE, inbox);
         expect(await s.inboxes.findByAddress(ALICE, inbox.address)).toEqual(inbox);
 
-        await s.inboxes.update(ALICE, InboxVO.markDeleted(inbox, NOW));
+        await s.inboxes.update(ALICE, Inbox.markDeleted(inbox, NOW));
         expect(await s.inboxes.findByAddress(ALICE, inbox.address)).toBeNull();
         // Still addressable by id: a deleted inbox must read as "deleted", not
         // as "never existed", or the diagnosis of a failed test goes wrong.
@@ -276,10 +269,10 @@ export function runRepositoryConformance(
           subject: "Your code is 483920",
           bodyText: "Your verification code is 483920.",
           bodyHtml: "<p>Your verification code is 483920.</p>",
-          to: [EmailAddressVO.parse(`agent@${CONFORMANCE_DOMAIN}`)],
-          cc: [EmailAddressVO.parse("cc@corp.com")],
+          to: [EmailAddress.parse(`agent@${CONFORMANCE_DOMAIN}`)],
+          cc: [EmailAddress.parse("cc@corp.com")],
           bcc: [],
-          replyTo: EmailAddressVO.parse("support@corp.com"),
+          replyTo: EmailAddress.parse("support@corp.com"),
           inReplyTo: RfcMessageId.parse("parent@corp.com"),
           references: [RfcMessageId.parse("root@corp.com")],
           auth: { spf: "pass", dkim: "pass", dmarc: "pass" },
@@ -386,7 +379,7 @@ export function runRepositoryConformance(
         const sent = aMessage({
           inboxId,
           direction: "outbound",
-          from: EmailAddressVO.parse(`agent@${CONFORMANCE_DOMAIN}`),
+          from: EmailAddress.parse(`agent@${CONFORMANCE_DOMAIN}`),
         });
         const elsewhere = aMessage({ inboxId: other });
         for (const m of [mine, read, sent, elsewhere]) await s.messages.insert(ALICE, m);
@@ -399,11 +392,11 @@ export function runRepositoryConformance(
         const unread = await s.messages.list(ALICE, { inboxId, seen: false });
         expect(unread.items.map((m) => m.id)).toEqual([mine.id]);
 
-        const outbound = await s.messages.list(ALICE, { direction: "outbound" });
-        expect(outbound.items.map((m) => m.id)).toEqual([sent.id]);
+        const outboundPage = await s.messages.list(ALICE, { direction: "outbound" });
+        expect(outboundPage.items.map((m) => m.id)).toEqual([sent.id]);
 
         const bySender = await s.messages.list(ALICE, {
-          from: EmailAddressVO.parse("noreply@corp.com"),
+          from: EmailAddress.parse("noreply@corp.com"),
         });
         expect(bySender.items).toHaveLength(3);
       });
@@ -464,9 +457,9 @@ export function runRepositoryConformance(
       });
 
       it("counts exchanges by exact address, not by substring", async () => {
-        const from = EmailAddressVO.parse(`agent@${CONFORMANCE_DOMAIN}`);
-        const bob = EmailAddressVO.parse("bob@corp.com");
-        const notBob = EmailAddressVO.parse("notbob@corp.com");
+        const from = EmailAddress.parse(`agent@${CONFORMANCE_DOMAIN}`);
+        const bob = EmailAddress.parse("bob@corp.com");
+        const notBob = EmailAddress.parse("notbob@corp.com");
         const since = new Date(NOW.getTime() - 3_600_000);
 
         await s.messages.insert(
@@ -501,14 +494,14 @@ export function runRepositoryConformance(
       });
 
       it("counts a recipient found in a multi-address to list", async () => {
-        const from = EmailAddressVO.parse(`agent@${CONFORMANCE_DOMAIN}`);
-        const target = EmailAddressVO.parse("second@corp.com");
+        const from = EmailAddress.parse(`agent@${CONFORMANCE_DOMAIN}`);
+        const target = EmailAddress.parse("second@corp.com");
         await s.messages.insert(
           ALICE,
           aMessage({
             direction: "outbound",
             from,
-            to: [EmailAddressVO.parse("first@corp.com"), target],
+            to: [EmailAddress.parse("first@corp.com"), target],
             receivedAt: NOW,
           }),
         );
@@ -571,55 +564,57 @@ export function runRepositoryConformance(
     // Outbound and delivery events
     // ---------------------------------------------------------------------
 
-    describe("outbound", () => {
+    describe("deliveries", () => {
       it("round-trips every field and persists a transition", async () => {
-        const outbound = anOutbound({
+        const delivery = aDelivery({
           idempotencyKey: "run-42",
           payloadKey: "out/alice/01J.json",
         });
-        await s.outbound.insert(ALICE, outbound);
-        expect(await s.outbound.findById(ALICE, outbound.id)).toEqual(outbound);
+        await s.deliveries.insert(ALICE, delivery);
+        expect(await s.deliveries.findById(ALICE, delivery.id)).toEqual(delivery);
 
-        const queued = OutboundVO.enqueue(outbound, NOW);
-        const dispatched = OutboundVO.markDispatched(queued, "prov-1", NOW);
-        await s.outbound.update(ALICE, dispatched);
+        const queued = Delivery.enqueue(delivery, NOW);
+        const dispatched = Delivery.markDispatched(queued, "prov-1", NOW);
+        await s.deliveries.update(ALICE, dispatched);
 
-        const stored = await s.outbound.findById(ALICE, outbound.id);
+        const stored = await s.deliveries.findById(ALICE, delivery.id);
         expect(stored?.status).toBe("dispatched");
         expect(stored?.attempts).toBe(1);
         expect(stored?.providerMessageId).toBe("prov-1");
       });
 
       it("finds a send by its idempotency key and by the provider's id", async () => {
-        const outbound = OutboundVO.markDispatched(
-          OutboundVO.enqueue(anOutbound({ idempotencyKey: "run-42" }), NOW),
+        const delivery = Delivery.markDispatched(
+          Delivery.enqueue(aDelivery({ idempotencyKey: "run-42" }), NOW),
           "prov-9",
           NOW,
         );
-        await s.outbound.insert(ALICE, outbound);
+        await s.deliveries.insert(ALICE, delivery);
 
-        expect((await s.outbound.findByIdempotencyKey(ALICE, "run-42"))?.id).toBe(outbound.id);
-        expect((await s.outbound.findByProviderMessageId(ALICE, "prov-9"))?.id).toBe(
-          outbound.id,
+        expect((await s.deliveries.findByIdempotencyKey(ALICE, "run-42"))?.id).toBe(
+          delivery.id,
         );
-        expect(await s.outbound.findByIdempotencyKey(ALICE, "never-used")).toBeNull();
+        expect((await s.deliveries.findByProviderMessageId(ALICE, "prov-9"))?.id).toBe(
+          delivery.id,
+        );
+        expect(await s.deliveries.findByIdempotencyKey(ALICE, "never-used")).toBeNull();
       });
 
       it("allows many sends with no idempotency key at all", async () => {
         // NULLs are distinct under a unique constraint; if they were not, the
         // second send without a key would fail.
-        await s.outbound.insert(ALICE, anOutbound());
-        await s.outbound.insert(ALICE, anOutbound());
-        expect((await s.outbound.list(ALICE, {})).items).toHaveLength(2);
+        await s.deliveries.insert(ALICE, aDelivery());
+        await s.deliveries.insert(ALICE, aDelivery());
+        expect((await s.deliveries.list(ALICE, {})).items).toHaveLength(2);
       });
 
       it("filters a listing by status", async () => {
-        const queued = OutboundVO.enqueue(anOutbound(), NOW);
-        const rejected = OutboundVO.reject(anOutbound(), "suppressed", NOW);
-        await s.outbound.insert(ALICE, queued);
-        await s.outbound.insert(ALICE, rejected);
+        const queued = Delivery.enqueue(aDelivery(), NOW);
+        const rejected = Delivery.reject(aDelivery(), "suppressed", NOW);
+        await s.deliveries.insert(ALICE, queued);
+        await s.deliveries.insert(ALICE, rejected);
 
-        const listed = await s.outbound.list(ALICE, { status: "rejected" });
+        const listed = await s.deliveries.list(ALICE, { status: "rejected" });
         expect(listed.items.map((o) => o.id)).toEqual([rejected.id]);
       });
 
@@ -627,34 +622,34 @@ export function runRepositoryConformance(
         const identityId = nextId();
         const since = new Date(NOW.getTime() - 3_600_000);
 
-        await s.outbound.insert(ALICE, OutboundVO.enqueue(anOutbound({ identityId }), NOW));
-        await s.outbound.insert(
+        await s.deliveries.insert(ALICE, Delivery.enqueue(aDelivery({ identityId }), NOW));
+        await s.deliveries.insert(
           ALICE,
-          OutboundVO.reject(anOutbound({ identityId }), "policy", NOW),
+          Delivery.reject(aDelivery({ identityId }), "policy", NOW),
         );
-        await s.outbound.insert(
+        await s.deliveries.insert(
           ALICE,
-          anOutbound({ identityId, createdAt: new Date(since.getTime() - 1000) }),
+          aDelivery({ identityId, createdAt: new Date(since.getTime() - 1000) }),
         );
 
         // One counted: the rejection never left, and one is outside the window.
         // Metering an agent for sends the policy itself refused would let a
         // single misconfiguration burn a day's allowance with nothing delivered.
-        expect(await s.outbound.countSince(ALICE, identityId, since)).toBe(1);
+        expect(await s.deliveries.countSince(ALICE, identityId, since)).toBe(1);
       });
 
       it("gives an unbound credential its own quota bucket", async () => {
         const since = new Date(NOW.getTime() - 3_600_000);
-        await s.outbound.insert(ALICE, anOutbound({ identityId: null }));
-        await s.outbound.insert(ALICE, anOutbound({ identityId: nextId() }));
+        await s.deliveries.insert(ALICE, aDelivery({ identityId: null }));
+        await s.deliveries.insert(ALICE, aDelivery({ identityId: nextId() }));
 
         // `null` means "the credential bound to no identity", not "any of them".
-        expect(await s.outbound.countSince(ALICE, null, since)).toBe(1);
+        expect(await s.deliveries.countSince(ALICE, null, since)).toBe(1);
       });
 
       it("keeps delivery events in the order they happened", async () => {
-        const outbound = anOutbound();
-        await s.outbound.insert(ALICE, outbound);
+        const delivery = aDelivery();
+        await s.deliveries.insert(ALICE, delivery);
 
         const at = (offset: number) => new Date(NOW.getTime() + offset);
         // Appended out of order, as a queue consumer would receive them.
@@ -663,11 +658,11 @@ export function runRepositoryConformance(
           ["a", "deferred", 0],
           ["b", "deferred", 1000],
         ] as const) {
-          await s.outbound.appendDeliveryEvent(ALICE, {
+          await s.deliveries.appendDeliveryEvent(ALICE, {
             id: `01JEVT${id.toUpperCase().padStart(20, "0")}` as Ulid,
-            outboundId: outbound.id,
+            deliveryId: delivery.id,
             providerMessageId: "prov-1",
-            recipient: EmailAddressVO.parse("human@corp.com"),
+            recipient: EmailAddress.parse("human@corp.com"),
             type,
             terminal: type === "delivered",
             smtpCode: "250",
@@ -677,7 +672,7 @@ export function runRepositoryConformance(
           });
         }
 
-        const events = await s.outbound.listDeliveryEvents(ALICE, outbound.id);
+        const events = await s.deliveries.listDeliveryEvents(ALICE, delivery.id);
         expect(events.map((e) => e.occurredAt.getTime())).toEqual([
           at(0).getTime(),
           at(1000).getTime(),
@@ -688,18 +683,18 @@ export function runRepositoryConformance(
       });
 
       it("shows one account nothing belonging to another", async () => {
-        const outbound = OutboundVO.markDispatched(
-          OutboundVO.enqueue(anOutbound({ idempotencyKey: "k" }), NOW),
+        const delivery = Delivery.markDispatched(
+          Delivery.enqueue(aDelivery({ idempotencyKey: "k" }), NOW),
           "prov-1",
           NOW,
         );
-        await s.outbound.insert(ALICE, outbound);
+        await s.deliveries.insert(ALICE, delivery);
 
-        expect(await s.outbound.findById(BOB, outbound.id)).toBeNull();
-        expect(await s.outbound.findByIdempotencyKey(BOB, "k")).toBeNull();
-        expect(await s.outbound.findByProviderMessageId(BOB, "prov-1")).toBeNull();
-        expect((await s.outbound.list(BOB, {})).items).toEqual([]);
-        expect(await s.outbound.countSince(BOB, null, new Date(0))).toBe(0);
+        expect(await s.deliveries.findById(BOB, delivery.id)).toBeNull();
+        expect(await s.deliveries.findByIdempotencyKey(BOB, "k")).toBeNull();
+        expect(await s.deliveries.findByProviderMessageId(BOB, "prov-1")).toBeNull();
+        expect((await s.deliveries.list(BOB, {})).items).toEqual([]);
+        expect(await s.deliveries.countSince(BOB, null, new Date(0))).toBe(0);
       });
     });
 
@@ -709,7 +704,7 @@ export function runRepositoryConformance(
 
     describe("identities", () => {
       const anIdentity = (name: string, overrides: Partial<AgentIdentity> = {}) => ({
-        ...AgentIdentityVO.create({
+        ...AgentIdentity.create({
           id: nextId(),
           accountId: ALICE.accountId,
           name,
@@ -754,8 +749,8 @@ export function runRepositoryConformance(
     });
 
     describe("suppressions", () => {
-      const bounced = EmailAddressVO.parse("gone@corp.com");
-      const fine = EmailAddressVO.parse("live@corp.com");
+      const bounced = EmailAddress.parse("gone@corp.com");
+      const fine = EmailAddress.parse("live@corp.com");
 
       it("answers for a batch of addresses at once", async () => {
         await s.suppressions.add(ALICE, {

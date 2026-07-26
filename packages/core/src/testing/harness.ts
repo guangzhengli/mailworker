@@ -1,17 +1,17 @@
-import type { Deps } from "@core/application";
-import type { AuthContext, DomainRouting, Inbox, Scope } from "@core/domain";
-import { AccountId, Inbox as InboxVO } from "@core/domain";
+import type { CoreDeps, Services } from "@core/application";
+import { createServices } from "@core/application";
+import type { Caller, DomainRouting, Scope } from "@core/domain";
+import { AccountId, Inbox } from "@core/domain";
 import {
   DeterministicIds,
   FakeClock,
-  FakeHasher,
-  InMemoryApiKeys,
+  FakeSecrets,
   InMemoryBlobs,
+  InMemoryDeliveries,
   InMemoryDomains,
   InMemoryIdentities,
   InMemoryInboxes,
   InMemoryMessages,
-  InMemoryOutbound,
   InMemorySuppressions,
   MemoryTransport,
   MemoryWaiter,
@@ -23,14 +23,16 @@ import {
 export const TEST_DOMAIN = "mail.example.com";
 
 export interface Harness {
-  readonly deps: Deps;
+  readonly deps: CoreDeps;
+  /** The three services, wired to the in-memory adapters. */
+  readonly services: Services;
   /** Default caller: full scopes, no bound identity. */
-  readonly ctx: AuthContext;
+  readonly ctx: Caller;
   readonly clock: FakeClock;
   readonly ids: DeterministicIds;
   readonly inboxes: InMemoryInboxes;
   readonly messages: InMemoryMessages;
-  readonly outbound: InMemoryOutbound;
+  readonly deliveries: InMemoryDeliveries;
   readonly identities: InMemoryIdentities;
   readonly domains: InMemoryDomains;
   readonly blobs: InMemoryBlobs;
@@ -40,9 +42,9 @@ export interface Harness {
   readonly waiter: MemoryWaiter;
 
   /** A context with a narrower scope set, for testing the gates. */
-  withScopes(scopes: readonly Scope[]): AuthContext;
+  withScopes(scopes: readonly Scope[]): Caller;
   /** A context bound to an agent identity. */
-  asIdentity(identityId: string, scopes?: readonly Scope[]): AuthContext;
+  asIdentity(identityId: string, scopes?: readonly Scope[]): Caller;
   /** Insert an inbox directly, bypassing the use case. */
   seedInbox(address: string, overrides?: Partial<SeedInboxOptions>): Promise<Inbox>;
 }
@@ -77,9 +79,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const ids = new DeterministicIds();
   const inboxes = new InMemoryInboxes();
   const messages = new InMemoryMessages();
-  const outbound = new InMemoryOutbound();
+  const deliveries = new InMemoryDeliveries();
   const identities = new InMemoryIdentities();
-  const apiKeys = new InMemoryApiKeys();
   const domains = new InMemoryDomains(options.routings ?? [DEFAULT_ROUTING]);
   const blobs = new InMemoryBlobs();
   const suppressions = new InMemorySuppressions();
@@ -87,15 +88,14 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const events = new RecordingEventBus();
   const waiter = new MemoryWaiter();
 
-  const deps: Deps = {
+  const deps: CoreDeps = {
     clock,
     ids,
-    hasher: new FakeHasher(),
+    secrets: new FakeSecrets(),
     inboxes,
     messages,
-    outbound,
+    deliveries,
     identities,
-    apiKeys,
     domains,
     blobs,
     suppressions,
@@ -106,7 +106,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     mimeBuilder: new SimpleMimeBuilder(),
   };
 
-  const baseCtx: AuthContext = {
+  const baseCtx: Caller = {
     accountId: AccountId.DEFAULT,
     identityId: null,
     scopes: ["admin"],
@@ -115,12 +115,13 @@ export function createHarness(options: HarnessOptions = {}): Harness {
 
   return {
     deps,
+    services: createServices(deps),
     ctx: baseCtx,
     clock,
     ids,
     inboxes,
     messages,
-    outbound,
+    deliveries,
     identities,
     domains,
     blobs,
@@ -136,7 +137,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     asIdentity(identityId, scopes) {
       return {
         ...baseCtx,
-        identityId: identityId as AuthContext["identityId"],
+        identityId: identityId as Caller["identityId"],
         scopes: scopes === undefined ? baseCtx.scopes : [...scopes],
       };
     },
@@ -144,7 +145,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     async seedInbox(address, overrides = {}) {
       const now = clock.now();
       const kind = overrides.kind ?? "persistent";
-      const inbox = InboxVO.create({
+      const inbox = Inbox.create({
         id: ids.ulid(),
         accountId: baseCtx.accountId,
         address,
@@ -154,7 +155,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
         expiresAt:
           kind === "persistent"
             ? null
-            : InboxVO.expiryFromTtl(now, overrides.ttlMs ?? 60 * 60 * 1000),
+            : Inbox.expiryFromTtl(now, overrides.ttlMs ?? 60 * 60 * 1000),
       });
       await inboxes.insert(baseCtx, inbox);
       return inbox;

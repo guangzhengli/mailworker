@@ -71,7 +71,7 @@ describe("LoopBreakerPolicy", () => {
     expect(LoopBreakerPolicy.isAutomated("auto-replied")).toBe(true);
   });
 
-  it("labels our own outbound so peers can break the loop from their side", () => {
+  it("labels our own delivery so peers can break the loop from their side", () => {
     expect(LoopBreakerPolicy.autoSubmittedHeader(true)).toBe("auto-replied");
     expect(LoopBreakerPolicy.autoSubmittedHeader(false)).toBe("no");
   });

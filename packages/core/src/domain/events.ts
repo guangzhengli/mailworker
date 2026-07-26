@@ -1,12 +1,12 @@
-import type { AccountId } from "@core/domain/account-id";
-import type { EmailAddress } from "@core/domain/address";
-import type { UnroutableReason } from "@core/domain/address-resolution-policy";
-import type { ThreadId } from "@core/domain/message-id";
-import type { DeliveryEventType, OutboundStatus } from "@core/domain/outbound-message";
+import type { DeliveryEventType, DeliveryStatus } from "@core/domain/delivery/delivery";
+import type { EmailAddress } from "@core/domain/email-address";
+import type { AccountId } from "@core/domain/identity/account-id";
+import type { UnroutableReason } from "@core/domain/ingestion/address-resolution-policy";
+import type { ThreadId } from "@core/domain/mailbox/message-id";
 import type { Ulid } from "@core/domain/ulid";
 
 /**
- * Things that happened, as facts. Published through `EventBusPort`, which fans
+ * Things that happened, as facts. Published through `EventBus`, which fans
  * them out to webhooks, to the realtime hub, to whoever is blocked in `wait`,
  * and to the audit log.
  *
@@ -56,31 +56,31 @@ export type DomainEvent =
       readonly reason: UnroutableReason;
     })
   | (EventBase & {
-      readonly type: "outbound.queued";
-      readonly outboundId: Ulid;
+      readonly type: "delivery.queued";
+      readonly deliveryId: Ulid;
       readonly recipients: readonly EmailAddress[];
     })
   | (EventBase & {
-      readonly type: "outbound.approval_requested";
-      readonly outboundId: Ulid;
+      readonly type: "delivery.approval_requested";
+      readonly deliveryId: Ulid;
       readonly reason: string;
     })
   | (EventBase & {
-      readonly type: "outbound.rejected";
-      readonly outboundId: Ulid | null;
+      readonly type: "delivery.rejected";
+      readonly deliveryId: Ulid | null;
       readonly reason: string;
       readonly code: string;
     })
   | (EventBase & {
-      readonly type: "outbound.dispatched";
-      readonly outboundId: Ulid;
+      readonly type: "delivery.dispatched";
+      readonly deliveryId: Ulid;
       readonly providerMessageId: string | null;
     })
   | (EventBase & {
-      readonly type: "outbound.status_changed";
-      readonly outboundId: Ulid;
-      readonly from: OutboundStatus;
-      readonly to: OutboundStatus;
+      readonly type: "delivery.status_changed";
+      readonly deliveryId: Ulid;
+      readonly from: DeliveryStatus;
+      readonly to: DeliveryStatus;
       readonly deliveryEvent: DeliveryEventType;
       readonly recipient: EmailAddress | null;
     })

@@ -2,10 +2,10 @@ import { runRepositoryConformance } from "@core/testing/conformance";
 import {
   InMemoryApiKeys,
   InMemoryBlobs,
+  InMemoryDeliveries,
   InMemoryIdentities,
   InMemoryInboxes,
   InMemoryMessages,
-  InMemoryOutbound,
   InMemorySuppressions,
 } from "@core/testing/in-memory";
 
@@ -20,7 +20,7 @@ import {
 runRepositoryConformance("in-memory", () => ({
   inboxes: new InMemoryInboxes(),
   messages: new InMemoryMessages(),
-  outbound: new InMemoryOutbound(),
+  deliveries: new InMemoryDeliveries(),
   identities: new InMemoryIdentities(),
   apiKeys: new InMemoryApiKeys(),
   suppressions: new InMemorySuppressions(),

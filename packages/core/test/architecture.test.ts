@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -53,8 +53,8 @@ describe("layering", () => {
     // `@/ports/…`, and again when the `.ts` extension and the `/index` segment
     // were dropped, which left a barrel import as the bare `@core/ports` this
     // regex used to need a trailing slash to see. Assert it still bites.
-    expect(referencesLayer("@core/ports", "ports")).toBe(true);
-    expect(referencesLayer("@core/ports/transport", "ports")).toBe(true);
+    expect(referencesLayer("@core/domain/ports", "ports")).toBe(true);
+    expect(referencesLayer("@core/domain/ports/transport", "ports")).toBe(true);
     expect(referencesLayer("../ports", "ports")).toBe(true);
     expect(referencesLayer("../../src/testing", "testing")).toBe(true);
     expect(referencesLayer("@core/domain", "ports")).toBe(false);
@@ -62,16 +62,82 @@ describe("layering", () => {
     expect(referencesLayer("@core/domain/transporters", "transport")).toBe(false);
   });
 
-  it("keeps the domain from importing ports or application code", () => {
+  it("keeps the domain from importing application code", () => {
     const offenders: string[] = [];
     for (const file of filesUnder(join(SRC, "domain"))) {
       for (const specifier of importsOf(file)) {
-        if (referencesLayer(specifier, "ports") || referencesLayer(specifier, "application")) {
+        if (referencesLayer(specifier, "application")) {
           offenders.push(`${file} imports ${specifier}`);
         }
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The bounded contexts of DESIGN.md §4.1, as a rule rather than a diagram.
+   *
+   * Declaring four contexts in prose and then dumping every type into one
+   * directory is how "which domain does this belong to" becomes unanswerable.
+   * This is the answer, and it fails the build when someone contradicts it.
+   *
+   *     identity  ←  mailbox  ←  ingestion
+   *                     ↑
+   *                  delivery
+   *
+   * Read the arrow as "may import": ingestion knows about mailboxes, mailbox
+   * knows nothing about how mail got there. `ports/` is exempt in one
+   * direction — it is where the whole domain states its needs, so it names
+   * types from every context and no context imports it back.
+   */
+  const MAY_IMPORT: Readonly<Record<string, readonly string[]>> = {
+    identity: [],
+    mailbox: ["identity"],
+    ingestion: ["mailbox", "identity"],
+    delivery: ["mailbox", "identity"],
+  };
+
+  it.each(Object.keys(MAY_IMPORT))(
+    "keeps the %s context within its dependencies",
+    (context) => {
+      const allowed = new Set([context, ...MAY_IMPORT[context]!]);
+      const offenders: string[] = [];
+      for (const file of filesUnder(join(SRC, "domain", context))) {
+        for (const specifier of importsOf(file)) {
+          const target = contextOf(specifier);
+          if (target !== null && !allowed.has(target)) {
+            offenders.push(`${relative(SRC, file)} imports ${specifier}`);
+          }
+        }
+      }
+      expect(offenders).toEqual([]);
+    },
+  );
+
+  it("keeps the shared vocabulary from depending on any context", () => {
+    // `errors`, `ulid`, `pagination` and `blob-keys` sit under every context.
+    // The moment one of them imports a context it has become a fifth context
+    // with none of the rules, and the arrows above stop meaning anything.
+    // `events` is the deliberate exception: it names facts from all four.
+    const offenders: string[] = [];
+    for (const file of filesUnder(join(SRC, "domain"))) {
+      const name = relative(join(SRC, "domain"), file);
+      if (name.includes("/") || name === "events.ts" || name === "index.ts") continue;
+      for (const specifier of importsOf(file)) {
+        const target = contextOf(specifier);
+        if (target !== null) offenders.push(`${name} imports ${specifier}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("recognises a context in a specifier", () => {
+    expect(contextOf("@core/domain/mailbox/inbox")).toBe("mailbox");
+    expect(contextOf("@core/domain/identity")).toBe("identity");
+    expect(contextOf("@core/domain/errors")).toBe(null);
+    expect(contextOf("@core/domain/ports/system")).toBe(null);
+    // A barrel import pulls in all four, so it is never allowed inside one.
+    expect(contextOf("@core/domain")).toBe("*");
   });
 
   it("reaches other packages only through their public export", () => {
@@ -112,6 +178,24 @@ describe("layering", () => {
  */
 function referencesLayer(specifier: string, layer: string): boolean {
   return new RegExp(`(^@[a-z]*/|/)${layer}(/|$)`).test(specifier);
+}
+
+const CONTEXTS = ["identity", "mailbox", "ingestion", "delivery"] as const;
+
+/**
+ * Which bounded context a specifier points into, or null for the shared
+ * vocabulary, the ports and anything outside the domain.
+ *
+ * `"*"` for a bare `@core/domain` barrel import: it drags in all four contexts
+ * at once, so from inside a context it is always a violation — and saying so
+ * with a distinct marker gives a clearer failure than pretending it is one
+ * specific context.
+ */
+function contextOf(specifier: string): string | null {
+  if (specifier === "@core/domain") return "*";
+  const match = /^@core\/domain\/([a-z-]+)/.exec(specifier);
+  if (match === null) return null;
+  return (CONTEXTS as readonly string[]).includes(match[1]!) ? match[1]! : null;
 }
 
 /**

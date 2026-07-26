@@ -11,63 +11,60 @@
 import type {
   AgentIdentity,
   ApiKey,
-  AuthContext,
+  Caller,
+  Delivery,
   DomainEvent,
   DomainRouting,
-  EmailAddress,
   Inbox,
-  Message,
   MessageSummary,
-  OutboundMessage,
   Page,
-  RfcMessageId,
+  SuppressionEntry,
   ThreadId,
   Ulid,
 } from "@core/domain";
 import {
-  AuthVerdict,
   CROCKFORD,
   clampLimit,
-  EmailAddress as EmailAddressVO,
-  Message as MessageVO,
-  RfcMessageId as RfcMessageIdVO,
+  EmailAddress,
+  Message,
+  RfcMessageId,
+  SenderAuth,
 } from "@core/domain";
 import type {
-  ApiKeyRepositoryPort,
+  ApiKeyRepository,
   BlobMeta,
-  BlobStorePort,
+  BlobStore,
   BuildMimeSpec,
-  ClockPort,
+  Clock,
+  DeliveryEvent,
+  DeliveryRepository,
   DispatchRequest,
   DispatchResult,
-  DomainRepositoryPort,
-  EventBusPort,
-  IdentityRepositoryPort,
-  IdGeneratorPort,
-  InboxRepositoryPort,
+  DomainRepository,
+  EventBus,
+  IdentityRepository,
+  IdGenerator,
+  InboxRepository,
+  ListDeliveriesQuery,
   ListInboxesQuery,
   ListMessagesQuery,
-  ListOutboundQuery,
-  MailTransportPort,
-  MessageRepositoryPort,
-  MimeBuilderPort,
-  MimeParserPort,
-  OutboundRepositoryPort,
+  MailTransport,
+  MessageRepository,
+  MimeBuilder,
+  MimeParser,
   ParsedAttachment,
   ParsedInbound,
-  StoredDeliveryEvent,
-  SuppressionEntry,
-  SuppressionListPort,
-  TokenHasherPort,
+  Secrets,
+  SuppressionList,
   WaitCriteria,
-  WaiterPort,
-} from "@core/ports";
+  Waiter,
+} from "@core/domain/ports";
 
 // ---------------------------------------------------------------------------
 // System
 // ---------------------------------------------------------------------------
 
-export class FakeClock implements ClockPort {
+export class FakeClock implements Clock {
   constructor(private current: Date = new Date("2026-07-01T12:00:00.000Z")) {}
 
   now(): Date {
@@ -87,9 +84,8 @@ export class FakeClock implements ClockPort {
  * Counter-based ids. Still valid, still monotonic — so ULID ordering and keyset
  * pagination behave exactly as in production — but a test can predict them.
  */
-export class DeterministicIds implements IdGeneratorPort {
+export class DeterministicIds implements IdGenerator {
   private counter = 0;
-  private secretCounter = 0;
 
   constructor(private readonly epochMs = Date.UTC(2026, 0, 1)) {}
 
@@ -99,12 +95,7 @@ export class DeterministicIds implements IdGeneratorPort {
   }
 
   rfcMessageId(domain: string): RfcMessageId {
-    return RfcMessageIdVO.parse(`${this.ulid()}@${domain}`);
-  }
-
-  secret(byteLength = 16): string {
-    this.secretCounter += 1;
-    return `s${this.secretCounter}`.padEnd(byteLength * 2, "0").slice(0, byteLength * 2);
+    return RfcMessageId.parse(`${this.ulid()}@${domain}`);
   }
 }
 
@@ -118,8 +109,15 @@ function encodeCrockford(value: number, length: number): string {
   return out;
 }
 
-/** Not a real digest. Sufficient to prove the plumbing; never ship it. */
-export class FakeHasher implements TokenHasherPort {
+/** Not a real digest, and a counter instead of entropy. Tests only. */
+export class FakeSecrets implements Secrets {
+  private counter = 0;
+
+  generate(byteLength = 16): string {
+    this.counter += 1;
+    return `s${this.counter}`.padEnd(byteLength * 2, "0").slice(0, byteLength * 2);
+  }
+
   async hash(plaintext: string): Promise<string> {
     return `fake:${plaintext}`;
   }
@@ -134,7 +132,7 @@ export class FakeHasher implements TokenHasherPort {
 // ---------------------------------------------------------------------------
 
 /** Every store keys by account first, mirroring the `account_id`-leading indexes. */
-function scoped<T>(map: Map<string, T[]>, ctx: AuthContext): T[] {
+function scoped<T>(map: Map<string, T[]>, ctx: Caller): T[] {
   const existing = map.get(ctx.accountId);
   if (existing !== undefined) return existing;
   const created: T[] = [];
@@ -164,31 +162,31 @@ function paginate<T extends { id: Ulid }>(
   };
 }
 
-export class InMemoryInboxes implements InboxRepositoryPort {
+export class InMemoryInboxes implements InboxRepository {
   readonly rows = new Map<string, Inbox[]>();
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<Inbox | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<Inbox | null> {
     return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
   }
 
-  async findByAddress(ctx: AuthContext, address: EmailAddress): Promise<Inbox | null> {
+  async findByAddress(ctx: Caller, address: EmailAddress): Promise<Inbox | null> {
     return (
       scoped(this.rows, ctx).find((row) => row.address === address && row.deletedAt === null) ??
       null
     );
   }
 
-  async insert(ctx: AuthContext, inbox: Inbox): Promise<void> {
+  async insert(ctx: Caller, inbox: Inbox): Promise<void> {
     scoped(this.rows, ctx).push(inbox);
   }
 
-  async update(ctx: AuthContext, inbox: Inbox): Promise<void> {
+  async update(ctx: Caller, inbox: Inbox): Promise<void> {
     const rows = scoped(this.rows, ctx);
     const index = rows.findIndex((row) => row.id === inbox.id);
     if (index >= 0) rows[index] = inbox;
   }
 
-  async list(ctx: AuthContext, query: ListInboxesQuery): Promise<Page<Inbox>> {
+  async list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>> {
     let rows = scoped(this.rows, ctx).filter((row) => row.deletedAt === null);
     if (query.kind !== undefined) rows = rows.filter((row) => row.kind === query.kind);
     if (query.domain !== undefined) rows = rows.filter((row) => row.domain === query.domain);
@@ -199,7 +197,7 @@ export class InMemoryInboxes implements InboxRepositoryPort {
     return paginate(rows, query);
   }
 
-  async findExpired(ctx: AuthContext, expiredBefore: Date, limit: number): Promise<Inbox[]> {
+  async findExpired(ctx: Caller, expiredBefore: Date, limit: number): Promise<Inbox[]> {
     return (
       scoped(this.rows, ctx)
         .filter(
@@ -213,17 +211,17 @@ export class InMemoryInboxes implements InboxRepositoryPort {
     );
   }
 
-  async deleteById(ctx: AuthContext, id: Ulid): Promise<void> {
+  async deleteById(ctx: Caller, id: Ulid): Promise<void> {
     const rows = scoped(this.rows, ctx);
     const index = rows.findIndex((row) => row.id === id);
     if (index >= 0) rows.splice(index, 1);
   }
 }
 
-export class InMemoryMessages implements MessageRepositoryPort {
+export class InMemoryMessages implements MessageRepository {
   readonly rows = new Map<string, Message[]>();
 
-  async insert(ctx: AuthContext, message: Message): Promise<{ stored: boolean }> {
+  async insert(ctx: Caller, message: Message): Promise<{ stored: boolean }> {
     const rows = scoped(this.rows, ctx);
     // Mirrors the UNIQUE(account_id, rfc_message_id) constraint that D1 enforces.
     if (rows.some((row) => row.rfcMessageId === message.rfcMessageId)) {
@@ -233,16 +231,16 @@ export class InMemoryMessages implements MessageRepositoryPort {
     return { stored: true };
   }
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<Message | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<Message | null> {
     return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
   }
 
-  async findByRfcMessageId(ctx: AuthContext, rfcId: RfcMessageId): Promise<Message | null> {
+  async findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null> {
     return scoped(this.rows, ctx).find((row) => row.rfcMessageId === rfcId) ?? null;
   }
 
   async findThreadIds(
-    ctx: AuthContext,
+    ctx: Caller,
     rfcIds: readonly RfcMessageId[],
   ): Promise<ReadonlyMap<string, ThreadId>> {
     const wanted = new Set<string>(rfcIds);
@@ -253,7 +251,7 @@ export class InMemoryMessages implements MessageRepositoryPort {
     return found;
   }
 
-  async list(ctx: AuthContext, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
+  async list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
     let rows = scoped(this.rows, ctx);
     if (query.inboxId !== undefined) rows = rows.filter((row) => row.inboxId === query.inboxId);
     if (query.threadId !== undefined)
@@ -278,23 +276,23 @@ export class InMemoryMessages implements MessageRepositoryPort {
             });
     }
     const page = paginate(rows, query);
-    return { items: page.items.map((row) => MessageVO.summarize(row)), cursor: page.cursor };
+    return { items: page.items.map((row) => Message.summarize(row)), cursor: page.cursor };
   }
 
-  async listThread(ctx: AuthContext, threadId: ThreadId): Promise<Message[]> {
+  async listThread(ctx: Caller, threadId: ThreadId): Promise<Message[]> {
     return scoped(this.rows, ctx)
       .filter((row) => row.threadId === threadId)
       .sort((a, b) => (a.id < b.id ? -1 : 1));
   }
 
-  async setSeen(ctx: AuthContext, id: Ulid, seen: boolean): Promise<void> {
+  async setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void> {
     const rows = scoped(this.rows, ctx);
     const index = rows.findIndex((row) => row.id === id);
-    if (index >= 0) rows[index] = MessageVO.markSeen(rows[index]!, seen);
+    if (index >= 0) rows[index] = Message.markSeen(rows[index]!, seen);
   }
 
   async countSentBetween(
-    ctx: AuthContext,
+    ctx: Caller,
     from: EmailAddress,
     to: EmailAddress,
     since: Date,
@@ -308,7 +306,7 @@ export class InMemoryMessages implements MessageRepositoryPort {
     ).length;
   }
 
-  async deleteByInbox(ctx: AuthContext, inboxId: Ulid): Promise<{ storageKeys: string[] }> {
+  async deleteByInbox(ctx: Caller, inboxId: Ulid): Promise<{ storageKeys: string[] }> {
     const rows = scoped(this.rows, ctx);
     const doomed = rows.filter((row) => row.inboxId === inboxId);
     const keys = doomed.flatMap((row) => [
@@ -323,36 +321,33 @@ export class InMemoryMessages implements MessageRepositoryPort {
   }
 }
 
-export class InMemoryOutbound implements OutboundRepositoryPort {
-  readonly rows = new Map<string, OutboundMessage[]>();
-  readonly events = new Map<string, StoredDeliveryEvent[]>();
+export class InMemoryDeliveries implements DeliveryRepository {
+  readonly rows = new Map<string, Delivery[]>();
+  readonly events = new Map<string, DeliveryEvent[]>();
 
-  async insert(ctx: AuthContext, outbound: OutboundMessage): Promise<void> {
-    scoped(this.rows, ctx).push(outbound);
+  async insert(ctx: Caller, delivery: Delivery): Promise<void> {
+    scoped(this.rows, ctx).push(delivery);
   }
 
-  async update(ctx: AuthContext, outbound: OutboundMessage): Promise<void> {
+  async update(ctx: Caller, delivery: Delivery): Promise<void> {
     const rows = scoped(this.rows, ctx);
-    const index = rows.findIndex((row) => row.id === outbound.id);
-    if (index >= 0) rows[index] = outbound;
+    const index = rows.findIndex((row) => row.id === delivery.id);
+    if (index >= 0) rows[index] = delivery;
   }
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<OutboundMessage | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<Delivery | null> {
     return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
   }
 
-  async findByIdempotencyKey(ctx: AuthContext, key: string): Promise<OutboundMessage | null> {
+  async findByIdempotencyKey(ctx: Caller, key: string): Promise<Delivery | null> {
     return scoped(this.rows, ctx).find((row) => row.idempotencyKey === key) ?? null;
   }
 
-  async findByProviderMessageId(
-    ctx: AuthContext,
-    providerId: string,
-  ): Promise<OutboundMessage | null> {
+  async findByProviderMessageId(ctx: Caller, providerId: string): Promise<Delivery | null> {
     return scoped(this.rows, ctx).find((row) => row.providerMessageId === providerId) ?? null;
   }
 
-  async list(ctx: AuthContext, query: ListOutboundQuery): Promise<Page<OutboundMessage>> {
+  async list(ctx: Caller, query: ListDeliveriesQuery): Promise<Page<Delivery>> {
     let rows = scoped(this.rows, ctx);
     if (query.status !== undefined) rows = rows.filter((row) => row.status === query.status);
     if (query.identityId !== undefined) {
@@ -361,7 +356,7 @@ export class InMemoryOutbound implements OutboundRepositoryPort {
     return paginate(rows, query);
   }
 
-  async countSince(ctx: AuthContext, identityId: Ulid | null, since: Date): Promise<number> {
+  async countSince(ctx: Caller, identityId: Ulid | null, since: Date): Promise<number> {
     return scoped(this.rows, ctx).filter(
       (row) =>
         row.identityId === identityId &&
@@ -370,66 +365,66 @@ export class InMemoryOutbound implements OutboundRepositoryPort {
     ).length;
   }
 
-  async appendDeliveryEvent(ctx: AuthContext, event: StoredDeliveryEvent): Promise<void> {
+  async appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<void> {
     scoped(this.events, ctx).push(event);
   }
 
-  async listDeliveryEvents(ctx: AuthContext, outboundId: Ulid): Promise<StoredDeliveryEvent[]> {
+  async listDeliveryEvents(ctx: Caller, deliveryId: Ulid): Promise<DeliveryEvent[]> {
     return scoped(this.events, ctx)
-      .filter((row) => row.outboundId === outboundId)
+      .filter((row) => row.deliveryId === deliveryId)
       .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
   }
 }
 
-export class InMemoryIdentities implements IdentityRepositoryPort {
+export class InMemoryIdentities implements IdentityRepository {
   readonly rows = new Map<string, AgentIdentity[]>();
 
-  async findById(ctx: AuthContext, id: Ulid): Promise<AgentIdentity | null> {
+  async findById(ctx: Caller, id: Ulid): Promise<AgentIdentity | null> {
     return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
   }
 
-  async findByName(ctx: AuthContext, name: string): Promise<AgentIdentity | null> {
+  async findByName(ctx: Caller, name: string): Promise<AgentIdentity | null> {
     return scoped(this.rows, ctx).find((row) => row.name === name) ?? null;
   }
 
-  async insert(ctx: AuthContext, identity: AgentIdentity): Promise<void> {
+  async insert(ctx: Caller, identity: AgentIdentity): Promise<void> {
     scoped(this.rows, ctx).push(identity);
   }
 
-  async list(ctx: AuthContext): Promise<AgentIdentity[]> {
+  async list(ctx: Caller): Promise<AgentIdentity[]> {
     return [...scoped(this.rows, ctx)];
   }
 }
 
-export class InMemoryApiKeys implements ApiKeyRepositoryPort {
+export class InMemoryApiKeys implements ApiKeyRepository {
   readonly rows: ApiKey[] = [];
 
   async findByPrefix(prefix: string): Promise<ApiKey | null> {
     return this.rows.find((row) => row.prefix === prefix) ?? null;
   }
 
-  async insert(_ctx: AuthContext, key: ApiKey): Promise<void> {
+  async insert(_ctx: Caller, key: ApiKey): Promise<void> {
     this.rows.push(key);
   }
 
-  async update(_ctx: AuthContext, key: ApiKey): Promise<void> {
+  async update(_ctx: Caller, key: ApiKey): Promise<void> {
     const index = this.rows.findIndex((row) => row.id === key.id);
     if (index >= 0) this.rows[index] = key;
   }
 
-  async list(ctx: AuthContext): Promise<ApiKey[]> {
+  async list(ctx: Caller): Promise<ApiKey[]> {
     return this.rows.filter((row) => row.accountId === ctx.accountId);
   }
 }
 
-export class InMemoryDomains implements DomainRepositoryPort {
+export class InMemoryDomains implements DomainRepository {
   constructor(public routings: DomainRouting[] = []) {}
 
-  async findRouting(_ctx: AuthContext, domain: string): Promise<DomainRouting | null> {
+  async findRouting(_ctx: Caller, domain: string): Promise<DomainRouting | null> {
     return this.routings.find((row) => row.domain === domain.toLowerCase()) ?? null;
   }
 
-  async list(_ctx: AuthContext): Promise<DomainRouting[]> {
+  async list(_ctx: Caller): Promise<DomainRouting[]> {
     return [...this.routings];
   }
 }
@@ -438,20 +433,20 @@ export class InMemoryDomains implements DomainRepositoryPort {
 // Storage, transport, messaging
 // ---------------------------------------------------------------------------
 
-export class InMemoryBlobs implements BlobStorePort {
+export class InMemoryBlobs implements BlobStore {
   readonly objects = new Map<string, { body: Uint8Array; meta: BlobMeta | undefined }>();
 
-  async put(ctx: AuthContext, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
+  async put(ctx: Caller, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
     assertOwned(ctx, key);
     this.objects.set(key, { body, meta });
   }
 
-  async get(ctx: AuthContext, key: string): Promise<Uint8Array | null> {
+  async get(ctx: Caller, key: string): Promise<Uint8Array | null> {
     assertOwned(ctx, key);
     return this.objects.get(key)?.body ?? null;
   }
 
-  async delete(ctx: AuthContext, keys: readonly string[]): Promise<void> {
+  async delete(ctx: Caller, keys: readonly string[]): Promise<void> {
     // Filters rather than throwing: a retention sweep hands over whatever keys
     // it collected and should remove the ones it may.
     for (const key of keys) if (isOwned(ctx, key)) this.objects.delete(key);
@@ -459,7 +454,7 @@ export class InMemoryBlobs implements BlobStorePort {
 }
 
 /** `raw/{account}/…`, `att/{account}/…`, `out/{account}/…` — see `BlobKeys`. */
-function isOwned(ctx: AuthContext, key: string): boolean {
+function isOwned(ctx: Caller, key: string): boolean {
   return key.split("/")[1] === ctx.accountId;
 }
 
@@ -469,36 +464,36 @@ function isOwned(ctx: AuthContext, key: string): boolean {
  * well as in the R2 adapter because it is a contract of the port, not a detail
  * of R2 — a fake that skipped it would let this exact bug pass the fast suite.
  */
-function assertOwned(ctx: AuthContext, key: string): void {
+function assertOwned(ctx: Caller, key: string): void {
   if (!isOwned(ctx, key)) {
     throw new Error(`Blob key ${key} does not belong to account ${ctx.accountId}.`);
   }
 }
 
-export class InMemorySuppressions implements SuppressionListPort {
+export class InMemorySuppressions implements SuppressionList {
   readonly entries = new Map<string, SuppressionEntry[]>();
 
   async filterSuppressed(
-    ctx: AuthContext,
+    ctx: Caller,
     addresses: readonly EmailAddress[],
   ): Promise<EmailAddress[]> {
     const listed = new Set(scoped(this.entries, ctx).map((entry) => entry.address));
     return addresses.filter((address) => listed.has(address));
   }
 
-  async add(ctx: AuthContext, entry: SuppressionEntry): Promise<void> {
+  async add(ctx: Caller, entry: SuppressionEntry): Promise<void> {
     const rows = scoped(this.entries, ctx);
     if (!rows.some((row) => row.address === entry.address)) rows.push(entry);
   }
 
-  async remove(ctx: AuthContext, address: EmailAddress): Promise<void> {
+  async remove(ctx: Caller, address: EmailAddress): Promise<void> {
     this.entries.set(
       ctx.accountId,
       scoped(this.entries, ctx).filter((row) => row.address !== address),
     );
   }
 
-  async list(ctx: AuthContext): Promise<SuppressionEntry[]> {
+  async list(ctx: Caller): Promise<SuppressionEntry[]> {
     return [...scoped(this.entries, ctx)];
   }
 }
@@ -507,13 +502,13 @@ export class InMemorySuppressions implements SuppressionListPort {
  * Records what would have been sent. This is the adapter that lets the entire
  * send path — gates, state machine, sent copy, events — run in a unit test.
  */
-export class MemoryTransport implements MailTransportPort {
+export class MemoryTransport implements MailTransport {
   readonly sent: DispatchRequest[] = [];
   /** Set to make the next dispatch fail. */
   nextResult: DispatchResult | null = null;
   private counter = 0;
 
-  async dispatch(_ctx: AuthContext, message: DispatchRequest): Promise<DispatchResult> {
+  async dispatch(_ctx: Caller, message: DispatchRequest): Promise<DispatchResult> {
     this.sent.push(message);
     if (this.nextResult !== null) {
       const result = this.nextResult;
@@ -531,7 +526,7 @@ export class MemoryTransport implements MailTransportPort {
   }
 }
 
-export class RecordingEventBus implements EventBusPort {
+export class RecordingEventBus implements EventBus {
   readonly published: DomainEvent[] = [];
 
   async publish(events: readonly DomainEvent[]): Promise<void> {
@@ -546,18 +541,18 @@ export class RecordingEventBus implements EventBusPort {
  * unusable, and the behaviour under test is the MATCHING, not the waiting. The
  * Durable Object implementation is where real blocking belongs.
  */
-export class MemoryWaiter implements WaiterPort {
+export class MemoryWaiter implements Waiter {
   readonly notified: Message[] = [];
 
   async wait(
-    _ctx: AuthContext,
+    _ctx: Caller,
     criteria: WaitCriteria,
     _timeoutMs: number,
   ): Promise<Message | null> {
     return this.notified.find((message) => matches(message, criteria)) ?? null;
   }
 
-  async notify(_ctx: AuthContext, message: Message): Promise<void> {
+  async notify(_ctx: Caller, message: Message): Promise<void> {
     this.notified.push(message);
   }
 }
@@ -604,7 +599,7 @@ function matches(message: Message, criteria: WaitCriteria): boolean {
  * line. Enough to exercise the ingest path end to end; `packages/mime` will do
  * the real job (multipart, encodings, attachments) with postal-mime.
  */
-export class SimpleMimeParser implements MimeParserPort {
+export class SimpleMimeParser implements MimeParser {
   async parse(raw: Uint8Array): Promise<ParsedInbound> {
     const text = new TextDecoder().decode(raw);
     const separator = /\r?\n\r?\n/.exec(text);
@@ -625,19 +620,19 @@ export class SimpleMimeParser implements MimeParserPort {
     const attachments: ParsedAttachment[] = [];
 
     return {
-      rfcMessageId: RfcMessageIdVO.tryParse(headers["message-id"] ?? ""),
+      rfcMessageId: RfcMessageId.tryParse(headers["message-id"] ?? ""),
       fromHeader: headers["from"] ?? "",
-      from: EmailAddressVO.fromHeader(headers["from"] ?? ""),
+      from: EmailAddress.fromHeader(headers["from"] ?? ""),
       toHeader: headers["to"] ?? "",
-      to: EmailAddressVO.listFromHeader(headers["to"] ?? ""),
-      cc: EmailAddressVO.listFromHeader(headers["cc"] ?? ""),
-      replyTo: EmailAddressVO.fromHeader(headers["reply-to"] ?? ""),
+      to: EmailAddress.listFromHeader(headers["to"] ?? ""),
+      cc: EmailAddress.listFromHeader(headers["cc"] ?? ""),
+      replyTo: EmailAddress.fromHeader(headers["reply-to"] ?? ""),
       subject: headers["subject"] ?? "",
       bodyText: body === "" ? null : body,
       bodyHtml: null,
-      inReplyTo: RfcMessageIdVO.tryParse(headers["in-reply-to"] ?? ""),
-      references: references === undefined ? [] : RfcMessageIdVO.parseReferences(references),
-      auth: AuthVerdict.fromAuthenticationResults(headers["authentication-results"] ?? null),
+      inReplyTo: RfcMessageId.tryParse(headers["in-reply-to"] ?? ""),
+      references: references === undefined ? [] : RfcMessageId.parseReferences(references),
+      auth: SenderAuth.fromHeader(headers["authentication-results"] ?? null),
       sentAt: dateHeader === undefined ? null : safeDate(dateHeader),
       autoSubmitted: headers["auto-submitted"] ?? null,
       headers,
@@ -651,7 +646,7 @@ function safeDate(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export class SimpleMimeBuilder implements MimeBuilderPort {
+export class SimpleMimeBuilder implements MimeBuilder {
   async build(spec: BuildMimeSpec): Promise<Uint8Array> {
     const lines = [
       `From: ${spec.fromName === null ? spec.from : `"${spec.fromName}" <${spec.from}>`}`,
@@ -659,12 +654,12 @@ export class SimpleMimeBuilder implements MimeBuilderPort {
       ...(spec.cc.length > 0 ? [`Cc: ${spec.cc.join(", ")}`] : []),
       `Subject: ${spec.subject}`,
       `Date: ${spec.date.toUTCString()}`,
-      `Message-ID: ${RfcMessageIdVO.toHeader(spec.messageId)}`,
+      `Message-ID: ${RfcMessageId.toHeader(spec.messageId)}`,
       ...(spec.inReplyTo === null
         ? []
-        : [`In-Reply-To: ${RfcMessageIdVO.toHeader(spec.inReplyTo)}`]),
+        : [`In-Reply-To: ${RfcMessageId.toHeader(spec.inReplyTo)}`]),
       ...(spec.references.length > 0
-        ? [`References: ${RfcMessageIdVO.referencesToHeader(spec.references)}`]
+        ? [`References: ${RfcMessageId.referencesToHeader(spec.references)}`]
         : []),
       ...Object.entries(spec.headers).map(([key, value]) => `${key}: ${value}`),
       `Content-Type: text/${spec.html === null ? "plain" : "html"}; charset=utf-8`,

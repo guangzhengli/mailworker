@@ -5,9 +5,10 @@ import { DomainError } from "@core/domain/errors";
  * generation time. Used as the primary key AND the pagination cursor for
  * messages (DESIGN.md ADR-2).
  *
- * This module only *validates and compares*. Generation needs a clock and
- * randomness, so it lives behind `IdGeneratorPort` — that is what keeps the
- * domain pure and the tests deterministic.
+ * This module only *validates and compares*. Generation needs a clock, entropy
+ * and — because a ULID is our pagination cursor — monotonicity within a single
+ * millisecond, none of which belong in a pure domain. It lives behind
+ * `IdGenerator`, whose production adapter delegates to the `ulid` package.
  */
 export type Ulid = string & { readonly __brand: "Ulid" };
 
@@ -36,19 +37,11 @@ export const Ulid = {
     return Ulid.tryParse(input) !== null;
   },
 
-  /** Milliseconds encoded in the first 10 chars. */
-  timestamp(id: Ulid): number {
-    let ms = 0;
-    for (let i = 0; i < 10; i++) {
-      ms = ms * 32 + CROCKFORD.indexOf(id[i]!);
-    }
-    return ms;
-  },
-
   /** Lexicographic order == arrival order. Suitable for Array.prototype.sort. */
   compare(a: Ulid, b: Ulid): number {
     return a < b ? -1 : a > b ? 1 : 0;
   },
 } as const;
 
+/** Crockford base32, minus I/L/O/U. Exported for the deterministic test generator. */
 export const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
