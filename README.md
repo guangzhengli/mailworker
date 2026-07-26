@@ -3,11 +3,12 @@
 > Email runtime for AI agents. Self-hosted on your own Cloudflare account.
 > CLI-first, with delivery observability and guardrails on outbound.
 
-**Status: pre-alpha.** The domain core, the MIME handling, the wire contract and
-the D1/R2 storage layer are built and tested. The HTTP API, the `email()`
-handler and the CLI are not written yet. See [DESIGN.md](./DESIGN.md) for the
-full design — it is the source of truth, and it is worth reading before changing
-anything here.
+**Status: pre-alpha, receiving works end to end.** A message can go from Email
+Routing through the `email()` handler, into D1 and R2, wake a blocked
+`mailworker wait`, come back out of `GET /v1/messages`, be saved as a fixture
+with `get --raw` and replayed with `inject`. Sending is next (M2). See
+[DESIGN.md](./DESIGN.md) for the full design — it is the source of truth, and it
+is worth reading before changing anything here.
 
 ## What this is
 
@@ -34,9 +35,9 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 | `packages/core` | Domain contexts, services, ports, in-memory adapters | **built** |
 | `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
-| `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned |
-| `packages/cli` | `@mailworker/cli` — the agent-facing surface | planned |
-| `apps/web` | The deployable Worker | D1 + R2 adapters **built**; API, `email()`, queues planned |
+| `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned (M5) |
+| `packages/cli` | `@mailworker/cli` — the agent-facing surface | receive commands **built**; `send`, `doctor`, `deploy` planned |
+| `apps/web` | The deployable Worker | `/v1` API, `email()`, D1/R2/DO **built**; queues planned (M2) |
 
 The marketing site and public live demo live in a **separate** repo
 (`../mailworker-web`), not here.
@@ -57,9 +58,9 @@ aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package
 
 ### Two suites, one set of assertions
 
-`packages/core`, `packages/mime` and `packages/contract` run on plain Node with no
-miniflare, no network and no Cloudflare account, because every port has an
-in-memory implementation — 252 tests in about half a second. That is deliberate:
+`packages/core`, `packages/mime`, `packages/contract` and `packages/cli` run on
+plain Node with no miniflare, no network and no Cloudflare account, because every
+port has an in-memory implementation — 263 tests in about half a second. That is deliberate:
 a project that sells email testing has to be able to test its own mail handling
 fast enough that people keep running the suite.
 
@@ -72,6 +73,11 @@ fast, it makes it lie. So `runRepositoryConformance` — one set of behavioural
 assertions, exported from `@mailworker/core/testing` — is run twice: against the
 in-memory adapters in `packages/core`, and against a **real D1 and R2 inside
 workerd** in `apps/web`.
+
+`apps/web` also carries the tests that only mean something with real
+concurrency: a `wait` registered before a message arrives, woken by the
+`email()` handler mid-flight, against a real Durable Object. A fake would decide
+that race for us rather than test it.
 
 It has already paid for itself. A correlated subquery counting attachments
 rendered its column references bare, so SQLite resolved them against the
