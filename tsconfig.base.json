@@ -7,11 +7,19 @@
     "moduleResolution": "bundler",
     "types": [],
 
-    // Imports carry the real `.ts` filename and go through each package's `@/`
-    // alias. Requires `allowImportingTsExtensions` per package (all of ours are
-    // consumed as source by a bundler, so nothing here emits JS). Note that
-    // TypeScript 7 removed `baseUrl` — `paths` resolve relative to the tsconfig.
+    // Imports carry the real `.ts` filename. Nothing here emits JS — every
+    // package is consumed as source by a bundler — so this is safe.
     "allowImportingTsExtensions": true,
+
+    // Package-qualified aliases, declared centrally so they resolve identically
+    // from every package. A bare `@/*` cannot work here: when one package
+    // consumes another's SOURCE, `@` would resolve against the consumer.
+    // Paths are relative to THIS file (TypeScript 7 removed `baseUrl`).
+    "paths": {
+      "@core/*": ["./packages/core/src/*"],
+      "@mime/*": ["./packages/mime/src/*"],
+      "@shared/*": ["./packages/shared/src/*"]
+    },
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

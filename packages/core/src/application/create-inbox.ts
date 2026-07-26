@@ -1,11 +1,11 @@
-import type { Deps, Operation } from "@/application/deps.ts";
-import type { AuthContext, Inbox, InboxKind } from "@/domain/index.ts";
+import type { Deps, Operation } from "@core/application/deps.ts";
+import type { AuthContext, Inbox, InboxKind } from "@core/domain/index.ts";
 import {
   AuthContext as AuthContextVO,
   DomainError,
   Inbox as InboxVO,
   invalidArgument,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 
 export interface CreateInboxRequest {
   /** Full address. Mutually exclusive with `prefix`. */

@@ -1,15 +1,8 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { packageAliases } from "../../vitest.shared.ts";
 
 export default defineConfig({
-  // Mirrors `paths` in tsconfig.json. Declared here rather than via a
-  // tsconfig-paths plugin to keep the resolution rule in one obvious place and
-  // one dependency lighter.
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
-  },
+  resolve: { alias: packageAliases },
   test: {
     include: ["test/**/*.test.ts"],
     // The point of the in-memory adapters: no environment, no miniflare, no

@@ -1,2 +1,2 @@
-export * from "@/testing/harness.ts";
-export * from "@/testing/in-memory.ts";
+export * from "@core/testing/harness.ts";
+export * from "@core/testing/in-memory.ts";

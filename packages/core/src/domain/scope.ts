@@ -1,4 +1,4 @@
-import { invalidArgument } from "@/domain/errors.ts";
+import { invalidArgument } from "@core/domain/errors.ts";
 
 /**
  * What a credential is allowed to do. Granted to an API key, carried on the

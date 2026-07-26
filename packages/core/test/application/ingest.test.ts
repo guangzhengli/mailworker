@@ -1,8 +1,8 @@
+import { ingestInboundEmail } from "@core/application/index.ts";
+import { eventsOfType } from "@core/domain/index.ts";
+import type { Harness } from "@core/testing/index.ts";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing/index.ts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ingestInboundEmail } from "@/application/index.ts";
-import { eventsOfType } from "@/domain/index.ts";
-import type { Harness } from "@/testing/index.ts";
-import { createHarness, rawEmail, TEST_DOMAIN } from "@/testing/index.ts";
 
 let h: Harness;
 let ingest: ReturnType<typeof ingestInboundEmail>;

@@ -6,7 +6,7 @@ import type {
   Message,
   RfcMessageId,
   Ulid,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 
 /**
  * Publishes domain events. Queues in production; a recording array in tests,
@@ -49,7 +49,16 @@ export interface WaitCriteria {
 /** Parsed inbound message, the boundary between MIME handling and the domain. */
 export interface ParsedInbound {
   readonly rfcMessageId: RfcMessageId | null;
+  /** Decoded display form, e.g. `"Alice" <alice@corp.com>`. */
   readonly fromHeader: string;
+  /**
+   * The bare sender address.
+   *
+   * Supplied by the parser rather than re-extracted from `fromHeader`: the
+   * parser already resolved it properly (including address groups), so parsing
+   * a rendered string back apart would only lose information.
+   */
+  readonly from: EmailAddress | null;
   readonly toHeader: string;
   readonly to: readonly EmailAddress[];
   readonly cc: readonly EmailAddress[];

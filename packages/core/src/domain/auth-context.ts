@@ -1,8 +1,8 @@
-import type { AccountId } from "@/domain/account-id.ts";
-import { DomainError } from "@/domain/errors.ts";
-import type { Scope } from "@/domain/scope.ts";
-import { Scope as ScopeVO } from "@/domain/scope.ts";
-import type { Ulid } from "@/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id.ts";
+import { DomainError } from "@core/domain/errors.ts";
+import type { Scope } from "@core/domain/scope.ts";
+import { Scope as ScopeVO } from "@core/domain/scope.ts";
+import type { Ulid } from "@core/domain/ulid.ts";
 
 /**
  * Who is making this request. Built once per request by an `Authenticator` and

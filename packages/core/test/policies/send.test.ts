@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
-import type { AgentIdentity, EmailAddress, LoopVerdict, Scope } from "@/domain/index.ts";
+import type { AgentIdentity, EmailAddress, LoopVerdict, Scope } from "@core/domain/index.ts";
 import {
   EmailAddress as Address,
   AgentIdentity as Identity,
   SendPolicy,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
+import { describe, expect, it } from "vitest";
 
 const addr = (value: string): EmailAddress => Address.parse(value);
 const NO_LOOP: LoopVerdict = { looping: false, reason: null, detail: null };

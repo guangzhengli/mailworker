@@ -1,9 +1,9 @@
+import { dispatchOutbound, ingestInboundEmail, sendMessage } from "@core/application/index.ts";
+import type { AgentIdentity } from "@core/domain/index.ts";
+import { eventsOfType, AgentIdentity as Identity, isDomainError } from "@core/domain/index.ts";
+import type { Harness } from "@core/testing/index.ts";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing/index.ts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { dispatchOutbound, ingestInboundEmail, sendMessage } from "@/application/index.ts";
-import type { AgentIdentity } from "@/domain/index.ts";
-import { eventsOfType, AgentIdentity as Identity, isDomainError } from "@/domain/index.ts";
-import type { Harness } from "@/testing/index.ts";
-import { createHarness, rawEmail, TEST_DOMAIN } from "@/testing/index.ts";
 
 let h: Harness;
 let send: ReturnType<typeof sendMessage>;

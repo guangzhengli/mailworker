@@ -71,6 +71,22 @@ describe("layering", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("reaches other packages only through their public export", () => {
+    // Nothing stops `@mime/parse.ts` from resolving inside this package — the
+    // alias map is global. So the encapsulation rule is enforced here instead
+    // of relying on resolution to fail: cross-package imports go through
+    // `@mailworker/<pkg>`, never into another package's src.
+    const offenders: string[] = [];
+    for (const file of filesUnder(SRC)) {
+      for (const specifier of importsOf(file)) {
+        if (isForeignDeepImport(specifier)) {
+          offenders.push(`${file} imports ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("keeps the application layer off concrete adapters", () => {
     const offenders: string[] = [];
     for (const file of filesUnder(join(SRC, "application"))) {
@@ -90,5 +106,16 @@ describe("layering", () => {
  * `transporters.ts` does not read as the `transport` layer.
  */
 function referencesLayer(specifier: string, layer: string): boolean {
-  return new RegExp(`(^@/|/)${layer}/`).test(specifier);
+  return new RegExp(`(^@[a-z]*/|/)${layer}/`).test(specifier);
+}
+
+/**
+ * A path alias pointing into ANOTHER package's source.
+ *
+ * `@core/*` is this package's own alias; `@mailworker/*` is a public entry
+ * point. Anything else `@`-prefixed and local (`@mime/parse.ts`) is a deep
+ * import that skips the other package's export map.
+ */
+function isForeignDeepImport(specifier: string): boolean {
+  return /^@/.test(specifier) && !/^@(core\/|mailworker\/)/.test(specifier);
 }

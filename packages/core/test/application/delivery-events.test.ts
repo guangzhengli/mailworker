@@ -1,9 +1,9 @@
+import { dispatchOutbound, recordDeliveryEvent, sendMessage } from "@core/application/index.ts";
+import type { EmailAddress, OutboundMessage } from "@core/domain/index.ts";
+import { eventsOfType, OutboundMessage as Outbound } from "@core/domain/index.ts";
+import type { Harness } from "@core/testing/index.ts";
+import { createHarness, TEST_DOMAIN } from "@core/testing/index.ts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { dispatchOutbound, recordDeliveryEvent, sendMessage } from "@/application/index.ts";
-import type { EmailAddress, OutboundMessage } from "@/domain/index.ts";
-import { eventsOfType, OutboundMessage as Outbound } from "@/domain/index.ts";
-import type { Harness } from "@/testing/index.ts";
-import { createHarness, TEST_DOMAIN } from "@/testing/index.ts";
 
 let h: Harness;
 let record: ReturnType<typeof recordDeliveryEvent>;

@@ -1,4 +1,4 @@
-import type { Deps, Operation } from "@/application/deps.ts";
+import type { Deps, Operation } from "@core/application/deps.ts";
 import type {
   AttachmentMeta,
   AuthContext,
@@ -7,18 +7,17 @@ import type {
   Message,
   ThreadId,
   Ulid,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 import {
   AddressResolutionPolicy,
   AuthVerdict,
-  EmailAddress,
   Inbox as InboxVO,
   MailboxAddress,
   Message as MessageVO,
   RfcMessageId,
   ThreadingPolicy,
-} from "@/domain/index.ts";
-import { BlobKeys } from "@/ports/index.ts";
+} from "@core/domain/index.ts";
+import { BlobKeys } from "@core/ports/index.ts";
 
 export interface IngestInboundEmailInput {
   /** Envelope recipient, from the Email Routing handler. */
@@ -188,7 +187,7 @@ export function ingestInboundEmail(
       threadId: thread.threadId,
       direction: "inbound",
       fromHeader: parsed.fromHeader,
-      from: parsed.fromHeader === "" ? null : EmailAddress.fromHeader(parsed.fromHeader),
+      from: parsed.from,
       toHeader: parsed.toHeader,
       to: parsed.to,
       cc: parsed.cc,

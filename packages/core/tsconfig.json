@@ -1,12 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": ".",
+    // No rootDir/outDir: nothing here emits. The package is consumed as source.
     "types": ["node"],
-    "noEmit": true,
-    // TypeScript 7 removed `baseUrl`; `paths` resolve relative to this file.
-    "paths": { "@/*": ["./src/*"] }
+    "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "../../vitest.shared.ts"]
 }

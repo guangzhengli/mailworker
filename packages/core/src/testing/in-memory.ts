@@ -23,7 +23,7 @@ import type {
   RfcMessageId,
   ThreadId,
   Ulid,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 import {
   AuthVerdict,
   CROCKFORD,
@@ -31,7 +31,7 @@ import {
   EmailAddress as EmailAddressVO,
   Message as MessageVO,
   RfcMessageId as RfcMessageIdVO,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 import type {
   ApiKeyRepositoryPort,
   BlobMeta,
@@ -61,7 +61,7 @@ import type {
   TokenHasherPort,
   WaitCriteria,
   WaiterPort,
-} from "@/ports/index.ts";
+} from "@core/ports/index.ts";
 
 // ---------------------------------------------------------------------------
 // System
@@ -571,6 +571,7 @@ export class SimpleMimeParser implements MimeParserPort {
     return {
       rfcMessageId: RfcMessageIdVO.tryParse(headers["message-id"] ?? ""),
       fromHeader: headers["from"] ?? "",
+      from: EmailAddressVO.fromHeader(headers["from"] ?? ""),
       toHeader: headers["to"] ?? "",
       to: EmailAddressVO.listFromHeader(headers["to"] ?? ""),
       cc: EmailAddressVO.listFromHeader(headers["cc"] ?? ""),

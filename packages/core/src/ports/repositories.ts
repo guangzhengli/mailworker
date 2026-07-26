@@ -15,7 +15,7 @@ import type {
   RfcMessageId,
   ThreadId,
   Ulid,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 
 export interface InboxRepositoryPort {
   findById(ctx: AuthContext, id: Ulid): Promise<Inbox | null>;

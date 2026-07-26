@@ -1,11 +1,11 @@
-import type { Deps, Operation } from "@/application/deps.ts";
+import type { Deps, Operation } from "@core/application/deps.ts";
 import type {
   AgentIdentity,
   AuthContext,
   EmailAddress,
   OutboundMessage,
   RfcMessageId,
-} from "@/domain/index.ts";
+} from "@core/domain/index.ts";
 import {
   AuthContext as AuthContextVO,
   DomainError,
@@ -15,8 +15,8 @@ import {
   OutboundMessage as OutboundVO,
   SendPolicy,
   Ulid,
-} from "@/domain/index.ts";
-import { BlobKeys } from "@/ports/index.ts";
+} from "@core/domain/index.ts";
+import { BlobKeys } from "@core/ports/index.ts";
 
 export interface SendMessageRequest {
   readonly from: string;

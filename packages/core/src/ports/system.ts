@@ -1,4 +1,4 @@
-import type { RfcMessageId, Ulid } from "@/domain/index.ts";
+import type { RfcMessageId, Ulid } from "@core/domain/index.ts";
 
 /**
  * Time. Injected so that "expires in 10 minutes" is testable without waiting ten

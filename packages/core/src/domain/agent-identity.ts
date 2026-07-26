@@ -1,8 +1,8 @@
-import type { AccountId } from "@/domain/account-id.ts";
-import type { EmailAddress } from "@/domain/address.ts";
-import { AddressPattern } from "@/domain/address.ts";
-import { invalidArgument } from "@/domain/errors.ts";
-import type { Ulid } from "@/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id.ts";
+import type { EmailAddress } from "@core/domain/address.ts";
+import { AddressPattern } from "@core/domain/address.ts";
+import { invalidArgument } from "@core/domain/errors.ts";
+import type { Ulid } from "@core/domain/ulid.ts";
 
 /**
  * Who an agent is allowed to be, and how much rope it gets.

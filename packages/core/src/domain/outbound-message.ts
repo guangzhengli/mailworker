@@ -1,7 +1,7 @@
-import type { AccountId } from "@/domain/account-id.ts";
-import type { EmailAddress } from "@/domain/address.ts";
-import { DomainError, invalidArgument } from "@/domain/errors.ts";
-import type { Ulid } from "@/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id.ts";
+import type { EmailAddress } from "@core/domain/address.ts";
+import { DomainError, invalidArgument } from "@core/domain/errors.ts";
+import type { Ulid } from "@core/domain/ulid.ts";
 
 export type OutboundStatus =
   | "draft"
