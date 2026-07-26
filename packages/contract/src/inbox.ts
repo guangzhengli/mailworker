@@ -1,4 +1,11 @@
-import { durationMs, emailAddress, metadata, pageQuery, toIso } from "@contract/primitives";
+import {
+  durationMs,
+  emailAddress,
+  metadata,
+  pageQuery,
+  queryBool,
+  toIso,
+} from "@contract/primitives";
 import type { CreateInboxRequest, Inbox } from "@mailworker/core";
 import { z } from "zod";
 
@@ -50,6 +57,13 @@ export const createInboxBody = z
 export const listInboxesQuery = pageQuery.extend({
   kind: z.enum(["ephemeral", "persistent"]).optional(),
   domain: z.string().optional(),
+  /**
+   * Expired inboxes are hidden by default, because an agent listing inboxes
+   * wants the ones it can still use. The dashboard asks for them, since "my
+   * address stopped working" is answered by seeing the expiry, not by the
+   * address having vanished.
+   */
+  includeExpired: queryBool.optional(),
 });
 
 export type ListInboxesQuery = z.infer<typeof listInboxesQuery>;

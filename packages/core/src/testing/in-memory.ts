@@ -29,6 +29,7 @@ import {
   Message,
   RfcMessageId,
   SenderAuth,
+  WaitCriteria,
 } from "@core/domain";
 import type {
   ApiKeyRepository,
@@ -56,7 +57,6 @@ import type {
   ParsedInbound,
   Secrets,
   SuppressionList,
-  WaitCriteria,
   Waiter,
 } from "@core/domain/ports";
 
@@ -549,7 +549,11 @@ export class MemoryWaiter implements Waiter {
     criteria: WaitCriteria,
     _timeoutMs: number,
   ): Promise<Message | null> {
-    return this.notified.find((message) => matches(message, criteria)) ?? null;
+    // Newest match, not oldest. The Durable Object waiter looks back through
+    // stored messages newest-first, and a fake that answered "the oldest
+    // message that ever matched" would disagree with it the first time two
+    // messages matched the same criteria.
+    return this.notified.findLast((message) => WaitCriteria.matches(message, criteria)) ?? null;
   }
 
   async notify(_ctx: Caller, message: Message): Promise<void> {
@@ -575,23 +579,6 @@ function tokenize(value: string): string[] {
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((token) => token.length > 0);
-}
-
-function matches(message: Message, criteria: WaitCriteria): boolean {
-  if (criteria.inboxId !== undefined && message.inboxId !== criteria.inboxId) return false;
-  if (criteria.from !== undefined && message.from !== criteria.from) return false;
-  if (criteria.after !== undefined && message.id <= criteria.after) return false;
-  if (
-    criteria.subject !== undefined &&
-    !message.subject.toLowerCase().includes(criteria.subject.toLowerCase())
-  ) {
-    return false;
-  }
-  if (criteria.match !== undefined) {
-    const pattern = new RegExp(criteria.match, "i");
-    if (!pattern.test(message.subject) && !pattern.test(message.bodyText ?? "")) return false;
-  }
-  return true;
 }
 
 /**

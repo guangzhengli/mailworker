@@ -5,7 +5,7 @@ import type {
   Message,
   RfcMessageId,
   SenderAuth,
-  Ulid,
+  WaitCriteria,
 } from "@core/domain";
 
 /**
@@ -33,17 +33,6 @@ export interface Waiter {
   wait(ctx: Caller, criteria: WaitCriteria, timeoutMs: number): Promise<Message | null>;
   /** Called by the ingest path after a message is durably stored. */
   notify(ctx: Caller, message: Message): Promise<void>;
-}
-
-export interface WaitCriteria {
-  readonly inboxId?: Ulid;
-  readonly from?: EmailAddress;
-  /** Case-insensitive substring of the subject. */
-  readonly subject?: string;
-  /** Regular expression source tested against subject and text body. */
-  readonly match?: string;
-  /** Only consider messages newer than this id, so a caller cannot miss one. */
-  readonly after?: Ulid;
 }
 
 /** Parsed inbound message, the boundary between MIME handling and the domain. */

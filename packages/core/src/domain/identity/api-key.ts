@@ -41,6 +41,33 @@ export interface CreateApiKeyInput {
 
 export const API_KEY_PREFIX = "mw";
 
+/**
+ * The token format: `mw_live_<public>_<secret>`.
+ *
+ * The public head is stored in the clear and indexed, so authenticating is one
+ * lookup by a short string rather than a hash comparison against every key in
+ * the table. It is also what makes a leaked token greppable — `mw_live_8fa2c1`
+ * in a log or a repository identifies exactly which key to revoke, without the
+ * log holding anything that could be used to authenticate.
+ *
+ * Split rather than parsed into an object with methods: everything downstream
+ * wants the two halves, and there is nothing else to know about a token.
+ */
+export const ApiKeyToken = {
+  PATTERN: /^(mw_live_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
+
+  format(publicId: string, secret: string): string {
+    return `mw_live_${publicId}_${secret}`;
+  },
+
+  /** Null when the string is not shaped like a token at all. */
+  split(token: string): { prefix: string; secret: string } | null {
+    const match = ApiKeyToken.PATTERN.exec(token.trim());
+    if (match === null) return null;
+    return { prefix: match[1]!, secret: match[2]! };
+  },
+} as const;
+
 export const ApiKey = {
   create(input: CreateApiKeyInput): ApiKey {
     if (input.name.trim().length === 0) {

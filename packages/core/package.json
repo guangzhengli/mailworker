@@ -7,7 +7,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./domain": "./src/domain/index.ts",
-    "./ports": "./src/ports/index.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {

@@ -22,6 +22,24 @@ export interface Caller {
 }
 
 export const Caller = {
+  /**
+   * The deployment acting on its own behalf, for work that no credential asked
+   * for: inbound mail arriving from Email Routing, a queue consumer draining a
+   * batch, a cron sweeping expired inboxes.
+   *
+   * These are the only callers that may be minted without authenticating, so
+   * the constructor is deliberately narrow and the `subject` is required —
+   * `system:email` and `system:queue` have to be told apart in an audit trail,
+   * and a shared "system" label would make that impossible after the fact.
+   *
+   * It carries `admin`, because there is nobody to ask for a narrower grant and
+   * the alternative — exempting these paths from scope checks entirely — would
+   * put a second authorization rule in the codebase.
+   */
+  system(accountId: AccountId, subject: `system:${string}`): Caller {
+    return { accountId, identityId: null, scopes: ["admin"], subject };
+  },
+
   has(ctx: Caller, scope: Scope): boolean {
     return Scope.satisfies(ctx.scopes, scope);
   },

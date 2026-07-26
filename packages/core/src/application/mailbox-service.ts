@@ -1,14 +1,34 @@
-import type { ExtractKind, InboxKind, Message } from "@core/domain";
-import { Caller, DomainError, Extractors, Inbox, invalidArgument, Ulid } from "@core/domain";
 import type {
+  AttachmentMeta,
+  ExtractKind,
+  InboxKind,
+  Message,
+  MessageSummary,
+  Page,
+  ThreadId,
+  WaitCriteria,
+} from "@core/domain";
+import {
+  Caller,
+  DomainError,
+  Extractors,
+  Inbox,
+  invalidArgument,
+  notFound,
+  Ulid,
+} from "@core/domain";
+import type {
+  BlobStore,
   Clock,
   DomainRepository,
   EventBus,
   IdentityRepository,
   IdGenerator,
   InboxRepository,
+  ListInboxesQuery,
+  ListMessagesQuery,
+  MessageRepository,
   Secrets,
-  WaitCriteria,
   Waiter,
 } from "@core/domain/ports";
 /**
@@ -23,10 +43,21 @@ export interface MailboxDeps {
   readonly ids: IdGenerator;
   readonly secrets: Secrets;
   readonly inboxes: InboxRepository;
+  readonly messages: MessageRepository;
   readonly domains: DomainRepository;
   readonly identities: IdentityRepository;
+  readonly blobs: BlobStore;
   readonly events: EventBus;
   readonly waiter: Waiter;
+}
+
+/**
+ * `activeAt` is not on this: it is the clock, and the caller of a service does
+ * not get to lie about what time it is. `includeExpired` is the question a
+ * client actually has.
+ */
+export interface ListInboxesRequest extends Omit<ListInboxesQuery, "activeAt"> {
+  readonly includeExpired?: boolean;
 }
 
 export interface CreateInboxRequest {
@@ -141,6 +172,166 @@ export function createMailboxService(deps: MailboxDeps) {
       ]);
 
       return inbox;
+    },
+
+    /**
+     * Inboxes, newest first.
+     *
+     * Expired ones are excluded by passing the clock in as `activeAt` rather
+     * than by a flag, so the repository never reads the time and "what was live
+     * an hour ago" stays expressible. `includeExpired` is here for the
+     * dashboard, which has to be able to show why an address stopped working.
+     */
+    async listInboxes(ctx: Caller, query: ListInboxesRequest = {}): Promise<Page<Inbox>> {
+      Caller.require(ctx, "inbox:read");
+      const { includeExpired, ...page } = query;
+      return await deps.inboxes.list(ctx, {
+        ...page,
+        ...(includeExpired === true ? {} : { activeAt: deps.clock.now() }),
+      });
+    },
+
+    /**
+     * One inbox.
+     *
+     * An expired inbox is still returned. It exists, its address is still spoken
+     * for, and a caller debugging "why did my mail bounce" needs to see
+     * `expiresAt` in the past — which a 404 would hide behind the wrong story.
+     * Refusing to *receive* is `Inbox.assertCanReceive`, on the ingest path.
+     */
+    async getInbox(ctx: Caller, id: Ulid): Promise<Inbox> {
+      Caller.require(ctx, "inbox:read");
+      const inbox = await deps.inboxes.findById(ctx, id);
+      if (inbox === null || Inbox.isDeleted(inbox)) {
+        throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
+      }
+      return inbox;
+    },
+
+    /**
+     * Delete an inbox and everything in it.
+     *
+     * Ordering is the same trade as ingest, mirrored: rows go first, then the
+     * blobs they pointed at. A blob that outlives its row is invisible and gets
+     * swept; a row that outlives its blob renders as a message whose body
+     * cannot be fetched, forever. Deleting the messages before the inbox keeps
+     * the same property one level up.
+     *
+     * The inbox row itself is soft-deleted. Its address stays reserved, so a
+     * later `createInbox` cannot mint the same address and inherit a stranger's
+     * mail from a sender who had not yet noticed.
+     */
+    async deleteInbox(ctx: Caller, id: Ulid): Promise<void> {
+      Caller.require(ctx, "inbox:write");
+      const inbox = await deps.inboxes.findById(ctx, id);
+      if (inbox === null || Inbox.isDeleted(inbox)) {
+        throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
+      }
+
+      const { storageKeys } = await deps.messages.deleteByInbox(ctx, id);
+      if (storageKeys.length > 0) await deps.blobs.delete(ctx, storageKeys);
+      await deps.inboxes.deleteById(ctx, id);
+    },
+
+    /** Stored messages, filtered and keyset-paginated. Summaries, not bodies. */
+    async listMessages(
+      ctx: Caller,
+      query: ListMessagesQuery = {},
+    ): Promise<Page<MessageSummary>> {
+      Caller.require(ctx, "message:read");
+      return await deps.messages.list(ctx, query);
+    },
+
+    async getMessage(ctx: Caller, id: Ulid): Promise<Message> {
+      Caller.require(ctx, "message:read");
+      const message = await deps.messages.findById(ctx, id);
+      if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+      return message;
+    },
+
+    /**
+     * The original bytes, exactly as they arrived.
+     *
+     * Half of the `get --raw > fixture.eml` / `inject fixture.eml` loop that
+     * turns a strange production message into a regression test. Verbatim
+     * matters: a re-serialized message would reproduce our parser's opinion of
+     * the mail rather than the mail.
+     */
+    async getRawMessage(ctx: Caller, id: Ulid): Promise<Uint8Array> {
+      Caller.require(ctx, "message:read");
+      const message = await deps.messages.findById(ctx, id);
+      if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+
+      // Null for a message we composed but have not archived: an outbound send
+      // gets its `.eml` written when it is dispatched, not when it is queued.
+      const raw = message.rawKey === null ? null : await deps.blobs.get(ctx, message.rawKey);
+      if (raw === null) {
+        throw notFound(
+          "message_not_found",
+          `The original bytes of ${id} are no longer stored.`,
+          {
+            id,
+          },
+        );
+      }
+      return raw;
+    },
+
+    /** One attachment's bytes, with the metadata needed to serve them. */
+    async getAttachment(
+      ctx: Caller,
+      messageId: Ulid,
+      attachmentId: Ulid,
+    ): Promise<{ meta: AttachmentMeta; content: Uint8Array }> {
+      Caller.require(ctx, "message:read");
+      const message = await deps.messages.findById(ctx, messageId);
+      if (message === null) {
+        throw notFound("message_not_found", `No message ${messageId}.`, { messageId });
+      }
+
+      const meta = message.attachments.find((a) => a.id === attachmentId);
+      if (meta === undefined) {
+        throw notFound(
+          "message_not_found",
+          `Message ${messageId} has no attachment ${attachmentId}.`,
+          {
+            messageId,
+            attachmentId,
+          },
+        );
+      }
+
+      const content = await deps.blobs.get(ctx, meta.storageKey);
+      if (content === null) {
+        throw notFound("message_not_found", `Attachment ${attachmentId} is no longer stored.`, {
+          messageId,
+          attachmentId,
+        });
+      }
+      return { meta, content };
+    },
+
+    async markSeen(ctx: Caller, id: Ulid, seen = true): Promise<void> {
+      Caller.require(ctx, "message:read");
+      const message = await deps.messages.findById(ctx, id);
+      if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+      await deps.messages.setSeen(ctx, id, seen);
+    },
+
+    /**
+     * A conversation, oldest first, both directions in one list.
+     *
+     * One shape for inbound and outbound is the whole reason `Message` is not
+     * two types: an agent asking "what happened in this thread" should not have
+     * to merge two paginated endpoints and sort the result itself.
+     */
+    async getThread(ctx: Caller, threadId: ThreadId): Promise<Message[]> {
+      Caller.require(ctx, "message:read");
+      const messages = await deps.messages.listThread(ctx, threadId);
+      if (messages.length === 0) {
+        throw notFound("message_not_found", `No thread ${threadId}.`, { threadId });
+      }
+      return messages;
     },
 
     /**

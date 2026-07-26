@@ -15,3 +15,4 @@ export * from "@core/domain/mailbox/message-id";
 export * from "@core/domain/mailbox/retention-policy";
 export * from "@core/domain/mailbox/sender-auth";
 export * from "@core/domain/mailbox/threading-policy";
+export * from "@core/domain/mailbox/wait-criteria";
