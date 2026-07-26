@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+
+# wrangler / cloudflare
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+worker-configuration.d.ts
+
+# local mailworker CLI state
+.mailworker/
+
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example

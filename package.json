@@ -1,0 +1,26 @@
+{
+  "name": "mailworker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Email runtime for AI agents, self-hosted on Cloudflare",
+  "license": "MIT",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome ci .",
+    "format": "biome check --write .",
+    "check": "biome ci . && pnpm -r typecheck && pnpm -r test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
+    "@types/node": "^22.15.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
