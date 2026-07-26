@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mailworker",
+  "main": "workers/app.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // One Worker is the whole deployment (ADR-6): SSR, the /v1 API, the inbound
+  // email() handler and the queue consumers. One `wrangler deploy`, one URL,
+  // one origin for the CLI, the SDK and the dashboard alike.
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mailworker",
+      "database_id": "PLACEHOLDER_RUN_MAILWORKER_DEPLOY",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      // Raw MIME, attachments and pending outbound payloads (ADR-3). Keeping
+      // every original message is what makes `get --raw` into `inject` a closed
+      // testing loop and lets a parser change be replayed over real mail.
+      "binding": "BLOBS",
+      "bucket_name": "mailworker-blobs"
+    }
+  ],
+
+  "vars": {
+    "MAILWORKER_ACCOUNT_ID": "default"
+  }
+}

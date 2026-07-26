@@ -18,7 +18,8 @@
     "paths": {
       "@core/*": ["./packages/core/src/*"],
       "@mime/*": ["./packages/mime/src/*"],
-      "@shared/*": ["./packages/shared/src/*"]
+      "@shared/*": ["./packages/shared/src/*"],
+      "@web/*": ["./apps/web/*"]
     },
 
     "strict": true,

@@ -1,0 +1,12 @@
+{
+  // The build tooling, which runs in Node rather than in workerd. Separate
+  // because the two runtimes disagree about globals — the same `setTimeout`
+  // returns a NodeJS.Timeout in one and a number in the other — and a single
+  // `types` list would have to lie to one of them.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["vitest.config.ts", "drizzle.config.ts", "../../vitest.shared.ts"]
+}

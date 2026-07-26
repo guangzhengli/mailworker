@@ -3,3 +3,6 @@ packages:
   - "packages/*"
 allowBuilds:
   esbuild: true
+  # workerd's postinstall fetches the runtime binary. Without it, the D1 tests
+  # (which run against a real workerd, not a SQLite stand-in) cannot start.
+  workerd: true

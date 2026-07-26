@@ -131,6 +131,18 @@ export interface CreateMessageInput {
 
 export const PREVIEW_LENGTH = 160;
 
+/**
+ * How much of a body a preview is allowed to read.
+ *
+ * This exists so a list query does not have to load bodies. A store backed by a
+ * real database selects `substr(body_text, 1, PREVIEW_SOURCE_LENGTH)` instead of
+ * the column — the difference between a few kilobytes and several megabytes for
+ * one page of fifty messages. Declaring the bound here rather than in the
+ * adapter is what lets the in-memory store produce a byte-identical preview, so
+ * the two implementations stay interchangeable.
+ */
+export const PREVIEW_SOURCE_LENGTH = 4000;
+
 export const Message = {
   create(input: CreateMessageInput): Message {
     if (input.subject !== undefined && input.subject.length > 2000) {
@@ -185,8 +197,19 @@ export const Message = {
   },
 
   preview(message: Message, length = PREVIEW_LENGTH): string {
-    const source = message.bodyText ?? "";
-    const collapsed = source.replace(/\s+/g, " ").trim();
+    return Message.previewFrom(message.bodyText, length);
+  },
+
+  /**
+   * The preview rule itself, over a body that a store may already have
+   * truncated to `PREVIEW_SOURCE_LENGTH`. Truncating again here is what makes
+   * that pre-truncation invisible: both callers get the same answer.
+   */
+  previewFrom(bodyText: string | null, length = PREVIEW_LENGTH): string {
+    const collapsed = (bodyText ?? "")
+      .slice(0, PREVIEW_SOURCE_LENGTH)
+      .replace(/\s+/g, " ")
+      .trim();
     return collapsed.length <= length ? collapsed : `${collapsed.slice(0, length - 1)}…`;
   },
 

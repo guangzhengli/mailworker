@@ -32,8 +32,16 @@ export interface InboxRepositoryPort {
 export interface ListInboxesQuery extends PageRequest {
   readonly kind?: "ephemeral" | "persistent";
   readonly domain?: string;
-  /** Exclude expired and soft-deleted inboxes. */
-  readonly activeOnly?: boolean;
+  /**
+   * Exclude inboxes already expired at this instant. Soft-deleted ones are
+   * always excluded.
+   *
+   * A `Date` rather than an `activeOnly: boolean` because a repository must not
+   * read the clock: with the time passed in, "list what was live an hour ago" is
+   * a query rather than a race, and testing "list active inboxes" does not
+   * involve waiting for one to expire.
+   */
+  readonly activeAt?: Date;
 }
 
 export interface MessageRepositoryPort {

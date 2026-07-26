@@ -1,0 +1,30 @@
+{
+  "name": "@mailworker/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The deployable Worker: Cloudflare adapters for the core ports, the HTTP API, the email handler and the queue consumers.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "wrangler types && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply mailworker --local",
+    "db:migrate": "wrangler d1 migrations apply mailworker --remote",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@mailworker/core": "workspace:*",
+    "@mailworker/mime": "workspace:*",
+    "@mailworker/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.8",
+    "@types/node": "^22.15.3",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.114.0"
+  }
+}

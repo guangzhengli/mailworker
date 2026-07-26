@@ -192,15 +192,25 @@ export class InMemoryInboxes implements InboxRepositoryPort {
     let rows = scoped(this.rows, ctx).filter((row) => row.deletedAt === null);
     if (query.kind !== undefined) rows = rows.filter((row) => row.kind === query.kind);
     if (query.domain !== undefined) rows = rows.filter((row) => row.domain === query.domain);
+    if (query.activeAt !== undefined) {
+      const at = query.activeAt.getTime();
+      rows = rows.filter((row) => row.expiresAt === null || row.expiresAt.getTime() > at);
+    }
     return paginate(rows, query);
   }
 
   async findExpired(ctx: AuthContext, expiredBefore: Date, limit: number): Promise<Inbox[]> {
-    return scoped(this.rows, ctx)
-      .filter(
-        (row) => row.expiresAt !== null && row.expiresAt.getTime() <= expiredBefore.getTime(),
-      )
-      .slice(0, limit);
+    return (
+      scoped(this.rows, ctx)
+        .filter(
+          (row) => row.expiresAt !== null && row.expiresAt.getTime() <= expiredBefore.getTime(),
+        )
+        // Oldest expiry first, as the port promises. Without the sort a sweep
+        // capped by `limit` would revisit the same recent rows and never reach the
+        // oldest ones — the backlog it exists to drain.
+        .sort((a, b) => a.expiresAt!.getTime() - b.expiresAt!.getTime())
+        .slice(0, limit)
+    );
   }
 
   async deleteById(ctx: AuthContext, id: Ulid): Promise<void> {
@@ -255,12 +265,17 @@ export class InMemoryMessages implements MessageRepositoryPort {
     if (query.seen !== undefined) rows = rows.filter((row) => row.seen === query.seen);
     if (query.after !== undefined) rows = rows.filter((row) => row.id > query.after!);
     if (query.q !== undefined) {
-      const needle = query.q.toLowerCase();
-      rows = rows.filter(
-        (row) =>
-          row.subject.toLowerCase().includes(needle) ||
-          (row.bodyText ?? "").toLowerCase().includes(needle),
-      );
+      const wanted = tokenize(query.q);
+      rows =
+        wanted.length === 0
+          ? []
+          : rows.filter((row) => {
+              const found = new Set([
+                ...tokenize(row.subject),
+                ...tokenize(row.bodyText ?? ""),
+              ]);
+              return wanted.every((token) => found.has(token));
+            });
     }
     const page = paginate(rows, query);
     return { items: page.items.map((row) => MessageVO.summarize(row)), cursor: page.cursor };
@@ -426,16 +441,37 @@ export class InMemoryDomains implements DomainRepositoryPort {
 export class InMemoryBlobs implements BlobStorePort {
   readonly objects = new Map<string, { body: Uint8Array; meta: BlobMeta | undefined }>();
 
-  async put(_ctx: AuthContext, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
+  async put(ctx: AuthContext, key: string, body: Uint8Array, meta?: BlobMeta): Promise<void> {
+    assertOwned(ctx, key);
     this.objects.set(key, { body, meta });
   }
 
-  async get(_ctx: AuthContext, key: string): Promise<Uint8Array | null> {
+  async get(ctx: AuthContext, key: string): Promise<Uint8Array | null> {
+    assertOwned(ctx, key);
     return this.objects.get(key)?.body ?? null;
   }
 
-  async delete(_ctx: AuthContext, keys: readonly string[]): Promise<void> {
-    for (const key of keys) this.objects.delete(key);
+  async delete(ctx: AuthContext, keys: readonly string[]): Promise<void> {
+    // Filters rather than throwing: a retention sweep hands over whatever keys
+    // it collected and should remove the ones it may.
+    for (const key of keys) if (isOwned(ctx, key)) this.objects.delete(key);
+  }
+}
+
+/** `raw/{account}/…`, `att/{account}/…`, `out/{account}/…` — see `BlobKeys`. */
+function isOwned(ctx: AuthContext, key: string): boolean {
+  return key.split("/")[1] === ctx.accountId;
+}
+
+/**
+ * Blob keys are assembled from ids that arrive in requests, so a key naming
+ * another account is the shape a path traversal would take. Enforced here as
+ * well as in the R2 adapter because it is a contract of the port, not a detail
+ * of R2 — a fake that skipped it would let this exact bug pass the fast suite.
+ */
+function assertOwned(ctx: AuthContext, key: string): void {
+  if (!isOwned(ctx, key)) {
+    throw new Error(`Blob key ${key} does not belong to account ${ctx.accountId}.`);
   }
 }
 
@@ -524,6 +560,26 @@ export class MemoryWaiter implements WaiterPort {
   async notify(_ctx: AuthContext, message: Message): Promise<void> {
     this.notified.push(message);
   }
+}
+
+/**
+ * Whole-word matching, approximating SQLite's FTS5 `unicode61` tokenizer, which
+ * is what the D1 store searches with.
+ *
+ * A substring `includes()` would have been simpler and would have made this fake
+ * disagree with production on the first search anyone ran — `q=ell` finding
+ * "hello" here and nothing there. Splitting on non-alphanumerics matches how
+ * FTS5 splits, so the two agree on ordinary queries.
+ *
+ * They still part company at the edges: unicode61 folds diacritics by default,
+ * so `cafe` finds `café` in D1 and not here. That is documented rather than
+ * emulated, and the conformance suite asserts only what both truly guarantee.
+ */
+function tokenize(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length > 0);
 }
 
 function matches(message: Message, criteria: WaitCriteria): boolean {

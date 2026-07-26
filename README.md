@@ -3,10 +3,11 @@
 > Email runtime for AI agents. Self-hosted on your own Cloudflare account.
 > CLI-first, with delivery observability and guardrails on outbound.
 
-**Status: pre-alpha.** The domain core is built and tested; the Cloudflare
-adapters, HTTP API and CLI are not written yet. See [DESIGN.md](./DESIGN.md) for
-the full design — it is the source of truth, and it is worth reading before
-changing anything here.
+**Status: pre-alpha.** The domain core, the MIME handling, the wire contract and
+the D1/R2 storage layer are built and tested. The HTTP API, the `email()`
+handler and the CLI are not written yet. See [DESIGN.md](./DESIGN.md) for the
+full design — it is the source of truth, and it is worth reading before changing
+anything here.
 
 ## What this is
 
@@ -35,7 +36,7 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 | `packages/shared` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned |
 | `packages/cli` | `@mailworker/cli` — the agent-facing surface | planned |
-| `apps/web` | The deployable Worker: RRv7 SSR + API + `email()` + queues | planned |
+| `apps/web` | The deployable Worker | D1 + R2 adapters **built**; API, `email()`, queues planned |
 
 The marketing site and public live demo live in a **separate** repo
 (`../mailworker-web`), not here.
@@ -50,21 +51,38 @@ pnpm format        # biome --write
 ```
 
 Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
-Drizzle for D1, React Router 8, pnpm workspaces. Imports use a `@/` alias with
-real `.ts` extensions inside a package, and `@mailworker/*` public exports across
-packages.
+Drizzle for D1, React Router 8, pnpm workspaces. Imports use package-qualified
+aliases (`@core/*`, `@shared/*`, …) with real `.ts` extensions inside a package,
+and `@mailworker/*` public exports across packages.
 
-`packages/core` tests run on plain Node with no miniflare, no network and no
-Cloudflare account, because every port has an in-memory implementation. That is
-deliberate: a project that sells email testing has to be able to test its own
-mail handling fast enough that people keep running the suite.
+### Two suites, one set of assertions
+
+`packages/core`, `packages/mime` and `packages/shared` run on plain Node with no
+miniflare, no network and no Cloudflare account, because every port has an
+in-memory implementation — 240 tests in about half a second. That is deliberate:
+a project that sells email testing has to be able to test its own mail handling
+fast enough that people keep running the suite.
 
 ```bash
 cd packages/core && pnpm test:watch
 ```
 
+But a fake that quietly disagrees with the real database does not make the suite
+fast, it makes it lie. So `runRepositoryConformance` — one set of behavioural
+assertions, exported from `@mailworker/core/testing` — is run twice: against the
+in-memory adapters in `packages/core`, and against a **real D1 and R2 inside
+workerd** in `apps/web`.
+
+It has already paid for itself. A correlated subquery counting attachments
+rendered its column references bare, so SQLite resolved them against the
+subquery's own table and every message came back with zero attachments — no
+error, and nothing a mock could have caught.
+
 `test/architecture.test.ts` mechanically enforces the layering rule (ADR-5) and
-includes a self-check, so the guard cannot silently stop matching.
+includes a self-check, so the guard cannot silently stop matching. The same
+principle is applied to the other guards in the repo: the error-code
+cross-check and the tenancy assertions were each verified by breaking them on
+purpose.
 
 ## Requirements (once the Worker exists)
 
