@@ -1,19 +1,19 @@
-import type { Message, OutboundMessage, StoredDeliveryEvent } from "@mailworker/core";
-import {
-  ingestInboundEmail,
-  Message as MessageVO,
-  OutboundMessage as OutboundVO,
-  Ulid,
-} from "@mailworker/core";
-import { createHarness, rawEmail, TEST_DOMAIN } from "@mailworker/core/testing";
-import { inboxDto, toInboxDto } from "@shared/inbox";
+import { inboxDto, toInboxDto } from "@contract/inbox";
 import {
   messageDto,
   messageSummaryDto,
   toMessageDto,
   toMessageSummaryDto,
-} from "@shared/message";
-import { deliveryEventDto, outboundDto, toDeliveryEventDto, toOutboundDto } from "@shared/send";
+} from "@contract/message";
+import {
+  deliveryDto,
+  deliveryEventDto,
+  toDeliveryDto,
+  toDeliveryEventDto,
+} from "@contract/send";
+import type { DeliveryEvent } from "@mailworker/core";
+import { Delivery, Message, Ulid } from "@mailworker/core";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@mailworker/core/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 
 /**
@@ -32,7 +32,7 @@ let harness: ReturnType<typeof createHarness>;
 beforeAll(async () => {
   harness = createHarness();
   const inbox = await harness.seedInbox(`agent-1@${TEST_DOMAIN}`);
-  const result = await ingestInboundEmail(harness.deps)(harness.ctx, {
+  const result = await harness.services.ingestion.ingest(harness.ctx, {
     recipient: `agent-1+run42@${TEST_DOMAIN}`,
     envelopeFrom: "bounces@corp.com",
     raw: rawEmail({
@@ -126,7 +126,7 @@ describe("bodyHtml fails closed", () => {
 
 describe("message summary codec", () => {
   it("round-trips through its own schema", () => {
-    const dto = toMessageSummaryDto(MessageVO.summarize(message));
+    const dto = toMessageSummaryDto(Message.summarize(message));
     expect(() => messageSummaryDto.parse(dto)).not.toThrow();
     expect(dto.preview).toContain("483920");
     expect(dto.hasText).toBe(true);
@@ -134,7 +134,7 @@ describe("message summary codec", () => {
   });
 
   it("carries no body", () => {
-    const dto = toMessageSummaryDto(MessageVO.summarize(message)) as Record<string, unknown>;
+    const dto = toMessageSummaryDto(Message.summarize(message)) as Record<string, unknown>;
     expect(dto).not.toHaveProperty("bodyText");
     expect(dto).not.toHaveProperty("bodyHtml");
   });
@@ -166,8 +166,8 @@ describe("inbox codec", () => {
 describe("outbound and delivery-event codecs", () => {
   const OUTBOUND_ID = Ulid.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 
-  const anOutbound = (): OutboundMessage =>
-    OutboundVO.create({
+  const aDelivery = (): Delivery =>
+    Delivery.create({
       id: OUTBOUND_ID,
       accountId: message.accountId,
       recipients: [message.from!],
@@ -177,16 +177,16 @@ describe("outbound and delivery-event codecs", () => {
     });
 
   it("round-trips and keeps the payload key off the wire", () => {
-    const dto = toOutboundDto(anOutbound());
-    expect(() => outboundDto.parse(dto)).not.toThrow();
+    const dto = toDeliveryDto(aDelivery());
+    expect(() => deliveryDto.parse(dto)).not.toThrow();
     expect(dto).not.toHaveProperty("payloadKey");
     expect(dto.idempotencyKey).toBe("run-42");
   });
 
   it("round-trips a delivery event, raw payload included", () => {
-    const event: StoredDeliveryEvent = {
+    const event: DeliveryEvent = {
       id: OUTBOUND_ID,
-      outboundId: OUTBOUND_ID,
+      deliveryId: OUTBOUND_ID,
       providerMessageId: "prov-1",
       recipient: message.from,
       type: "bounced",

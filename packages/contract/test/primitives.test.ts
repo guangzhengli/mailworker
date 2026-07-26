@@ -1,4 +1,4 @@
-import { durationMs, emailAddress, queryBool, toIso, ulid } from "@shared/primitives";
+import { durationMs, emailAddress, queryBool, toIso, ulid } from "@contract/primitives";
 import { describe, expect, it } from "vitest";
 
 describe("domain scalars", () => {

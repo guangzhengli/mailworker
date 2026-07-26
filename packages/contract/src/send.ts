@@ -1,13 +1,9 @@
-import type {
-  OutboundMessage,
-  SendMessageRequest,
-  StoredDeliveryEvent,
-} from "@mailworker/core";
-import { MAX_RECIPIENTS } from "@mailworker/core";
-import { emailAddress, toIso, ulid } from "@shared/primitives";
+import { emailAddress, toIso, ulid } from "@contract/primitives";
+import type { Delivery, DeliveryEvent, SendMessageRequest } from "@mailworker/core";
+import { SENDING_LIMITS } from "@mailworker/core";
 import { z } from "zod";
 
-export const outboundStatus = z.enum([
+export const deliveryStatus = z.enum([
   "draft",
   "pending_approval",
   "queued",
@@ -39,9 +35,9 @@ export const deliveryEventType = z.enum([
 export const sendBody = z
   .strictObject({
     from: emailAddress,
-    to: z.array(emailAddress).min(1).max(MAX_RECIPIENTS),
-    cc: z.array(emailAddress).max(MAX_RECIPIENTS).optional(),
-    bcc: z.array(emailAddress).max(MAX_RECIPIENTS).optional(),
+    to: z.array(emailAddress).min(1).max(SENDING_LIMITS.MAX_RECIPIENTS),
+    cc: z.array(emailAddress).max(SENDING_LIMITS.MAX_RECIPIENTS).optional(),
+    bcc: z.array(emailAddress).max(SENDING_LIMITS.MAX_RECIPIENTS).optional(),
     subject: z.string().max(2000),
     text: z.string().optional(),
     html: z.string().optional(),
@@ -79,14 +75,14 @@ export const sendBody = z
     }),
   );
 
-export const outboundDto = z.object({
+export const deliveryDto = z.object({
   id: z.string(),
   inboxId: z.string().nullable(),
   identityId: z.string().nullable(),
   /** The stored sent copy, once it exists. `GET /v1/messages/:id` reads it. */
   messageId: z.string().nullable(),
   idempotencyKey: z.string().nullable(),
-  status: outboundStatus,
+  status: deliveryStatus,
   attempts: z.number().int().nonnegative(),
   recipients: z.array(z.string()),
   providerMessageId: z.string().nullable(),
@@ -98,26 +94,26 @@ export const outboundDto = z.object({
   updatedAt: z.string(),
 });
 
-export type OutboundDto = z.infer<typeof outboundDto>;
+export type DeliveryDto = z.infer<typeof deliveryDto>;
 
 /** `payloadKey` stays off the wire for the same reason as a message's `rawKey`. */
-export function toOutboundDto(outbound: OutboundMessage): OutboundDto {
+export function toDeliveryDto(delivery: Delivery): DeliveryDto {
   return {
-    id: outbound.id,
-    inboxId: outbound.inboxId,
-    identityId: outbound.identityId,
-    messageId: outbound.messageId,
-    idempotencyKey: outbound.idempotencyKey,
-    status: outbound.status,
-    attempts: outbound.attempts,
-    recipients: [...outbound.recipients],
-    providerMessageId: outbound.providerMessageId,
-    rejectReason: outbound.rejectReason,
-    lastError: outbound.lastError,
-    approvedBy: outbound.approvedBy,
-    approvedAt: toIso(outbound.approvedAt),
-    createdAt: toIso(outbound.createdAt),
-    updatedAt: toIso(outbound.updatedAt),
+    id: delivery.id,
+    inboxId: delivery.inboxId,
+    identityId: delivery.identityId,
+    messageId: delivery.messageId,
+    idempotencyKey: delivery.idempotencyKey,
+    status: delivery.status,
+    attempts: delivery.attempts,
+    recipients: [...delivery.recipients],
+    providerMessageId: delivery.providerMessageId,
+    rejectReason: delivery.rejectReason,
+    lastError: delivery.lastError,
+    approvedBy: delivery.approvedBy,
+    approvedAt: toIso(delivery.approvedAt),
+    createdAt: toIso(delivery.createdAt),
+    updatedAt: toIso(delivery.updatedAt),
   };
 }
 
@@ -143,7 +139,7 @@ export const deliveryEventDto = z.object({
 
 export type DeliveryEventDto = z.infer<typeof deliveryEventDto>;
 
-export function toDeliveryEventDto(event: StoredDeliveryEvent): DeliveryEventDto {
+export function toDeliveryEventDto(event: DeliveryEvent): DeliveryEventDto {
   return {
     id: event.id,
     type: event.type,
@@ -163,7 +159,7 @@ export function toDeliveryEventDto(event: StoredDeliveryEvent): DeliveryEventDto
  * yet (DESIGN.md §2.2).
  */
 export const deliveryTimelineDto = z.object({
-  outbound: outboundDto,
+  delivery: deliveryDto,
   events: z.array(deliveryEventDto),
 });
 
@@ -176,18 +172,18 @@ export type DeliveryTimelineDto = z.infer<typeof deliveryTimelineDto>;
  * tell it apart from having sent twice.
  */
 export const sendResponse = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("queued"), outbound: outboundDto }),
-  z.object({ outcome: z.literal("pending_approval"), outbound: outboundDto }),
-  z.object({ outcome: z.literal("duplicate"), outbound: outboundDto }),
+  z.object({ outcome: z.literal("queued"), delivery: deliveryDto }),
+  z.object({ outcome: z.literal("pending_approval"), delivery: deliveryDto }),
+  z.object({ outcome: z.literal("duplicate"), delivery: deliveryDto }),
 ]);
 
 export type SendResponse = z.infer<typeof sendResponse>;
 
-export const listOutboundQuery = z.object({
-  status: outboundStatus.optional(),
+export const listDeliveriesQuery = z.object({
+  status: deliveryStatus.optional(),
   identity: ulid.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: ulid.optional(),
 });
 
-export type ListOutboundQuery = z.infer<typeof listOutboundQuery>;
+export type ListDeliveriesQuery = z.infer<typeof listDeliveriesQuery>;

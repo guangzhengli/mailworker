@@ -1,4 +1,3 @@
-import { DomainError } from "@mailworker/core";
 import {
   ERROR_CODES,
   ExitCode,
@@ -6,7 +5,8 @@ import {
   exitCodeFor,
   httpStatusFor,
   toErrorResponse,
-} from "@shared/errors";
+} from "@contract/errors";
+import { DomainError } from "@mailworker/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 

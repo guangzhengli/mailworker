@@ -1,6 +1,6 @@
-import { createInboxBody, listInboxesQuery } from "@shared/inbox";
-import { listMessagesQuery, waitQuery } from "@shared/message";
-import { sendBody } from "@shared/send";
+import { createInboxBody, listInboxesQuery } from "@contract/inbox";
+import { listMessagesQuery, waitQuery } from "@contract/message";
+import { sendBody } from "@contract/send";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -34,7 +34,7 @@ describe("createInboxBody", () => {
   });
 
   it("leaves the address-or-prefix rule to the domain", () => {
-    // Shape here, rules there. Both are accepted structurally; createInbox
+    // Shape here, rules there. Both are accepted structurally; the service
     // refuses the pair, and it is the only place that knows why.
     expect(createInboxBody.safeParse({ address: "a@b.com", prefix: "agent" }).success).toBe(
       true,

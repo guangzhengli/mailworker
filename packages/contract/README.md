@@ -1,4 +1,4 @@
-# @mailworker/shared
+# @mailworker/contract
 
 The wire contract, defined once. Request schemas, response DTOs and the error
 code table, shared by the API, the SDK, the CLI and the dashboard.

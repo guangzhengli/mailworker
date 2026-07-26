@@ -12,6 +12,6 @@ import { fileURLToPath } from "node:url";
 export const packageAliases: Record<string, string> = {
   "@core": fileURLToPath(new URL("./packages/core/src", import.meta.url)),
   "@mime": fileURLToPath(new URL("./packages/mime/src", import.meta.url)),
-  "@shared": fileURLToPath(new URL("./packages/shared/src", import.meta.url)),
+  "@contract": fileURLToPath(new URL("./packages/contract/src", import.meta.url)),
   "@web": fileURLToPath(new URL("./apps/web", import.meta.url)),
 };

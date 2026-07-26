@@ -1,11 +1,10 @@
-import type { EmailAddress, RfcMessageId, Scope, ThreadId, Ulid } from "@mailworker/core";
 import {
-  EmailAddress as EmailAddressVO,
+  EmailAddress,
   MAX_PAGE_SIZE,
-  RfcMessageId as RfcMessageIdVO,
-  Scope as ScopeVO,
-  ThreadId as ThreadIdVO,
-  Ulid as UlidVO,
+  RfcMessageId,
+  Scope,
+  ThreadId,
+  Ulid,
 } from "@mailworker/core";
 import { z } from "zod";
 
@@ -36,17 +35,17 @@ function domainScalar<T>(parse: (input: string) => T, label: string) {
   });
 }
 
-export const ulid = domainScalar<Ulid>((v) => UlidVO.parse(v), "ULID");
+export const ulid = domainScalar<Ulid>((v) => Ulid.parse(v), "ULID");
 export const emailAddress = domainScalar<EmailAddress>(
-  (v) => EmailAddressVO.parse(v),
+  (v) => EmailAddress.parse(v),
   "email address",
 );
 export const rfcMessageId = domainScalar<RfcMessageId>(
-  (v) => RfcMessageIdVO.parse(v),
+  (v) => RfcMessageId.parse(v),
   "Message-ID",
 );
-export const threadId = domainScalar<ThreadId>((v) => ThreadIdVO.parse(v), "thread id");
-export const scope = domainScalar<Scope>((v) => ScopeVO.parse(v), "scope");
+export const threadId = domainScalar<ThreadId>((v) => ThreadId.parse(v), "thread id");
+export const scope = domainScalar<Scope>((v) => Scope.parse(v), "scope");
 
 /** Opaque caller-supplied labels: a test run id, a ticket number. */
 export const metadata = z.record(z.string().min(1).max(64), z.string().max(512));

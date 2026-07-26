@@ -1,9 +1,3 @@
-import type {
-  AttachmentMeta,
-  Message,
-  MessageSummary,
-  WaitForMessageRequest,
-} from "@mailworker/core";
 import {
   durationMs,
   emailAddress,
@@ -11,7 +5,13 @@ import {
   queryBool,
   toIso,
   ulid,
-} from "@shared/primitives";
+} from "@contract/primitives";
+import type {
+  AttachmentMeta,
+  Message,
+  MessageSummary,
+  WaitForMessageRequest,
+} from "@mailworker/core";
 import { z } from "zod";
 
 export const attachmentDto = z.object({

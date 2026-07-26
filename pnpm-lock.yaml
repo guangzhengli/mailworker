@@ -23,18 +23,21 @@ importers:
 
   apps/web:
     dependencies:
+      '@mailworker/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@mailworker/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@mailworker/mime':
         specifier: workspace:*
         version: link:../../packages/mime
-      '@mailworker/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2
+      ulid:
+        specifier: ^3.0.2
+        version: 3.0.2
     devDependencies:
       '@cloudflare/vitest-pool-workers':
         specifier: ^0.18.8
@@ -54,6 +57,25 @@ importers:
       wrangler:
         specifier: ^4.114.0
         version: 4.114.0
+
+  packages/contract:
+    dependencies:
+      '@mailworker/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.20.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.1))
 
   packages/core:
     devDependencies:
@@ -76,25 +98,6 @@ importers:
       '@mailworker/core':
         specifier: workspace:*
         version: link:../core
-      '@types/node':
-        specifier: ^22.15.3
-        version: 22.20.1
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@22.20.1)(vite@7.3.6(@types/node@22.20.1)(tsx@4.23.1))
-
-  packages/shared:
-    dependencies:
-      '@mailworker/core':
-        specifier: workspace:*
-        version: link:../core
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-    devDependencies:
       '@types/node':
         specifier: ^22.15.3
         version: 22.20.1
@@ -1445,6 +1448,10 @@ packages:
     engines: {node: '>=16.20.0'}
     hasBin: true
 
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
+
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
@@ -2513,6 +2520,8 @@ snapshots:
       '@typescript/typescript-sunos-x64': 7.0.2
       '@typescript/typescript-win32-arm64': 7.0.2
       '@typescript/typescript-win32-x64': 7.0.2
+
+  ulid@3.0.2: {}
 
   undici-types@6.21.0: {}
 

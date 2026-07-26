@@ -19,7 +19,7 @@
     "paths": {
       "@core/*": ["./packages/core/src/*"],
       "@mime/*": ["./packages/mime/src/*"],
-      "@shared/*": ["./packages/shared/src/*"],
+      "@contract/*": ["./packages/contract/src/*"],
       "@web/*": ["./apps/web/*"]
     },
 
