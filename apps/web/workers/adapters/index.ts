@@ -23,7 +23,9 @@ export {
 export { D1Inboxes } from "@web/workers/adapters/d1-inboxes";
 export { D1Messages } from "@web/workers/adapters/d1-messages";
 export { D1Suppressions } from "@web/workers/adapters/d1-suppressions";
+export { D1Webhooks } from "@web/workers/adapters/d1-webhooks";
 export { DohResolver } from "@web/workers/adapters/dns";
+export type { QueuedEvent } from "@web/workers/adapters/queues";
 export {
   LoggingEventBus,
   QueueDispatch,
@@ -36,3 +38,4 @@ export {
   CloudflareTransport,
   UnconfiguredTransport,
 } from "@web/workers/adapters/transport";
+export { SigningWebhookSender } from "@web/workers/adapters/webhook-sender";

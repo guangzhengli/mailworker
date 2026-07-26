@@ -12,3 +12,4 @@ export * from "@core/domain/delivery/loop-breaker-policy";
 export * from "@core/domain/delivery/send-policy";
 export * from "@core/domain/delivery/sending-limits";
 export * from "@core/domain/delivery/suppression";
+export * from "@core/domain/delivery/webhook";

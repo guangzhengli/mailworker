@@ -1,4 +1,5 @@
 export * from "@contract/errors";
+export * from "@contract/identity";
 export * from "@contract/inbox";
 export * from "@contract/message";
 export * from "@contract/primitives";

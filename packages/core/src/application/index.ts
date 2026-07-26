@@ -1,4 +1,5 @@
 import { createDeliveryService, type DeliveryDeps } from "@core/application/delivery-service";
+import { createIdentityService, type IdentityDeps } from "@core/application/identity-service";
 import {
   createIngestionService,
   type IngestionDeps,
@@ -6,6 +7,7 @@ import {
 import { createMailboxService, type MailboxDeps } from "@core/application/mailbox-service";
 
 export * from "@core/application/delivery-service";
+export * from "@core/application/identity-service";
 export * from "@core/application/ingestion-service";
 export * from "@core/application/mailbox-service";
 
@@ -17,19 +19,21 @@ export * from "@core/application/mailbox-service";
  * every use case picks a subset out of drifts the moment someone adds a
  * dependency and forgets to narrow the pick.
  */
-export interface CoreDeps extends MailboxDeps, IngestionDeps, DeliveryDeps {}
+export interface CoreDeps extends MailboxDeps, IngestionDeps, DeliveryDeps, IdentityDeps {}
 
 /**
- * The whole application surface: three services, one per bounded context.
+ * The whole application surface: one service per bounded context.
  *
  * This is the map. An adapter wires it once at startup and then talks to
  * `services.delivery.send(...)` — the noun is the domain, the verb is the
  * operation, and there is no fourth thing to learn.
  *
- * `identity` joins them at M3, when scoped keys and the approval queue land.
+ * Four contexts, four services. `identity` is what makes the other three safe
+ * to hand to an agent: without it there is one credential with every scope.
  */
 export function createServices(deps: CoreDeps) {
   return {
+    identity: createIdentityService(deps),
     mailbox: createMailboxService(deps),
     ingestion: createIngestionService(deps),
     delivery: createDeliveryService(deps),

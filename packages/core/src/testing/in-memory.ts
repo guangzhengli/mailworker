@@ -21,6 +21,7 @@ import type {
   SuppressionEntry,
   ThreadId,
   Ulid,
+  WebhookSubscription,
 } from "@core/domain";
 import {
   CROCKFORD,
@@ -60,6 +61,9 @@ import type {
   Secrets,
   SuppressionList,
   Waiter,
+  WebhookRepository,
+  WebhookRequest,
+  WebhookSender,
 } from "@core/domain/ports";
 
 // ---------------------------------------------------------------------------
@@ -111,13 +115,20 @@ function encodeCrockford(value: number, length: number): string {
   return out;
 }
 
-/** Not a real digest, and a counter instead of entropy. Tests only. */
+/**
+ * Not a real digest, and a counter instead of entropy. Tests only.
+ *
+ * Still lowercase hex of exactly the requested length, though — that part is
+ * not cosmetic. `ApiKeyToken.PATTERN` only accepts hex, so a fake that minted
+ * `s1000…` would produce tokens the real parser rejects, and every in-memory
+ * authentication test would be exercising a token shape that cannot exist.
+ */
 export class FakeSecrets implements Secrets {
   private counter = 0;
 
   generate(byteLength = 16): string {
     this.counter += 1;
-    return `s${this.counter}`.padEnd(byteLength * 2, "0").slice(0, byteLength * 2);
+    return this.counter.toString(16).padStart(byteLength * 2, "0");
   }
 
   async hash(plaintext: string): Promise<string> {
@@ -569,6 +580,53 @@ export class StaticDns implements DnsResolver {
 
   async mx(name: string): Promise<string[]> {
     return this.records.mx?.[name] ?? [];
+  }
+}
+
+export class InMemoryWebhooks implements WebhookRepository {
+  readonly rows = new Map<string, WebhookSubscription[]>();
+
+  async insert(ctx: Caller, subscription: WebhookSubscription): Promise<void> {
+    scoped(this.rows, ctx).push(subscription);
+  }
+
+  async update(ctx: Caller, subscription: WebhookSubscription): Promise<void> {
+    const rows = scoped(this.rows, ctx);
+    const index = rows.findIndex((row) => row.id === subscription.id);
+    if (index >= 0) rows[index] = subscription;
+  }
+
+  async findById(ctx: Caller, id: Ulid): Promise<WebhookSubscription | null> {
+    return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
+  }
+
+  async list(ctx: Caller): Promise<WebhookSubscription[]> {
+    return [...scoped(this.rows, ctx)];
+  }
+
+  async deleteById(ctx: Caller, id: Ulid): Promise<void> {
+    const rows = scoped(this.rows, ctx);
+    const index = rows.findIndex((row) => row.id === id);
+    if (index >= 0) rows.splice(index, 1);
+  }
+}
+
+/**
+ * Records deliveries instead of making them, and can be told to fail.
+ *
+ * `failFor` exists because the interesting assertion about fan-out is not that
+ * it delivers — it is that one subscriber being down does not stop the others
+ * being told, which needs a fake that can be down.
+ */
+export class RecordingWebhookSender implements WebhookSender {
+  readonly delivered: WebhookRequest[] = [];
+  readonly failFor = new Set<string>();
+
+  async deliver(request: WebhookRequest): Promise<void> {
+    if (this.failFor.has(request.url)) {
+      throw new Error(`refusing ${request.url}`);
+    }
+    this.delivered.push(request);
   }
 }
 

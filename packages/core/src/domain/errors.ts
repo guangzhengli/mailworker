@@ -15,6 +15,9 @@ export type DomainErrorCode =
   | "address_taken"
   | "unroutable_address"
   | "message_not_found"
+  | "identity_not_found"
+  | "api_key_not_found"
+  | "webhook_not_found"
   // delivery
   | "invalid_state_transition"
   | "send_rejected"

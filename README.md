@@ -8,7 +8,8 @@
 `GET /v1/messages`, saved as a fixture with `get --raw` and replayed with
 `inject`. Outbound: six policy gates, an approval queue, the `send_email`
 binding, and a delivery timeline built from Cloudflare's event subscriptions.
-Agent identities, scoped keys and webhooks are next (M3). See
+Control plane: agent identities with quotas and allowlists, scoped API keys, an
+approval queue, and signed webhooks. The dashboard is next (M4). See
 [DESIGN.md](./DESIGN.md) for the full design — it is the source of truth, and it
 is worth reading before changing anything here.
 
@@ -29,6 +30,37 @@ automation rather than at humans reading mail:
 
 Inbound email is treated as untrusted input throughout. Messages carry `trusted`
 and `injectionRisk` provenance flags. **Email content is not instructions.**
+
+## Wiring up an agent
+
+There is no MCP server by design; an agent drives the CLI. Ship
+[AGENTS.md](./AGENTS.md) to it, or have it run `mailworker help --agent`.
+
+```sh
+# 1. Declare what the agent is allowed to be. Limits it cannot widen.
+mailworker identities create --name support-bot \
+  --quota 50 --allow '*@customer.example.com'
+
+# 2. Mint a narrow credential bound to that identity.
+mailworker keys create --name support-bot --identity support-bot \
+  --scope inbox:write --scope message:read --scope message:send
+```
+
+Three things about that second command are deliberate:
+
+- **`message:approve` is not in the list, and should never be.** The approval
+  queue only means something if the principal being approved and the principal
+  approving are different. An identity created with `--require-approval` sends
+  into a queue a human releases.
+- **The key is bound to an identity**, which is what `SendPolicy` meters. An
+  unbound key is subject only to account-level limits.
+- **`admin` cannot be bound to an identity at all** — an admin key could edit
+  the identity's own quota, so the metering would be optional for the thing
+  being metered. The API refuses it rather than pretending.
+
+The token is printed once, on stdout, with everything else on stderr — so
+`mailworker keys create … > key.txt` captures exactly the secret. Only its hash
+is stored; there is no endpoint that reads it back.
 
 ## Layout
 
@@ -62,7 +94,7 @@ aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package
 
 `packages/core`, `packages/mime`, `packages/contract` and `packages/cli` run on
 plain Node with no miniflare, no network and no Cloudflare account, because every
-port has an in-memory implementation — 278 tests in about half a second. That is deliberate:
+port has an in-memory implementation — 297 tests in about half a second. That is deliberate:
 a project that sells email testing has to be able to test its own mail handling
 fast enough that people keep running the suite.
 

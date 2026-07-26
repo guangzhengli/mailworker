@@ -1,9 +1,10 @@
-import type { DeliveryEventType, ProviderDeliveryEvent } from "@mailworker/core";
+import type { DeliveryEventType, DomainEvent, ProviderDeliveryEvent } from "@mailworker/core";
 import { Caller, EmailAddress } from "@mailworker/core";
+import type { QueuedEvent } from "@web/workers/adapters";
 import { createContainer } from "@web/workers/container";
 
 /**
- * The two queues, one consumer.
+ * The three queues, one consumer.
  *
  * `mailworker-dispatch` is ours: `send` ends at `queued` with the decision and
  * the payload already durable, and this is where the network call happens. That
@@ -15,8 +16,12 @@ import { createContainer } from "@web/workers/container";
  * are what turns a send from fire-and-forget into something with a timeline,
  * and they arrive minutes to days after the handoff.
  *
- * One handler for both because a Worker gets exactly one `queue` export; the
- * queue name is the discriminator, and each branch is three lines.
+ * `mailworker-webhooks` is the fan-out to whoever subscribed. Separate from the
+ * other two because the failure modes are unrelated: someone else's server
+ * being down must not delay anyone's mail.
+ *
+ * One handler for all three because a Worker gets exactly one `queue` export;
+ * the queue name is the discriminator, and each branch is three lines.
  */
 export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const { services, accountId } = createContainer(env);
@@ -24,7 +29,10 @@ export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<voi
 
   for (const message of batch.messages) {
     try {
-      if (batch.queue.endsWith("events")) {
+      if (batch.queue.endsWith("webhooks")) {
+        const queued = message.body as QueuedEvent;
+        await services.delivery.fanOut(ctx, reviveEvent(queued.event), queued.id);
+      } else if (batch.queue.endsWith("events")) {
         const event = toProviderEvent(message.body);
         // An unrecognised payload is acked, not retried. Cloudflare may add
         // event types, and a message we will never understand would otherwise
@@ -42,6 +50,18 @@ export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<voi
       message.retry();
     }
   }
+}
+
+/**
+ * Undo the one thing JSON loses on the way through a queue.
+ *
+ * `occurredAt` is a `Date` in the domain and a string on the wire, and the
+ * webhook payload states it as an ISO timestamp — so it has to come back as a
+ * `Date` here, or the signature would be computed over `[object Object]` and
+ * every receiver would reject it for reasons nobody could see from either end.
+ */
+function reviveEvent(raw: Record<string, unknown>): DomainEvent {
+  return { ...raw, occurredAt: new Date(String(raw["occurredAt"])) } as unknown as DomainEvent;
 }
 
 /** The six types the subscription publishes, mapped onto our status vocabulary. */

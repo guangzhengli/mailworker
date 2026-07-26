@@ -41,17 +41,19 @@ export class UnavailableDispatchQueue implements DispatchQueue {
 }
 
 /**
- * Domain events as structured log lines.
+ * Domain events: logged, and queued for webhook fan-out.
  *
- * `observability` is on in wrangler.jsonc, so these are queryable in the
- * dashboard and visible in `wrangler tail` — which is what they are for until
- * something subscribes. "Why did this message get filed as untrusted" is
- * answerable without a webhook subscriber existing yet.
+ * Both, not either. The log line is what makes "why did this message get filed
+ * as untrusted" answerable in `wrangler tail` with no subscriber configured,
+ * and `observability` is on so it stays queryable afterwards. The queue is what
+ * gets it to someone else's server, with Cloudflare owning the retries.
  *
- * M3 replaces this with a Queues producer, once there is something on the other
- * end: webhook fan-out with retries. Producing to a queue nobody consumes would
- * be a binding to provision, a consumer to deploy and a dead-letter queue to
- * watch, in exchange for nothing.
+ * Publishing to the queue never fails the caller. An event is a fact about
+ * something that already happened — the message is stored, the send is queued —
+ * so a queue hiccup must not roll back the operation that produced it. It is
+ * logged loudly instead, which is the honest trade: at-most-once fan-out for
+ * work that has already succeeded, rather than failing a send because a webhook
+ * queue was briefly unavailable.
  *
  * `wait` deliberately does not come through here. A waiter is notified by the
  * ingest path directly, after the row is committed, because a caller blocked on
@@ -59,9 +61,33 @@ export class UnavailableDispatchQueue implements DispatchQueue {
  * that fans out asynchronously cannot promise that.
  */
 export class LoggingEventBus implements EventBus {
+  constructor(private readonly queue?: Queue<QueuedEvent>) {}
+
   async publish(events: readonly DomainEvent[]): Promise<void> {
     for (const event of events) {
       console.log(JSON.stringify({ ...event, occurredAt: event.occurredAt.toISOString() }));
     }
+
+    if (this.queue === undefined || events.length === 0) return;
+    try {
+      await this.queue.sendBatch(
+        events.map((event) => ({
+          body: {
+            // A stable id per event, so a subscriber retried by the queue can
+            // recognise the redelivery rather than counting it twice.
+            id: crypto.randomUUID(),
+            event: { ...event, occurredAt: event.occurredAt.toISOString() },
+          },
+        })),
+      );
+    } catch (error) {
+      console.error("webhook fan-out could not be queued", error);
+    }
   }
+}
+
+export interface QueuedEvent {
+  readonly id: string;
+  /** The event with its `Date` serialized; the consumer revives it. */
+  readonly event: Record<string, unknown>;
 }

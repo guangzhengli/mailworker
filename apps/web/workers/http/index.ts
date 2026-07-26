@@ -3,6 +3,7 @@ import { createContainer } from "@web/workers/container";
 import { authenticate } from "@web/workers/http/auth";
 import type { HttpEnv } from "@web/workers/http/env";
 import { failure, onError } from "@web/workers/http/errors";
+import { identities, keys, webhooks } from "@web/workers/http/identity";
 import { inboxes } from "@web/workers/http/inboxes";
 import { ingest, messages, threads } from "@web/workers/http/messages";
 import { send, suppressions } from "@web/workers/http/send";
@@ -60,6 +61,9 @@ export const app = new Hono<HttpEnv>()
   .route("/v1/ingest", ingest)
   .route("/v1/send", send)
   .route("/v1/suppressions", suppressions)
+  .route("/v1/identities", identities)
+  .route("/v1/keys", keys)
+  .route("/v1/webhooks", webhooks)
 
   /**
    * The backend for `mailworker doctor`.

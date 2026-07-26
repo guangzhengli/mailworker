@@ -1,6 +1,7 @@
 import type { ApiKeyRepository, CoreDeps, Services } from "@mailworker/core";
 import { AccountId, createServices } from "@mailworker/core";
 import { PostalMimeParser, Rfc5322Builder } from "@mailworker/mime";
+import type { QueuedEvent } from "@web/workers/adapters";
 import {
   CloudflareTransport,
   createDb,
@@ -11,10 +12,12 @@ import {
   D1Inboxes,
   D1Messages,
   D1Suppressions,
+  D1Webhooks,
   DohResolver,
   LoggingEventBus,
   QueueDispatch,
   R2Blobs,
+  SigningWebhookSender,
   SystemClock,
   UlidGenerator,
   UnavailableDispatchQueue,
@@ -58,6 +61,7 @@ export interface Container {
 export function createContainer(env: Env): Container {
   const db = createDb(env.DB);
   const messages = new D1Messages(db);
+  const apiKeys = new D1ApiKeys(db);
 
   // `wrangler types` marks every declared binding as present, which is true of
   // a deployment and false of the test environment, where neither is bound.
@@ -65,6 +69,7 @@ export function createContainer(env: Env): Container {
   // stated once, in the place that knows why.
   const sendEmail: SendEmail | undefined = env.SEND_EMAIL;
   const dispatch: Queue<string> | undefined = env.DISPATCH_QUEUE;
+  const webhookQueue: Queue<QueuedEvent> | undefined = env.WEBHOOK_QUEUE;
 
   const deps: CoreDeps = {
     clock: new SystemClock(),
@@ -76,11 +81,14 @@ export function createContainer(env: Env): Container {
     deliveries: new D1Deliveries(db),
     identities: new D1Identities(db),
     domains: new D1Domains(db),
+    webhooks: new D1Webhooks(db),
+    apiKeys,
     suppressions: new D1Suppressions(db),
     blobs: new R2Blobs(env.BLOBS),
 
     dns: new DohResolver(),
-    events: new LoggingEventBus(),
+    webhookSender: new SigningWebhookSender(),
+    events: new LoggingEventBus(webhookQueue),
     waiter: new DurableWaiter(env.WAITER, messages),
     mimeParser: new PostalMimeParser(),
     mimeBuilder: new Rfc5322Builder(),
@@ -100,7 +108,7 @@ export function createContainer(env: Env): Container {
 
   return {
     services: createServices(deps),
-    apiKeys: new D1ApiKeys(db),
+    apiKeys,
     accountId: AccountId.parse(env.MAILWORKER_ACCOUNT_ID),
   };
 }

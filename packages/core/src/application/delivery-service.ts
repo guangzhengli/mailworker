@@ -3,6 +3,8 @@ import type {
   Check,
   CheckStatus,
   DeliveryEventType,
+  DomainEvent,
+  DomainEventType,
   Page,
   RfcMessageId,
   SuppressionEntry,
@@ -22,6 +24,7 @@ import {
   SendPolicy,
   ThreadingPolicy,
   Ulid,
+  WebhookSubscription,
 } from "@core/domain";
 import type {
   BlobStore,
@@ -39,7 +42,10 @@ import type {
   MailTransport,
   MessageRepository,
   MimeBuilder,
+  Secrets,
   SuppressionList,
+  WebhookRepository,
+  WebhookSender,
 } from "@core/domain/ports";
 /**
  * delivery — the gates in front of a send, the network call, and the fate after.
@@ -58,12 +64,15 @@ export interface DeliveryDeps {
   readonly deliveries: DeliveryRepository;
   readonly identities: IdentityRepository;
   readonly domains: DomainRepository;
+  readonly webhooks: WebhookRepository;
   readonly suppressions: SuppressionList;
   readonly blobs: BlobStore;
   readonly events: EventBus;
   readonly transport: MailTransport;
   readonly dispatchQueue: DispatchQueue;
   readonly dns: DnsResolver;
+  readonly secrets: Secrets;
+  readonly webhookSender: WebhookSender;
   readonly mimeBuilder: MimeBuilder;
 }
 
@@ -671,6 +680,88 @@ export function createDeliveryService(deps: DeliveryDeps) {
     async unsuppress(ctx: Caller, address: EmailAddress): Promise<void> {
       Caller.require(ctx, "admin");
       await deps.suppressions.remove(ctx, address);
+    },
+
+    /**
+     * Subscribe to events.
+     *
+     * The secret is minted here and returned once. Unlike an API key it is
+     * stored in the clear, because signing needs the secret itself and both
+     * ends must hold the same one — and what that buys is that a receiver
+     * verifies locally and never sends it back to us.
+     */
+    async createWebhook(
+      ctx: Caller,
+      input: { url: string; events?: readonly DomainEventType[] },
+    ): Promise<WebhookSubscription> {
+      Caller.require(ctx, "admin");
+      const subscription = WebhookSubscription.create({
+        id: deps.ids.ulid(),
+        accountId: ctx.accountId,
+        url: input.url,
+        secret: `whsec_${deps.secrets.generate(24)}`,
+        now: deps.clock.now(),
+        ...(input.events === undefined ? {} : { events: input.events }),
+      });
+      await deps.webhooks.insert(ctx, subscription);
+      return subscription;
+    },
+
+    async listWebhooks(ctx: Caller): Promise<WebhookSubscription[]> {
+      Caller.require(ctx, "admin");
+      return await deps.webhooks.list(ctx);
+    },
+
+    async deleteWebhook(ctx: Caller, id: Ulid): Promise<void> {
+      Caller.require(ctx, "admin");
+      const existing = await deps.webhooks.findById(ctx, id);
+      if (existing === null) throw notFound("webhook_not_found", `No webhook ${id}.`, { id });
+      await deps.webhooks.deleteById(ctx, id);
+    },
+
+    /**
+     * Fan one event out to whoever subscribed to it.
+     *
+     * Runs in the queue consumer, one event at a time. Each subscriber is an
+     * independent attempt: a subscriber whose server is down must not stop the
+     * others from being told, so failures are collected and re-thrown together
+     * only after every delivery has been tried. Throwing is how the queue is
+     * asked to retry, and it will retry the whole event — which is why the
+     * request carries a stable `messageId` for the receiver to dedupe on.
+     */
+    async fanOut(ctx: Caller, event: DomainEvent, eventId: string): Promise<number> {
+      const subscriptions = await deps.webhooks.list(ctx);
+      const wanted = subscriptions.filter((s) => WebhookSubscription.wants(s, event));
+      if (wanted.length === 0) return 0;
+
+      const body = JSON.stringify({
+        id: eventId,
+        type: event.type,
+        occurredAt: event.occurredAt.toISOString(),
+        data: event,
+      });
+
+      const results = await Promise.allSettled(
+        wanted.map((subscription) =>
+          deps.webhookSender.deliver({
+            url: subscription.url,
+            secret: subscription.secret,
+            // Per subscription, not per event: two subscribers retrying
+            // independently must not be told they received the same delivery.
+            messageId: `${eventId}.${subscription.id}`,
+            body,
+            timestamp: event.occurredAt,
+          }),
+        ),
+      );
+
+      const failures = results.filter((result) => result.status === "rejected");
+      if (failures.length > 0) {
+        throw new Error(
+          `${failures.length} of ${wanted.length} webhook deliveries failed for ${event.type}.`,
+        );
+      }
+      return wanted.length;
     },
 
     /**

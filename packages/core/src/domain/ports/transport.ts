@@ -33,6 +33,29 @@ export interface DispatchQueue {
   enqueue(ctx: Caller, deliveryId: Ulid): Promise<void>;
 }
 
+/**
+ * Sending a signed webhook, and retrying it.
+ *
+ * A port because retry policy is infrastructure, not a rule: in production
+ * Cloudflare Queues owns the backoff and the dead-letter queue, and
+ * re-implementing exponential backoff in the domain would produce thirty lines
+ * that look right and a thundering herd the first time a subscriber goes down.
+ */
+export interface WebhookSender {
+  /** One delivery attempt. Throwing asks the queue to retry. */
+  deliver(request: WebhookRequest): Promise<void>;
+}
+
+export interface WebhookRequest {
+  readonly url: string;
+  readonly secret: string;
+  /** Unique per delivery attempt-set; the receiver dedupes on it. */
+  readonly messageId: string;
+  /** The serialized event. Signed verbatim — re-encoding it breaks the signature. */
+  readonly body: string;
+  readonly timestamp: Date;
+}
+
 export interface DispatchRequest {
   readonly from: EmailAddress;
   readonly fromName: string | null;

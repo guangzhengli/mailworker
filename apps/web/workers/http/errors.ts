@@ -88,10 +88,16 @@ export function invalid(c: Context, error: ValidationIssues): Response {
  * while every service signature wants the second. Spreading each field behind
  * its own ternary says the same thing eight times; this says it once.
  */
-export function compact<T extends object>(
-  value: T,
-): { [K in keyof T]?: Exclude<T[K], undefined> } {
-  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as {
-    [K in keyof T]?: Exclude<T[K], undefined>;
-  };
+export type Compacted<T> = {
+  // Keys that could not be undefined stay required — dropping that would let a
+  // missing `name` through to a service signature that promises to have one.
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K];
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
+export function compact<T extends object>(value: T): Compacted<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined),
+  ) as Compacted<T>;
 }

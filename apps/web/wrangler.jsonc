@@ -44,6 +44,13 @@
         // re-run of the policy gates.
         "binding": "DISPATCH_QUEUE",
         "queue": "mailworker-dispatch"
+      },
+      {
+        // Domain events, fanned out to webhook subscribers. A separate queue
+        // from dispatch because the failure modes are unrelated: a subscriber
+        // being down must not delay anyone's mail.
+        "binding": "WEBHOOK_QUEUE",
+        "queue": "mailworker-webhooks"
       }
     ],
     "consumers": [
@@ -65,6 +72,15 @@
         "max_batch_size": 100,
         "max_retries": 5,
         "dead_letter_queue": "mailworker-events-dlq"
+      },
+      {
+        // Webhook fan-out. The most retries of the three, because the usual
+        // failure is someone else's deploy: a subscriber down for two minutes
+        // should not cost them the events, and Cloudflare owns the backoff.
+        "queue": "mailworker-webhooks",
+        "max_batch_size": 10,
+        "max_retries": 8,
+        "dead_letter_queue": "mailworker-webhooks-dlq"
       }
     ]
   },

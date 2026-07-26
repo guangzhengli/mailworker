@@ -15,6 +15,7 @@ import type {
   RfcMessageId,
   ThreadId,
   Ulid,
+  WebhookSubscription,
 } from "@core/domain";
 
 export interface InboxRepository {
@@ -142,6 +143,14 @@ export interface ApiKeyRepository {
   insert(ctx: Caller, key: ApiKey): Promise<void>;
   update(ctx: Caller, key: ApiKey): Promise<void>;
   list(ctx: Caller): Promise<ApiKey[]>;
+}
+
+export interface WebhookRepository {
+  insert(ctx: Caller, subscription: WebhookSubscription): Promise<void>;
+  update(ctx: Caller, subscription: WebhookSubscription): Promise<void>;
+  findById(ctx: Caller, id: Ulid): Promise<WebhookSubscription | null>;
+  list(ctx: Caller): Promise<WebhookSubscription[]>;
+  deleteById(ctx: Caller, id: Ulid): Promise<void>;
 }
 
 export interface DomainRepository {

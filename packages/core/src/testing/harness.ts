@@ -6,6 +6,7 @@ import {
   DeterministicIds,
   FakeClock,
   FakeSecrets,
+  InMemoryApiKeys,
   InMemoryBlobs,
   InMemoryDeliveries,
   InMemoryDomains,
@@ -13,10 +14,12 @@ import {
   InMemoryInboxes,
   InMemoryMessages,
   InMemorySuppressions,
+  InMemoryWebhooks,
   MemoryDispatchQueue,
   MemoryTransport,
   MemoryWaiter,
   RecordingEventBus,
+  RecordingWebhookSender,
   SimpleMimeBuilder,
   SimpleMimeParser,
   StaticDns,
@@ -36,12 +39,15 @@ export interface Harness {
   readonly messages: InMemoryMessages;
   readonly deliveries: InMemoryDeliveries;
   readonly identities: InMemoryIdentities;
+  readonly apiKeys: InMemoryApiKeys;
   readonly domains: InMemoryDomains;
   readonly blobs: InMemoryBlobs;
   readonly suppressions: InMemorySuppressions;
   readonly transport: MemoryTransport;
   readonly dispatchQueue: MemoryDispatchQueue;
   readonly dns: StaticDns;
+  readonly webhooks: InMemoryWebhooks;
+  readonly webhookSender: RecordingWebhookSender;
   readonly events: RecordingEventBus;
   readonly waiter: MemoryWaiter;
 
@@ -87,12 +93,15 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const messages = new InMemoryMessages();
   const deliveries = new InMemoryDeliveries();
   const identities = new InMemoryIdentities();
+  const apiKeys = new InMemoryApiKeys();
   const domains = new InMemoryDomains(options.routings ?? [DEFAULT_ROUTING]);
   const blobs = new InMemoryBlobs();
   const suppressions = new InMemorySuppressions();
   const transport = new MemoryTransport();
   const dispatchQueue = new MemoryDispatchQueue();
   const dns = new StaticDns();
+  const webhooks = new InMemoryWebhooks();
+  const webhookSender = new RecordingWebhookSender();
   const events = new RecordingEventBus();
   const waiter = new MemoryWaiter();
 
@@ -104,12 +113,15 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     messages,
     deliveries,
     identities,
+    apiKeys,
     domains,
     blobs,
     suppressions,
     transport,
     dispatchQueue,
     dns,
+    webhooks,
+    webhookSender,
     events,
     waiter,
     mimeParser: new SimpleMimeParser(),
@@ -133,12 +145,15 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     messages,
     deliveries,
     identities,
+    apiKeys,
     domains,
     blobs,
     suppressions,
     transport,
     dispatchQueue,
     dns,
+    webhooks,
+    webhookSender,
     events,
     waiter,
 

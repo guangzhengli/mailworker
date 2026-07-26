@@ -41,6 +41,10 @@ export const ERROR_CODES = [
   "address_taken",
   "unroutable_address",
   "message_not_found",
+  // identity
+  "identity_not_found",
+  "api_key_not_found",
+  "webhook_not_found",
   // delivery
   "invalid_state_transition",
   "send_rejected",
@@ -98,6 +102,9 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
 
   inbox_not_found: 404,
   message_not_found: 404,
+  identity_not_found: 404,
+  api_key_not_found: 404,
+  webhook_not_found: 404,
   // Gone, not missing: the inbox existed and its address is still spoken for.
   // 404 would send someone hunting for a bug in their address generation.
   inbox_expired: 410,
@@ -167,6 +174,9 @@ const EXIT_CODE: Readonly<Record<ErrorCode, ExitCode>> = {
   address_taken: ExitCode.ERROR,
   unroutable_address: ExitCode.ERROR,
   message_not_found: ExitCode.ERROR,
+  identity_not_found: ExitCode.ERROR,
+  api_key_not_found: ExitCode.ERROR,
+  webhook_not_found: ExitCode.ERROR,
   invalid_state_transition: ExitCode.ERROR,
 
   send_rejected: ExitCode.REJECTED,

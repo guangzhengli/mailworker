@@ -350,3 +350,4 @@ export type SuppressionRow = typeof suppressions.$inferSelect;
 export type AgentIdentityRow = typeof agentIdentities.$inferSelect;
 export type ApiKeyRow = typeof apiKeys.$inferSelect;
 export type DomainRow = typeof domains.$inferSelect;
+export type WebhookRow = typeof webhooks.$inferSelect;
