@@ -1,4 +1,4 @@
-import { sanitizeHtml } from "@mime/sanitize.ts";
+import { sanitizeHtml } from "@mime/sanitize";
 import { describe, expect, it } from "vitest";
 
 describe("sanitizeHtml", () => {

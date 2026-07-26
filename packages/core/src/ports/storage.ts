@@ -1,4 +1,4 @@
-import type { AuthContext, EmailAddress } from "@core/domain/index.ts";
+import type { AuthContext, EmailAddress } from "@core/domain";
 
 /**
  * Blob storage — R2 in production, a Map in tests.

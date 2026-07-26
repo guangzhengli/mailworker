@@ -1,4 +1,4 @@
-import { DomainError } from "@core/domain/errors.ts";
+import { DomainError } from "@core/domain/errors";
 
 /**
  * An RFC 5322 Message-ID, stored WITHOUT the angle brackets.

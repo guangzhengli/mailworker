@@ -5,7 +5,7 @@ import type {
   Message,
   OutboundMessage,
   Ulid,
-} from "@core/domain/index.ts";
+} from "@core/domain";
 import {
   AccountId,
   AgentIdentity as AgentIdentityVO,
@@ -15,7 +15,7 @@ import {
   OutboundMessage as OutboundVO,
   RfcMessageId,
   ThreadId,
-} from "@core/domain/index.ts";
+} from "@core/domain";
 import type {
   ApiKeyRepositoryPort,
   BlobStorePort,
@@ -24,7 +24,7 @@ import type {
   MessageRepositoryPort,
   OutboundRepositoryPort,
   SuppressionListPort,
-} from "@core/ports/index.ts";
+} from "@core/ports";
 import { beforeEach, describe, expect, it } from "vitest";
 
 /**

@@ -48,15 +48,18 @@ describe("layering", () => {
   });
 
   it("detects a layer reference in either import style", () => {
-    // A guard that matches nothing passes vacuously. When imports moved from
-    // `../ports/index.ts` to `@/ports/index.ts`, the old substring checks went
-    // silently blind — so assert the detector still bites before trusting it.
-    expect(referencesLayer("@/ports/index.ts", "ports")).toBe(true);
-    expect(referencesLayer("../ports/index.ts", "ports")).toBe(true);
-    expect(referencesLayer("../../src/testing/index.ts", "testing")).toBe(true);
-    expect(referencesLayer("@/domain/index.ts", "ports")).toBe(false);
+    // A guard that matches nothing passes vacuously, and this one has gone
+    // blind twice already: once when imports moved from `../ports/…` to
+    // `@/ports/…`, and again when the `.ts` extension and the `/index` segment
+    // were dropped, which left a barrel import as the bare `@core/ports` this
+    // regex used to need a trailing slash to see. Assert it still bites.
+    expect(referencesLayer("@core/ports", "ports")).toBe(true);
+    expect(referencesLayer("@core/ports/transport", "ports")).toBe(true);
+    expect(referencesLayer("../ports", "ports")).toBe(true);
+    expect(referencesLayer("../../src/testing", "testing")).toBe(true);
+    expect(referencesLayer("@core/domain", "ports")).toBe(false);
     // Must not fire on a filename that merely contains the layer name.
-    expect(referencesLayer("@/domain/transporters.ts", "transport")).toBe(false);
+    expect(referencesLayer("@core/domain/transporters", "transport")).toBe(false);
   });
 
   it("keeps the domain from importing ports or application code", () => {
@@ -72,7 +75,7 @@ describe("layering", () => {
   });
 
   it("reaches other packages only through their public export", () => {
-    // Nothing stops `@mime/parse.ts` from resolving inside this package — the
+    // Nothing stops `@mime/parse` from resolving inside this package — the
     // alias map is global. So the encapsulation rule is enforced here instead
     // of relying on resolution to fail: cross-package imports go through
     // `@mailworker/<pkg>`, never into another package's src.
@@ -101,19 +104,21 @@ describe("layering", () => {
 });
 
 /**
- * True when `specifier` points into `layer`, in either the `@/layer/…` alias
- * form or a relative `…/layer/…` one. Requires a following slash so that
- * `transporters.ts` does not read as the `transport` layer.
+ * True when `specifier` points into `layer`, in either the `@core/layer/…`
+ * alias form or a relative `…/layer/…` one. The segment must end at a slash or
+ * at the end of the specifier — the latter because a barrel import is written
+ * `@core/ports`, the former so `domain/transporters` does not read as the
+ * `transport` layer.
  */
 function referencesLayer(specifier: string, layer: string): boolean {
-  return new RegExp(`(^@[a-z]*/|/)${layer}/`).test(specifier);
+  return new RegExp(`(^@[a-z]*/|/)${layer}(/|$)`).test(specifier);
 }
 
 /**
  * A path alias pointing into ANOTHER package's source.
  *
  * `@core/*` is this package's own alias; `@mailworker/*` is a public entry
- * point. Anything else `@`-prefixed and local (`@mime/parse.ts`) is a deep
+ * point. Anything else `@`-prefixed and local (`@mime/parse`) is a deep
  * import that skips the other package's export map.
  */
 function isForeignDeepImport(specifier: string): boolean {

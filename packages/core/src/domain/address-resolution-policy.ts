@@ -1,6 +1,6 @@
-import type { EmailAddress, MailboxAddress } from "@core/domain/address.ts";
-import { AddressPattern } from "@core/domain/address.ts";
-import type { Ulid } from "@core/domain/ulid.ts";
+import type { EmailAddress, MailboxAddress } from "@core/domain/address";
+import { AddressPattern } from "@core/domain/address";
+import type { Ulid } from "@core/domain/ulid";
 
 /**
  * What to do with mail for an address that has no inbox.

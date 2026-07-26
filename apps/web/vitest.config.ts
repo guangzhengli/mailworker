@@ -1,6 +1,6 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
-import { packageAliases } from "../../vitest.shared.ts";
+import { packageAliases } from "../../vitest.shared";
 
 /**
  * These tests run inside workerd, against a real D1 and a real R2 — not a

@@ -6,19 +6,14 @@ import {
   Ulid,
 } from "@mailworker/core";
 import { createHarness, rawEmail, TEST_DOMAIN } from "@mailworker/core/testing";
-import { inboxDto, toInboxDto } from "@shared/inbox.ts";
+import { inboxDto, toInboxDto } from "@shared/inbox";
 import {
   messageDto,
   messageSummaryDto,
   toMessageDto,
   toMessageSummaryDto,
-} from "@shared/message.ts";
-import {
-  deliveryEventDto,
-  outboundDto,
-  toDeliveryEventDto,
-  toOutboundDto,
-} from "@shared/send.ts";
+} from "@shared/message";
+import { deliveryEventDto, outboundDto, toDeliveryEventDto, toOutboundDto } from "@shared/send";
 import { beforeAll, describe, expect, it } from "vitest";
 
 /**

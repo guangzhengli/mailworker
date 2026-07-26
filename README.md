@@ -52,8 +52,8 @@ pnpm format        # biome --write
 
 Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
 Drizzle for D1, React Router 8, pnpm workspaces. Imports use package-qualified
-aliases (`@core/*`, `@shared/*`, …) with real `.ts` extensions inside a package,
-and `@mailworker/*` public exports across packages.
+aliases (`@core/*`, `@shared/*`, …) without file extensions inside a package, and
+`@mailworker/*` public exports across packages.
 
 ### Two suites, one set of assertions
 

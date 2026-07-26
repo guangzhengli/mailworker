@@ -1,5 +1,5 @@
 import type { CreateInboxRequest, Inbox } from "@mailworker/core";
-import { durationMs, emailAddress, metadata, pageQuery, toIso } from "@shared/primitives.ts";
+import { durationMs, emailAddress, metadata, pageQuery, toIso } from "@shared/primitives";
 import { z } from "zod";
 
 /**

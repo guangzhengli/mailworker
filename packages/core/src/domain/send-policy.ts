@@ -1,11 +1,11 @@
-import type { EmailAddress } from "@core/domain/address.ts";
-import type { AgentIdentity as AgentIdentityType } from "@core/domain/agent-identity.ts";
-import { AgentIdentity } from "@core/domain/agent-identity.ts";
-import type { DomainErrorCode } from "@core/domain/errors.ts";
-import { DomainError } from "@core/domain/errors.ts";
-import type { LoopVerdict } from "@core/domain/loop-breaker-policy.ts";
-import type { Scope } from "@core/domain/scope.ts";
-import { Scope as ScopeVO } from "@core/domain/scope.ts";
+import type { EmailAddress } from "@core/domain/address";
+import type { AgentIdentity as AgentIdentityType } from "@core/domain/agent-identity";
+import { AgentIdentity } from "@core/domain/agent-identity";
+import type { DomainErrorCode } from "@core/domain/errors";
+import { DomainError } from "@core/domain/errors";
+import type { LoopVerdict } from "@core/domain/loop-breaker-policy";
+import type { Scope } from "@core/domain/scope";
+import { Scope as ScopeVO } from "@core/domain/scope";
 
 export type SendDecision =
   | { readonly kind: "allow" }

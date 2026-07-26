@@ -1,7 +1,7 @@
-import type { AccountId } from "@core/domain/account-id.ts";
-import { invalidArgument } from "@core/domain/errors.ts";
-import type { Scope } from "@core/domain/scope.ts";
-import type { Ulid } from "@core/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id";
+import { invalidArgument } from "@core/domain/errors";
+import type { Scope } from "@core/domain/scope";
+import type { Ulid } from "@core/domain/ulid";
 
 /**
  * A bearer credential. Only the hash is stored; the plaintext is shown once at

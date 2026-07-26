@@ -1,5 +1,5 @@
-import type { RfcMessageId, ThreadId } from "@core/domain/index.ts";
-import { RfcMessageId as Id, ThreadingPolicy } from "@core/domain/index.ts";
+import type { RfcMessageId, ThreadId } from "@core/domain";
+import { RfcMessageId as Id, ThreadingPolicy } from "@core/domain";
 import { describe, expect, it } from "vitest";
 
 const id = (value: string): RfcMessageId => Id.parse(value);

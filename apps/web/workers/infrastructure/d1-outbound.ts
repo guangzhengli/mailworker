@@ -8,16 +8,16 @@ import type {
   StoredDeliveryEvent,
   Ulid,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1.ts";
+import type { Db } from "@web/workers/infrastructure/d1";
 import {
   afterCursor,
   pageLimit,
   toDate,
   toIsoText,
   toPage,
-} from "@web/workers/infrastructure/d1.ts";
-import type { DeliveryEventRow, OutboundRow } from "@web/workers/infrastructure/schema.ts";
-import { deliveryEvents, outboundMessages } from "@web/workers/infrastructure/schema.ts";
+} from "@web/workers/infrastructure/d1";
+import type { DeliveryEventRow, OutboundRow } from "@web/workers/infrastructure/schema";
+import { deliveryEvents, outboundMessages } from "@web/workers/infrastructure/schema";
 import { and, asc, count, desc, eq, gte, isNull, ne } from "drizzle-orm";
 
 export class D1Outbound implements OutboundRepositoryPort {

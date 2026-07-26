@@ -1,4 +1,4 @@
-import { AddressPattern, EmailAddress, MailboxAddress } from "@core/domain/index.ts";
+import { AddressPattern, EmailAddress, MailboxAddress } from "@core/domain";
 import { describe, expect, it } from "vitest";
 
 describe("EmailAddress", () => {

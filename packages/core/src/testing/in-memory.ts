@@ -23,7 +23,7 @@ import type {
   RfcMessageId,
   ThreadId,
   Ulid,
-} from "@core/domain/index.ts";
+} from "@core/domain";
 import {
   AuthVerdict,
   CROCKFORD,
@@ -31,7 +31,7 @@ import {
   EmailAddress as EmailAddressVO,
   Message as MessageVO,
   RfcMessageId as RfcMessageIdVO,
-} from "@core/domain/index.ts";
+} from "@core/domain";
 import type {
   ApiKeyRepositoryPort,
   BlobMeta,
@@ -61,7 +61,7 @@ import type {
   TokenHasherPort,
   WaitCriteria,
   WaiterPort,
-} from "@core/ports/index.ts";
+} from "@core/ports";
 
 // ---------------------------------------------------------------------------
 // System

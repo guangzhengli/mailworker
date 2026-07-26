@@ -1,5 +1,5 @@
-import type { DomainRouting, Ulid } from "@core/domain/index.ts";
-import { AddressResolutionPolicy, MailboxAddress } from "@core/domain/index.ts";
+import type { DomainRouting, Ulid } from "@core/domain";
+import { AddressResolutionPolicy, MailboxAddress } from "@core/domain";
 import { describe, expect, it } from "vitest";
 
 const INBOX_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV" as Ulid;

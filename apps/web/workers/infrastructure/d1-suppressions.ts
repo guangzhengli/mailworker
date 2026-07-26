@@ -4,10 +4,10 @@ import type {
   SuppressionEntry,
   SuppressionListPort,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1.ts";
-import { toDate, toIsoText } from "@web/workers/infrastructure/d1.ts";
-import type { SuppressionRow } from "@web/workers/infrastructure/schema.ts";
-import { suppressions } from "@web/workers/infrastructure/schema.ts";
+import type { Db } from "@web/workers/infrastructure/d1";
+import { toDate, toIsoText } from "@web/workers/infrastructure/d1";
+import type { SuppressionRow } from "@web/workers/infrastructure/schema";
+import { suppressions } from "@web/workers/infrastructure/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 
 export class D1Suppressions implements SuppressionListPort {

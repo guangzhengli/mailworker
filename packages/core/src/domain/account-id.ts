@@ -1,4 +1,4 @@
-import { invalidArgument } from "@core/domain/errors.ts";
+import { invalidArgument } from "@core/domain/errors";
 
 /**
  * Tenant root. Single-tenant deployments have exactly one: `default`.

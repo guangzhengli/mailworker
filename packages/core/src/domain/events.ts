@@ -1,9 +1,9 @@
-import type { AccountId } from "@core/domain/account-id.ts";
-import type { EmailAddress } from "@core/domain/address.ts";
-import type { UnroutableReason } from "@core/domain/address-resolution-policy.ts";
-import type { ThreadId } from "@core/domain/message-id.ts";
-import type { DeliveryEventType, OutboundStatus } from "@core/domain/outbound-message.ts";
-import type { Ulid } from "@core/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id";
+import type { EmailAddress } from "@core/domain/address";
+import type { UnroutableReason } from "@core/domain/address-resolution-policy";
+import type { ThreadId } from "@core/domain/message-id";
+import type { DeliveryEventType, OutboundStatus } from "@core/domain/outbound-message";
+import type { Ulid } from "@core/domain/ulid";
 
 /**
  * Things that happened, as facts. Published through `EventBusPort`, which fans

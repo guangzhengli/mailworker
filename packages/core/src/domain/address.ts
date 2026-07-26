@@ -1,4 +1,4 @@
-import { DomainError } from "@core/domain/errors.ts";
+import { DomainError } from "@core/domain/errors";
 
 /**
  * A bare, normalized address: `local@domain`, domain lowercased.

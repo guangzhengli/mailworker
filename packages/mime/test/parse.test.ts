@@ -1,4 +1,4 @@
-import { PostalMimeParser } from "@mime/parse.ts";
+import { PostalMimeParser } from "@mime/parse";
 import { describe, expect, it } from "vitest";
 
 const parser = new PostalMimeParser();

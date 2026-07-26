@@ -1,7 +1,7 @@
-import { ingestInboundEmail, waitForMessage } from "@core/application/index.ts";
-import { Extract } from "@core/domain/index.ts";
-import type { Harness } from "@core/testing/index.ts";
-import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing/index.ts";
+import { ingestInboundEmail, waitForMessage } from "@core/application";
+import { Extract } from "@core/domain";
+import type { Harness } from "@core/testing";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
 let h: Harness;

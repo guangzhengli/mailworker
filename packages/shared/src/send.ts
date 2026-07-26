@@ -4,7 +4,7 @@ import type {
   StoredDeliveryEvent,
 } from "@mailworker/core";
 import { MAX_RECIPIENTS } from "@mailworker/core";
-import { emailAddress, toIso, ulid } from "@shared/primitives.ts";
+import { emailAddress, toIso, ulid } from "@shared/primitives";
 import { z } from "zod";
 
 export const outboundStatus = z.enum([

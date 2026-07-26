@@ -1,3 +1,3 @@
-export * from "@core/testing/conformance.ts";
-export * from "@core/testing/harness.ts";
-export * from "@core/testing/in-memory.ts";
+export * from "@core/testing/conformance";
+export * from "@core/testing/harness";
+export * from "@core/testing/in-memory";

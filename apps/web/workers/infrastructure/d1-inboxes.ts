@@ -7,16 +7,16 @@ import type {
   Page,
   Ulid,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1.ts";
+import type { Db } from "@web/workers/infrastructure/d1";
 import {
   afterCursor,
   pageLimit,
   toDate,
   toIsoText,
   toPage,
-} from "@web/workers/infrastructure/d1.ts";
-import type { InboxRow } from "@web/workers/infrastructure/schema.ts";
-import { inboxes } from "@web/workers/infrastructure/schema.ts";
+} from "@web/workers/infrastructure/d1";
+import type { InboxRow } from "@web/workers/infrastructure/schema";
+import { inboxes } from "@web/workers/infrastructure/schema";
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 
 export class D1Inboxes implements InboxRepositoryPort {

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import type { AuthContext, Ulid } from "@mailworker/core";
 import { AccountId, EmailAddress, Message, RfcMessageId, ThreadId } from "@mailworker/core";
-import { createDb, D1Messages, schema } from "@web/workers/infrastructure/index.ts";
+import { createDb, D1Messages, schema } from "@web/workers/infrastructure";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 

@@ -1,4 +1,4 @@
-import { DomainError } from "@core/domain/errors.ts";
+import { DomainError } from "@core/domain/errors";
 
 /**
  * A ULID: 26 chars of Crockford base32, lexicographically sortable by

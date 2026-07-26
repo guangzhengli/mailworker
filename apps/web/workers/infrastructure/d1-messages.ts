@@ -12,16 +12,16 @@ import type {
   Ulid,
 } from "@mailworker/core";
 import { Message as MessageVO, PREVIEW_SOURCE_LENGTH } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1.ts";
+import type { Db } from "@web/workers/infrastructure/d1";
 import {
   afterCursor,
   pageLimit,
   toDate,
   toIsoText,
   toPage,
-} from "@web/workers/infrastructure/d1.ts";
-import type { AttachmentRow, MessageRow } from "@web/workers/infrastructure/schema.ts";
-import { attachments, messages } from "@web/workers/infrastructure/schema.ts";
+} from "@web/workers/infrastructure/d1";
+import type { AttachmentRow, MessageRow } from "@web/workers/infrastructure/schema";
+import { attachments, messages } from "@web/workers/infrastructure/schema";
 import type { SQL } from "drizzle-orm";
 import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 

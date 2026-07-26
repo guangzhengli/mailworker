@@ -1,6 +1,6 @@
-import type { Deps, Operation } from "@core/application/deps.ts";
-import type { AuthContext, DeliveryEventType, EmailAddress } from "@core/domain/index.ts";
-import { OutboundMessage as OutboundVO } from "@core/domain/index.ts";
+import type { Deps, Operation } from "@core/application/deps";
+import type { AuthContext, DeliveryEventType, EmailAddress } from "@core/domain";
+import { OutboundMessage as OutboundVO } from "@core/domain";
 
 /**
  * One event as Cloudflare publishes it to the subscribed queue. Shape follows

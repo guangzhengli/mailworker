@@ -6,7 +6,7 @@ import {
   exitCodeFor,
   httpStatusFor,
   toErrorResponse,
-} from "@shared/errors.ts";
+} from "@shared/errors";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 

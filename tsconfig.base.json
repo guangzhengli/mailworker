@@ -7,9 +7,10 @@
     "moduleResolution": "bundler",
     "types": [],
 
-    // Imports carry the real `.ts` filename. Nothing here emits JS — every
-    // package is consumed as source by a bundler — so this is safe.
-    "allowImportingTsExtensions": true,
+    // Imports are extensionless and lean on directory `index` resolution
+    // (`@core/domain`, never `@core/domain/index.ts`). Only `bundler` above
+    // makes that legal, and every consumer here is one: nothing emits JS, each
+    // package is loaded as source by Vite/esbuild.
 
     // Package-qualified aliases, declared centrally so they resolve identically
     // from every package. A bare `@/*` cannot work here: when one package

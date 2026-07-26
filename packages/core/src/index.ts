@@ -1,3 +1,3 @@
-export * from "@core/application/index.ts";
-export * from "@core/domain/index.ts";
-export * from "@core/ports/index.ts";
+export * from "@core/application";
+export * from "@core/domain";
+export * from "@core/ports";

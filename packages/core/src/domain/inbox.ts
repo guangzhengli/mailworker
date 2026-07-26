@@ -1,8 +1,8 @@
-import type { AccountId } from "@core/domain/account-id.ts";
-import type { EmailAddress } from "@core/domain/address.ts";
-import { MailboxAddress } from "@core/domain/address.ts";
-import { DomainError, invalidArgument } from "@core/domain/errors.ts";
-import type { Ulid } from "@core/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id";
+import type { EmailAddress } from "@core/domain/address";
+import { MailboxAddress } from "@core/domain/address";
+import { DomainError, invalidArgument } from "@core/domain/errors";
+import type { Ulid } from "@core/domain/ulid";
 
 export type InboxKind = "ephemeral" | "persistent";
 

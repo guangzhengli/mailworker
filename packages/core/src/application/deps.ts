@@ -1,4 +1,4 @@
-import type { AuthContext } from "@core/domain/index.ts";
+import type { AuthContext } from "@core/domain";
 import type {
   ApiKeyRepositoryPort,
   BlobStorePort,
@@ -16,7 +16,7 @@ import type {
   SuppressionListPort,
   TokenHasherPort,
   WaiterPort,
-} from "@core/ports/index.ts";
+} from "@core/ports";
 
 /**
  * Everything a use case might need. Each one declares the subset it actually

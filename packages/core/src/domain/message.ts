@@ -1,10 +1,10 @@
-import type { AccountId } from "@core/domain/account-id.ts";
-import type { EmailAddress } from "@core/domain/address.ts";
-import type { AuthVerdict, TrustReason } from "@core/domain/auth-verdict.ts";
-import { UNKNOWN_VERDICT } from "@core/domain/auth-verdict.ts";
-import { invalidArgument } from "@core/domain/errors.ts";
-import type { RfcMessageId, ThreadId } from "@core/domain/message-id.ts";
-import type { Ulid } from "@core/domain/ulid.ts";
+import type { AccountId } from "@core/domain/account-id";
+import type { EmailAddress } from "@core/domain/address";
+import type { AuthVerdict, TrustReason } from "@core/domain/auth-verdict";
+import { UNKNOWN_VERDICT } from "@core/domain/auth-verdict";
+import { invalidArgument } from "@core/domain/errors";
+import type { RfcMessageId, ThreadId } from "@core/domain/message-id";
+import type { Ulid } from "@core/domain/ulid";
 
 export type Direction = "inbound" | "outbound";
 

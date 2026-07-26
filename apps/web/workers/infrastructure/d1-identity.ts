@@ -9,14 +9,14 @@ import type {
   Scope,
   Ulid,
 } from "@mailworker/core";
-import type { Db } from "@web/workers/infrastructure/d1.ts";
-import { toDate, toIsoText } from "@web/workers/infrastructure/d1.ts";
+import type { Db } from "@web/workers/infrastructure/d1";
+import { toDate, toIsoText } from "@web/workers/infrastructure/d1";
 import type {
   AgentIdentityRow,
   ApiKeyRow,
   DomainRow,
-} from "@web/workers/infrastructure/schema.ts";
-import { agentIdentities, apiKeys, domains } from "@web/workers/infrastructure/schema.ts";
+} from "@web/workers/infrastructure/schema";
+import { agentIdentities, apiKeys, domains } from "@web/workers/infrastructure/schema";
 import { and, asc, eq } from "drizzle-orm";
 
 /**

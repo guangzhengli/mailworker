@@ -12,8 +12,8 @@
  *    only in the adapters that implement these.
  */
 
-export * from "@core/ports/messaging.ts";
-export * from "@core/ports/repositories.ts";
-export * from "@core/ports/storage.ts";
-export * from "@core/ports/system.ts";
-export * from "@core/ports/transport.ts";
+export * from "@core/ports/messaging";
+export * from "@core/ports/repositories";
+export * from "@core/ports/storage";
+export * from "@core/ports/system";
+export * from "@core/ports/transport";

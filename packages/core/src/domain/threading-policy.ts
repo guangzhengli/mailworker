@@ -1,5 +1,5 @@
-import type { RfcMessageId, ThreadId } from "@core/domain/message-id.ts";
-import { ThreadId as ThreadIdVO } from "@core/domain/message-id.ts";
+import type { RfcMessageId, ThreadId } from "@core/domain/message-id";
+import { ThreadId as ThreadIdVO } from "@core/domain/message-id";
 
 /**
  * Which conversation does a message belong to?

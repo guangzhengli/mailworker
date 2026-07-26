@@ -1,6 +1,6 @@
-import { createInboxBody, listInboxesQuery } from "@shared/inbox.ts";
-import { listMessagesQuery, waitQuery } from "@shared/message.ts";
-import { sendBody } from "@shared/send.ts";
+import { createInboxBody, listInboxesQuery } from "@shared/inbox";
+import { listMessagesQuery, waitQuery } from "@shared/message";
+import { sendBody } from "@shared/send";
 import { describe, expect, it } from "vitest";
 
 /**

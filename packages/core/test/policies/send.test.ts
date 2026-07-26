@@ -1,9 +1,5 @@
-import type { AgentIdentity, EmailAddress, LoopVerdict, Scope } from "@core/domain/index.ts";
-import {
-  EmailAddress as Address,
-  AgentIdentity as Identity,
-  SendPolicy,
-} from "@core/domain/index.ts";
+import type { AgentIdentity, EmailAddress, LoopVerdict, Scope } from "@core/domain";
+import { EmailAddress as Address, AgentIdentity as Identity, SendPolicy } from "@core/domain";
 import { describe, expect, it } from "vitest";
 
 const addr = (value: string): EmailAddress => Address.parse(value);

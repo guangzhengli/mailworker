@@ -1,4 +1,4 @@
-import { runRepositoryConformance } from "@core/testing/conformance.ts";
+import { runRepositoryConformance } from "@core/testing/conformance";
 import {
   InMemoryApiKeys,
   InMemoryBlobs,
@@ -7,7 +7,7 @@ import {
   InMemoryMessages,
   InMemoryOutbound,
   InMemorySuppressions,
-} from "@core/testing/in-memory.ts";
+} from "@core/testing/in-memory";
 
 /**
  * The in-memory adapters, held to the same behaviour as the real ones.

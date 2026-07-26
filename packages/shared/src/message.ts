@@ -11,7 +11,7 @@ import {
   queryBool,
   toIso,
   ulid,
-} from "@shared/primitives.ts";
+} from "@shared/primitives";
 import { z } from "zod";
 
 export const attachmentDto = z.object({

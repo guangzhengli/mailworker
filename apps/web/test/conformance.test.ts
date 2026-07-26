@@ -10,7 +10,7 @@ import {
   D1Suppressions,
   R2Blobs,
   schema,
-} from "@web/workers/infrastructure/index.ts";
+} from "@web/workers/infrastructure";
 
 /**
  * The same suite `packages/core` runs against the in-memory adapters, run here

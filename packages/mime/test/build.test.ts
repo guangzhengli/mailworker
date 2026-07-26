@@ -1,6 +1,6 @@
 import type { BuildMimeSpec, EmailAddress, RfcMessageId } from "@mailworker/core";
-import { encodeHeaderValue, Rfc5322Builder } from "@mime/build.ts";
-import { PostalMimeParser } from "@mime/parse.ts";
+import { encodeHeaderValue, Rfc5322Builder } from "@mime/build";
+import { PostalMimeParser } from "@mime/parse";
 import { describe, expect, it } from "vitest";
 
 const builder = new Rfc5322Builder();
