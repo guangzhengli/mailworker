@@ -23,6 +23,8 @@ export {
 export { D1Inboxes } from "@web/workers/adapters/d1-inboxes";
 export { D1Messages } from "@web/workers/adapters/d1-messages";
 export { D1Suppressions } from "@web/workers/adapters/d1-suppressions";
+export { LoggingEventBus } from "@web/workers/adapters/events";
 export { R2Blobs } from "@web/workers/adapters/r2-blobs";
 export * as schema from "@web/workers/adapters/schema";
 export { SystemClock, UlidGenerator, WebCryptoSecrets } from "@web/workers/adapters/system";
+export { UnconfiguredTransport } from "@web/workers/adapters/transport";

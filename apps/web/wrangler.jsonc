@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mailworker",
-  "main": "workers/app.ts",
+  "main": "workers/entry.ts",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
 
@@ -29,7 +29,36 @@
     }
   ],
 
+  "durable_objects": {
+    "bindings": [
+      {
+        // Where `wait` blocks. One instance per account, addressed by name, so
+        // the ingest path has somewhere to deliver a notification the moment a
+        // message is stored. The alternative — polling D1 — would load the
+        // database in proportion to the number of idle waiters and add latency
+        // to the one operation whose whole value is being fast.
+        "name": "WAITER",
+        "class_name": "MessageWaiter"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      // `new_classes`, not `new_sqlite_classes`: the waiter persists nothing.
+      // A waiter is a caller holding an open request, and one that outlived its
+      // own request would be waiting for nobody.
+      "tag": "v1",
+      "new_classes": ["MessageWaiter"]
+    }
+  ],
+
   "vars": {
     "MAILWORKER_ACCOUNT_ID": "default"
   }
+
+  // Secrets, set by `mailworker deploy` rather than declared here:
+  //   MAILWORKER_ADMIN_KEY — the bootstrap credential. A fresh deployment has
+  //     an empty api_keys table and no way to fill it; this breaks the cycle,
+  //     and `mailworker keys create` uses it once to mint a real scoped key.
 }

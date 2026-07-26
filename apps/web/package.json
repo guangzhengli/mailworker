@@ -18,6 +18,7 @@
     "@mailworker/core": "workspace:*",
     "@mailworker/mime": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.32",
     "ulid": "^3.0.2"
   },
   "devDependencies": {
