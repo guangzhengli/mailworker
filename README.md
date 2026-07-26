@@ -31,9 +31,9 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 
 | Path | What | State |
 |---|---|---|
-| `packages/core` | Domain model, use cases, ports, in-memory adapters | **built** |
+| `packages/core` | Domain contexts, services, ports, in-memory adapters | **built** |
 | `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
-| `packages/shared` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
+| `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned |
 | `packages/cli` | `@mailworker/cli` — the agent-facing surface | planned |
 | `apps/web` | The deployable Worker | D1 + R2 adapters **built**; API, `email()`, queues planned |
@@ -52,14 +52,14 @@ pnpm format        # biome --write
 
 Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
 Drizzle for D1, React Router 8, pnpm workspaces. Imports use package-qualified
-aliases (`@core/*`, `@shared/*`, …) without file extensions inside a package, and
+aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package, and
 `@mailworker/*` public exports across packages.
 
 ### Two suites, one set of assertions
 
-`packages/core`, `packages/mime` and `packages/shared` run on plain Node with no
+`packages/core`, `packages/mime` and `packages/contract` run on plain Node with no
 miniflare, no network and no Cloudflare account, because every port has an
-in-memory implementation — 240 tests in about half a second. That is deliberate:
+in-memory implementation — 252 tests in about half a second. That is deliberate:
 a project that sells email testing has to be able to test its own mail handling
 fast enough that people keep running the suite.
 
@@ -79,7 +79,10 @@ subquery's own table and every message came back with zero attachments — no
 error, and nothing a mock could have caught.
 
 `test/architecture.test.ts` mechanically enforces the layering rule (ADR-5) and
-includes a self-check, so the guard cannot silently stop matching. The same
+the dependency direction between the four bounded contexts (`identity` ←
+`mailbox` ← `ingestion`, and `delivery` → `mailbox`), so "which domain may know
+about which" is a failing test rather than a diagram. It includes a self-check,
+so the guard cannot silently stop matching. The same
 principle is applied to the other guards in the repo: the error-code
 cross-check and the tenancy assertions were each verified by breaking them on
 purpose.
