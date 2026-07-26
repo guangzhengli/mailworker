@@ -1,10 +1,11 @@
 import type {
   EmailAddress,
-  MimeParserPort,
+  MimeParser,
   ParsedAttachment,
   ParsedInbound,
 } from "@mailworker/core";
-import { EmailAddress as Address, AuthVerdict, RfcMessageId } from "@mailworker/core";
+import { EmailAddress as Address, RfcMessageId, SenderAuth } from "@mailworker/core";
+import { htmlToText } from "@mime/to-text";
 import type { Attachment, Email, Header, Address as PostalAddress } from "postal-mime";
 import PostalMime from "postal-mime";
 
@@ -16,7 +17,7 @@ import PostalMime from "postal-mime";
  * so use-case tests do not depend on this package. This is the one that runs in
  * production, and the one that has to survive whatever the internet sends.
  */
-export class PostalMimeParser implements MimeParserPort {
+export class PostalMimeParser implements MimeParser {
   constructor(private readonly options: PostalMimeParserOptions = {}) {}
 
   async parse(raw: Uint8Array): Promise<ParsedInbound> {
@@ -39,14 +40,18 @@ export class PostalMimeParser implements MimeParserPort {
       cc: addressList(email.cc),
       replyTo: mailboxAddress(email.replyTo?.[0]),
       subject: email.subject ?? "",
-      bodyText: emptyToNull(email.text),
+      // An HTML-only message still needs a text body: it is what the preview,
+      // the FTS index, `wait --match` and `--extract otp` all read. Deriving it
+      // here means every consumer sees one shape and none of them has to know
+      // whether the sender bothered with a `text/plain` alternative.
+      bodyText: emptyToNull(email.text) ?? deriveText(email.html),
       bodyHtml: emptyToNull(email.html),
       inReplyTo: RfcMessageId.tryParse(email.inReplyTo ?? ""),
       // postal-mime hands back the raw `References` header as ONE string, not a
       // list. Splitting it here is what keeps ThreadingPolicy working on the
       // typed form it expects.
       references: RfcMessageId.parseReferences(email.references ?? ""),
-      auth: AuthVerdict.fromAuthenticationResults(headers["authentication-results"] ?? null),
+      auth: SenderAuth.fromHeader(headers["authentication-results"] ?? null),
       sentAt: parseDate(email.date),
       autoSubmitted: headers["auto-submitted"] ?? null,
       headers,
@@ -158,4 +163,10 @@ function parseDate(value: string | undefined): Date | null {
   if (value === undefined) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Text derived from an HTML body, or null when there is nothing to derive. */
+function deriveText(html: string | undefined): string | null {
+  if (html === undefined || html.trim() === "") return null;
+  return emptyToNull(htmlToText(html));
 }

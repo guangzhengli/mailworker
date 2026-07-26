@@ -72,7 +72,15 @@ const VOID = new Set(["br", "hr", "img", "col"]);
  * (`url()`), which reintroduces the tracking problem, and historically has been
  * an execution vector of its own.
  */
-const RAW_TEXT = new Set(["script", "style", "textarea", "title", "svg", "math", "template"]);
+export const RAW_TEXT = new Set([
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "svg",
+  "math",
+  "template",
+]);
 
 const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
 
@@ -167,7 +175,7 @@ export function sanitizeHtml(input: string, options: SanitizeOptions = {}): Sani
   return { html: out.join(""), blockedRemoteImages, droppedTags: [...dropped] };
 }
 
-interface Tag {
+export interface Tag {
   readonly name: string;
   readonly attrs: ReadonlyMap<string, string>;
   readonly closing: boolean;
@@ -176,7 +184,7 @@ interface Tag {
   readonly end: number;
 }
 
-function readTag(input: string, start: number): Tag | null {
+export function readTag(input: string, start: number): Tag | null {
   const match = /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)/.exec(input.slice(start, start + 64));
   if (match === null) return null;
 
@@ -214,7 +222,7 @@ function readTag(input: string, start: number): Tag | null {
 }
 
 /** Find the matching close tag, tolerating attributes and case. */
-function skipRawText(input: string, from: number, name: string): number {
+export function skipRawText(input: string, from: number, name: string): number {
   const close = new RegExp(`</\\s*${name}\\b[^>]*>`, "i").exec(input.slice(from));
   return close === null ? input.length : from + close.index + close[0].length;
 }
@@ -304,8 +312,17 @@ function checkScheme(decoded: string, allowCid: boolean): string | null {
   return SAFE_SCHEMES.has(schemeMatch[1]!) ? decoded : null;
 }
 
+/**
+ * Deliberately not the full HTML5 named-entity table — that is ~2,200 entries
+ * and a couple of kilobytes for a Worker bundle. Numeric references cover
+ * everything, and modern mail is UTF-8, so the only named ones worth carrying
+ * are the structural few plus `nbsp`, which is everywhere in HTML mail.
+ */
 const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
+  // A normal space: this feeds search and OTP extraction, where a U+00A0 would
+  // silently fail to match a pattern written with an ordinary space.
+  nbsp: " ",
   lt: "<",
   gt: ">",
   quot: '"',
@@ -315,7 +332,7 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   NewLine: "\n",
 };
 
-function decodeEntities(value: string): string {
+export function decodeEntities(value: string): string {
   return value.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);?/g, (match, body: string) => {
     if (body.startsWith("#x") || body.startsWith("#X")) {
       return codePoint(Number.parseInt(body.slice(2), 16)) ?? match;

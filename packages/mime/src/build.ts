@@ -1,4 +1,4 @@
-import type { BuildMimeSpec, MimeBuilderPort } from "@mailworker/core";
+import type { BuildMimeSpec, MimeBuilder } from "@mailworker/core";
 import { RfcMessageId } from "@mailworker/core";
 
 /**
@@ -10,10 +10,10 @@ import { RfcMessageId } from "@mailworker/core";
  *
  * Its one real job is archiving OUR OWN sent copy as `.eml` in R2, so that
  * `mailworker get --raw` and `mailworker inject` behave identically for inbound
- * and outbound messages. Without it, half the mailbox would have no raw form and
+ * and delivery messages. Without it, half the mailbox would have no raw form and
  * the fixture-replay loop would only work in one direction.
  */
-export class Rfc5322Builder implements MimeBuilderPort {
+export class Rfc5322Builder implements MimeBuilder {
   async build(spec: BuildMimeSpec): Promise<Uint8Array> {
     const hasText = spec.text !== null && spec.text !== "";
     const hasHtml = spec.html !== null && spec.html !== "";

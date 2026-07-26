@@ -3,3 +3,4 @@ export type { PostalMimeParserOptions } from "@mime/parse";
 export { PostalMimeParser } from "@mime/parse";
 export type { SanitizeOptions, SanitizeResult } from "@mime/sanitize";
 export { sanitizeHtml } from "@mime/sanitize";
+export { htmlToText } from "@mime/to-text";

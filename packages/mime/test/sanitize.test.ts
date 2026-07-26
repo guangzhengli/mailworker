@@ -85,7 +85,7 @@ describe("sanitizeHtml", () => {
     expect(result.html).toContain('src="cid:logo@example"');
   });
 
-  it("hardens outbound links", () => {
+  it("hardens delivery links", () => {
     const { html } = sanitizeHtml('<a href="https://example.com">x</a>');
     expect(html).toContain('rel="noopener noreferrer nofollow"');
     expect(html).toContain('target="_blank"');
