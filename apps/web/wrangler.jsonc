@@ -29,6 +29,46 @@
     }
   ],
 
+  // Sending needs Workers Paid and a verified domain, so this is the one
+  // binding a working deployment can legitimately lack — receiving is free and
+  // stays functional without it. The container degrades to a transport that
+  // records a clear failure rather than refusing to boot.
+  "send_email": [{ "name": "SEND_EMAIL" }],
+
+  "queues": {
+    "producers": [
+      {
+        // Ours. `send` ends at `queued` with the decision and payload already
+        // durable; the consumer does the network call. Splitting there is what
+        // makes a failed send a retry against a recorded decision rather than a
+        // re-run of the policy gates.
+        "binding": "DISPATCH_QUEUE",
+        "queue": "mailworker-dispatch"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "mailworker-dispatch",
+        // Small batches and few retries: each message is one send, and a send
+        // that has failed three times is failing for a reason another attempt
+        // will not change. The DLQ is where a human looks, not a slower retry.
+        "max_batch_size": 10,
+        "max_retries": 3,
+        "dead_letter_queue": "mailworker-dispatch-dlq"
+      },
+      {
+        // Cloudflare's: the six cf.email.sending.message.* types from the event
+        // subscription on the sending domain (DESIGN §2.3). Bigger batches,
+        // because each one is an append and a state transition, and more
+        // retries, because losing a bounce means losing a suppression.
+        "queue": "mailworker-events",
+        "max_batch_size": 100,
+        "max_retries": 5,
+        "dead_letter_queue": "mailworker-events-dlq"
+      }
+    ]
+  },
+
   "durable_objects": {
     "bindings": [
       {

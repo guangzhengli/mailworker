@@ -62,6 +62,8 @@ export const domains = sqliteTable(
     inboundEnabled: bool("inbound_enabled"),
     /** unverified | pending | verified */
     sendingStatus: text("sending_status").notNull().default("unverified"),
+    /** Published by Cloudflare on verification. `doctor` looks up its record. */
+    dkimSelector: text("dkim_selector"),
     /** reject | store | autocreate */
     catchallMode: text("catchall_mode").notNull().default("reject"),
     catchallInbox: text("catchall_inbox"),

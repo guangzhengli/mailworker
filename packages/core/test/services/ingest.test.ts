@@ -186,6 +186,8 @@ describe("ingestion.ingest", () => {
           catchAllMode: "autocreate",
           catchAllInboxId: null,
           autocreatePattern: `agent-*@${TEST_DOMAIN}`,
+          sendingStatus: "verified",
+          dkimSelector: null,
         },
       ],
     });

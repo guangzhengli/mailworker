@@ -10,6 +10,8 @@ const routing = (overrides: Partial<DomainRouting> = {}): DomainRouting => ({
   catchAllMode: "reject",
   catchAllInboxId: null,
   autocreatePattern: null,
+  sendingStatus: "verified",
+  dkimSelector: null,
   ...overrides,
 });
 

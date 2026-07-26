@@ -7,6 +7,7 @@
  * is in the blob store, so counting and transitioning stay cheap.
  */
 export * from "@core/domain/delivery/delivery";
+export * from "@core/domain/delivery/domain-health-policy";
 export * from "@core/domain/delivery/loop-breaker-policy";
 export * from "@core/domain/delivery/send-policy";
 export * from "@core/domain/delivery/sending-limits";

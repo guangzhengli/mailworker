@@ -3,6 +3,7 @@ import { ApiError, type Client, createClient } from "@cli/client";
 import { ConfigError, resolveConfig } from "@cli/config";
 import { inboxCommand } from "@cli/inbox";
 import { getCommand, injectCommand, lsCommand, seenCommand } from "@cli/messages";
+import { approveCommand, doctorCommand, sendCommand, statusCommand } from "@cli/send";
 import { tailCommand, waitCommand } from "@cli/wait";
 import { ExitCode } from "@mailworker/contract";
 import { Command, CommanderError } from "commander";
@@ -36,6 +37,10 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
   program.addCommand(waitCommand(client));
   program.addCommand(tailCommand(client));
   program.addCommand(injectCommand(client));
+  program.addCommand(sendCommand(client));
+  program.addCommand(statusCommand(client));
+  program.addCommand(approveCommand(client));
+  program.addCommand(doctorCommand(client));
 
   program
     .command("help")

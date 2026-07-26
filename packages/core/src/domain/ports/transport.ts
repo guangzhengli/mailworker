@@ -1,4 +1,4 @@
-import type { Caller, EmailAddress, RfcMessageId } from "@core/domain";
+import type { Caller, EmailAddress, RfcMessageId, Ulid } from "@core/domain";
 
 /**
  * How a composed message leaves the building.
@@ -12,6 +12,25 @@ import type { Caller, EmailAddress, RfcMessageId } from "@core/domain";
  */
 export interface MailTransport {
   dispatch(ctx: Caller, message: DispatchRequest): Promise<DispatchResult>;
+}
+
+/**
+ * Where a queued send waits for its turn at the network.
+ *
+ * A port rather than a call in the HTTP route, because there are two places a
+ * delivery becomes ready — `send` when it passes every gate, and `approve` when
+ * a human releases one that did not — and a driving adapter that forgot the
+ * second would leave approved messages sitting in `queued` forever, with
+ * nothing in the logs to say so.
+ *
+ * Enqueueing is the last thing `send` does, after the row and the payload are
+ * durable. The window it leaves is real but recoverable in the safe direction:
+ * a crash between the write and the enqueue strands a `queued` row that the
+ * retention sweep can re-enqueue, where the reverse would dispatch a message
+ * whose decision was never recorded.
+ */
+export interface DispatchQueue {
+  enqueue(ctx: Caller, deliveryId: Ulid): Promise<void>;
 }
 
 export interface DispatchRequest {

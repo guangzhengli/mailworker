@@ -37,6 +37,13 @@ export default defineConfig({
         // is about two things happening at once, which a fake would decide for
         // us rather than test.
         durableObjects: { WAITER: "MessageWaiter" },
+        // Bound, because `mailworker deploy` creates it alongside D1 — a
+        // deployment without it is not a state that exists. `send_email` is
+        // deliberately NOT bound: "can receive, cannot send" IS a real
+        // deployment (Email Routing is free, Email Sending needs Workers Paid),
+        // so the suite runs in that shape and proves the send path is durable
+        // right up to the network call.
+        queueProducers: { DISPATCH_QUEUE: "mailworker-dispatch" },
         bindings: {
           // Handed to the setup file, which applies them once per suite.
           TEST_MIGRATIONS: migrations,

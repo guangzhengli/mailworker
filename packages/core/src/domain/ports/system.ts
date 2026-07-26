@@ -4,6 +4,22 @@ import type { RfcMessageId, Ulid } from "@core/domain";
  * Time. Injected so that "expires in 10 minutes" is testable without waiting ten
  * minutes, and so that a test can assert on exact timestamps.
  */
+/**
+ * DNS lookups, for `doctor`.
+ *
+ * A port for the usual reason plus a specific one: `DomainHealthPolicy` has
+ * real rules in it — what a valid SPF record looks like, why two are worse than
+ * none — and those rules are worth testing against strings rather than against
+ * whatever the internet happens to be serving today. In production this is
+ * DNS-over-HTTPS, because a Worker has no resolver.
+ */
+export interface DnsResolver {
+  /** TXT records at `name`, already joined out of their 255-byte chunks. */
+  txt(name: string): Promise<string[]>;
+  /** MX hosts at `name`, lowest preference first. */
+  mx(name: string): Promise<string[]>;
+}
+
 export interface Clock {
   now(): Date;
 }

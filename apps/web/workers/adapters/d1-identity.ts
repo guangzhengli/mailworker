@@ -187,5 +187,7 @@ function toRouting(row: DomainRow): DomainRouting {
     catchAllMode: row.catchallMode as DomainRouting["catchAllMode"],
     catchAllInboxId: row.catchallInbox as Ulid | null,
     autocreatePattern: row.autocreatePattern,
+    sendingStatus: row.sendingStatus,
+    dkimSelector: row.dkimSelector,
   };
 }

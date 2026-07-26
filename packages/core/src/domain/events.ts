@@ -81,7 +81,13 @@ export type DomainEvent =
       readonly deliveryId: Ulid;
       readonly from: DeliveryStatus;
       readonly to: DeliveryStatus;
-      readonly deliveryEvent: DeliveryEventType;
+      /**
+       * The provider event that caused this, or null when we moved it
+       * ourselves — an approval releasing a held send is a status change with
+       * nothing from the provider behind it. A subscriber filtering on bounces
+       * needs to be able to tell those apart.
+       */
+      readonly deliveryEvent: DeliveryEventType | null;
       readonly recipient: EmailAddress | null;
     })
   | (EventBase & {

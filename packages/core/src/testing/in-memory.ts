@@ -39,8 +39,10 @@ import type {
   Clock,
   DeliveryEvent,
   DeliveryRepository,
+  DispatchQueue,
   DispatchRequest,
   DispatchResult,
+  DnsResolver,
   DomainRepository,
   EventBus,
   IdentityRepository,
@@ -523,6 +525,50 @@ export class MemoryTransport implements MailTransport {
       queued: [],
       rejected: [],
     };
+  }
+}
+
+/**
+ * The dispatch queue as a list of ids.
+ *
+ * `drain()` rather than an automatic dispatch, because the split between "we
+ * accepted this send" and "we handed it to the network" is exactly what the
+ * send tests are about. A fake that dispatched on enqueue would erase the
+ * boundary the design exists to draw, and `pending_approval` would silently
+ * behave like `queued`.
+ */
+export class MemoryDispatchQueue implements DispatchQueue {
+  readonly enqueued: Ulid[] = [];
+
+  async enqueue(_ctx: Caller, deliveryId: Ulid): Promise<void> {
+    this.enqueued.push(deliveryId);
+  }
+
+  drain(): Ulid[] {
+    return this.enqueued.splice(0, this.enqueued.length);
+  }
+}
+
+/**
+ * DNS as a map, for testing `doctor`.
+ *
+ * The point of `DomainHealthPolicy` being pure is that "two SPF records is
+ * worse than none" can be asserted against two strings rather than against
+ * whatever the internet is serving today. This is the other half of that: a
+ * name with no entry answers empty, which is what a real resolver reports for
+ * NXDOMAIN.
+ */
+export class StaticDns implements DnsResolver {
+  constructor(
+    readonly records: { txt?: Record<string, string[]>; mx?: Record<string, string[]> } = {},
+  ) {}
+
+  async txt(name: string): Promise<string[]> {
+    return this.records.txt?.[name] ?? [];
+  }
+
+  async mx(name: string): Promise<string[]> {
+    return this.records.mx?.[name] ?? [];
   }
 }
 

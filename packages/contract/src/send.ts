@@ -187,3 +187,41 @@ export const listDeliveriesQuery = z.object({
 });
 
 export type ListDeliveriesQuery = z.infer<typeof listDeliveriesQuery>;
+
+/**
+ * `GET /v1/diagnostics` — what `mailworker doctor` prints.
+ *
+ * Four statuses rather than a boolean, because the useful answers are not
+ * binary. `warn` is a real configuration that will work and should not
+ * (`p=none` DMARC); `unknown` is a check we could not substantiate rather than
+ * one that failed, and conflating the two is how a diagnostic command trains
+ * people to ignore it.
+ */
+export const checkStatus = z.enum(["pass", "warn", "fail", "unknown"]);
+
+export const checkDto = z.object({
+  name: z.string(),
+  status: checkStatus,
+  detail: z.string(),
+  /** The next action, when there is one. */
+  fix: z.string().optional(),
+});
+
+export const domainDiagnosisDto = z.object({
+  domain: z.string(),
+  status: checkStatus,
+  checks: z.array(checkDto),
+});
+
+export const diagnosticsDto = z.object({
+  domains: z.array(domainDiagnosisDto),
+  /** Cross-cutting facts a per-domain check cannot express. */
+  deployment: z.object({
+    sendingConfigured: z.boolean(),
+    dispatchQueueConfigured: z.boolean(),
+  }),
+});
+
+export type CheckDto = z.infer<typeof checkDto>;
+export type DomainDiagnosisDto = z.infer<typeof domainDiagnosisDto>;
+export type DiagnosticsDto = z.infer<typeof diagnosticsDto>;

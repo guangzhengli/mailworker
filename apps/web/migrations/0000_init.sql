@@ -66,6 +66,7 @@ CREATE TABLE `domains` (
 	`zone_id` text,
 	`inbound_enabled` integer DEFAULT false NOT NULL,
 	`sending_status` text DEFAULT 'unverified' NOT NULL,
+	`dkim_selector` text,
 	`catchall_mode` text DEFAULT 'reject' NOT NULL,
 	`catchall_inbox` text,
 	`autocreate_pattern` text,

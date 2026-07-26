@@ -21,6 +21,19 @@ export interface DomainRouting {
   readonly catchAllInboxId: Ulid | null;
   /** Required by `autocreate`; e.g. `agent-*@mail.example.com`. */
   readonly autocreatePattern: string | null;
+  /**
+   * `unverified` | `pending` | `verified`. Until verified, Cloudflare only
+   * accepts mail to addresses already verified on the account (DESIGN §2.2) —
+   * which is why `doctor` reports it rather than leaving someone to discover it
+   * the first time they mail a customer.
+   */
+  readonly sendingStatus: string;
+  /**
+   * The DKIM selector Cloudflare published, when the domain is verified. Null
+   * means there is nothing to look up, which `doctor` reports as unknown rather
+   * than as a failure it cannot substantiate.
+   */
+  readonly dkimSelector: string | null;
 }
 
 export type AddressResolution =

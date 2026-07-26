@@ -3,10 +3,12 @@
 > Email runtime for AI agents. Self-hosted on your own Cloudflare account.
 > CLI-first, with delivery observability and guardrails on outbound.
 
-**Status: pre-alpha, receiving works end to end.** A message can go from Email
-Routing through the `email()` handler, into D1 and R2, wake a blocked
-`mailworker wait`, come back out of `GET /v1/messages`, be saved as a fixture
-with `get --raw` and replayed with `inject`. Sending is next (M2). See
+**Status: pre-alpha, mail goes both ways.** Inbound: Email Routing to the
+`email()` handler, into D1 and R2, waking a blocked `mailworker wait`, out of
+`GET /v1/messages`, saved as a fixture with `get --raw` and replayed with
+`inject`. Outbound: six policy gates, an approval queue, the `send_email`
+binding, and a delivery timeline built from Cloudflare's event subscriptions.
+Agent identities, scoped keys and webhooks are next (M3). See
 [DESIGN.md](./DESIGN.md) for the full design — it is the source of truth, and it
 is worth reading before changing anything here.
 
@@ -36,8 +38,8 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 | `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned (M5) |
-| `packages/cli` | `@mailworker/cli` — the agent-facing surface | receive commands **built**; `send`, `doctor`, `deploy` planned |
-| `apps/web` | The deployable Worker | `/v1` API, `email()`, D1/R2/DO **built**; queues planned (M2) |
+| `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built**; `init`/`deploy` planned |
+| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, D1/R2/DO/Queues **built** |
 
 The marketing site and public live demo live in a **separate** repo
 (`../mailworker-web`), not here.
@@ -60,7 +62,7 @@ aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package
 
 `packages/core`, `packages/mime`, `packages/contract` and `packages/cli` run on
 plain Node with no miniflare, no network and no Cloudflare account, because every
-port has an in-memory implementation — 263 tests in about half a second. That is deliberate:
+port has an in-memory implementation — 278 tests in about half a second. That is deliberate:
 a project that sells email testing has to be able to test its own mail handling
 fast enough that people keep running the suite.
 

@@ -13,11 +13,13 @@ import {
   InMemoryInboxes,
   InMemoryMessages,
   InMemorySuppressions,
+  MemoryDispatchQueue,
   MemoryTransport,
   MemoryWaiter,
   RecordingEventBus,
   SimpleMimeBuilder,
   SimpleMimeParser,
+  StaticDns,
 } from "@core/testing/in-memory";
 
 export const TEST_DOMAIN = "mail.example.com";
@@ -38,6 +40,8 @@ export interface Harness {
   readonly blobs: InMemoryBlobs;
   readonly suppressions: InMemorySuppressions;
   readonly transport: MemoryTransport;
+  readonly dispatchQueue: MemoryDispatchQueue;
+  readonly dns: StaticDns;
   readonly events: RecordingEventBus;
   readonly waiter: MemoryWaiter;
 
@@ -65,6 +69,8 @@ export const DEFAULT_ROUTING: DomainRouting = {
   catchAllMode: "reject",
   catchAllInboxId: null,
   autocreatePattern: null,
+  sendingStatus: "verified",
+  dkimSelector: null,
 };
 
 /**
@@ -85,6 +91,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const blobs = new InMemoryBlobs();
   const suppressions = new InMemorySuppressions();
   const transport = new MemoryTransport();
+  const dispatchQueue = new MemoryDispatchQueue();
+  const dns = new StaticDns();
   const events = new RecordingEventBus();
   const waiter = new MemoryWaiter();
 
@@ -100,6 +108,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     blobs,
     suppressions,
     transport,
+    dispatchQueue,
+    dns,
     events,
     waiter,
     mimeParser: new SimpleMimeParser(),
@@ -127,6 +137,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     blobs,
     suppressions,
     transport,
+    dispatchQueue,
+    dns,
     events,
     waiter,
 

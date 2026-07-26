@@ -1,9 +1,11 @@
+import type { DiagnosticsDto } from "@mailworker/contract";
 import { createContainer } from "@web/workers/container";
 import { authenticate } from "@web/workers/http/auth";
 import type { HttpEnv } from "@web/workers/http/env";
 import { failure, onError } from "@web/workers/http/errors";
 import { inboxes } from "@web/workers/http/inboxes";
 import { ingest, messages, threads } from "@web/workers/http/messages";
+import { send, suppressions } from "@web/workers/http/send";
 import { Hono } from "hono";
 
 /**
@@ -55,4 +57,40 @@ export const app = new Hono<HttpEnv>()
   .route("/v1/inboxes", inboxes)
   .route("/v1/messages", messages)
   .route("/v1/threads", threads)
-  .route("/v1/ingest", ingest);
+  .route("/v1/ingest", ingest)
+  .route("/v1/send", send)
+  .route("/v1/suppressions", suppressions)
+
+  /**
+   * The backend for `mailworker doctor`.
+   *
+   * Everything it reports fails silently in production — mail that lands in
+   * spam because DMARC is missing, an inbox that receives nothing because MX
+   * points at the old host, a send that works against your own address and
+   * fails against a customer because the domain is not verified yet. A system
+   * whose failures are silent needs somewhere to ask, and none of the reference
+   * projects has one.
+   */
+  .get("/v1/diagnostics", async (c) => {
+    const domains = await c.var.services.delivery.diagnose(c.var.caller);
+    const body: DiagnosticsDto = {
+      domains: domains.map((diagnosis) => ({
+        domain: diagnosis.domain,
+        status: diagnosis.status,
+        checks: diagnosis.checks.map((check) => ({
+          name: check.name,
+          status: check.status,
+          detail: check.detail,
+          ...(check.fix === undefined ? {} : { fix: check.fix }),
+        })),
+      })),
+      // Read off the bindings rather than off a config file, because the
+      // question is "what does this Worker actually have", and a file can say
+      // otherwise.
+      deployment: {
+        sendingConfigured: c.env.SEND_EMAIL !== undefined,
+        dispatchQueueConfigured: c.env.DISPATCH_QUEUE !== undefined,
+      },
+    };
+    return c.json(body);
+  });

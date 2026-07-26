@@ -1,13 +1,24 @@
-import type { AgentIdentity, DeliveryEventType, RfcMessageId, ThreadId } from "@core/domain";
+import type {
+  AgentIdentity,
+  Check,
+  CheckStatus,
+  DeliveryEventType,
+  Page,
+  RfcMessageId,
+  SuppressionEntry,
+  ThreadId,
+} from "@core/domain";
 import {
   BlobKeys,
   Caller,
   Delivery,
   DomainError,
+  DomainHealthPolicy,
   EmailAddress,
   invalidArgument,
   LoopBreakerPolicy,
   Message,
+  notFound,
   SendPolicy,
   ThreadingPolicy,
   Ulid,
@@ -15,11 +26,16 @@ import {
 import type {
   BlobStore,
   Clock,
+  DeliveryEvent,
   DeliveryRepository,
+  DispatchQueue,
+  DnsResolver,
+  DomainRepository,
   EventBus,
   IdentityRepository,
   IdGenerator,
   InboxRepository,
+  ListDeliveriesQuery,
   MailTransport,
   MessageRepository,
   MimeBuilder,
@@ -41,10 +57,13 @@ export interface DeliveryDeps {
   readonly messages: MessageRepository;
   readonly deliveries: DeliveryRepository;
   readonly identities: IdentityRepository;
+  readonly domains: DomainRepository;
   readonly suppressions: SuppressionList;
   readonly blobs: BlobStore;
   readonly events: EventBus;
   readonly transport: MailTransport;
+  readonly dispatchQueue: DispatchQueue;
+  readonly dns: DnsResolver;
   readonly mimeBuilder: MimeBuilder;
 }
 
@@ -298,6 +317,8 @@ export function createDeliveryService(deps: DeliveryDeps) {
         },
       ]);
 
+      // Last, after the row, the payload and the decision are all durable.
+      await deps.dispatchQueue.enqueue(ctx, delivery.id);
       return { outcome: "queued", delivery };
     },
 
@@ -552,7 +573,154 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
       return { outcome: "applied", from: delivery.status, to: applied.delivery.status };
     },
+
+    /**
+     * Release a send that `SendPolicy` held for a human.
+     *
+     * Requires `message:approve`, which an agent should never be granted — the
+     * whole point of the approval queue is that the thing being approved and the
+     * thing doing the approving are not the same principal. `approvedBy` is the
+     * caller's subject rather than a free-text field for the same reason: an
+     * audit trail that the approver gets to write is not an audit trail.
+     *
+     * Enqueueing happens here, so approving is genuinely the last gate. The
+     * message goes out because someone said yes, not because it was already on
+     * its way and merely unpaused.
+     */
+    async approve(ctx: Caller, deliveryId: Ulid): Promise<Delivery> {
+      Caller.require(ctx, "message:approve");
+      const now = deps.clock.now();
+
+      const delivery = await deps.deliveries.findById(ctx, deliveryId);
+      if (delivery === null) {
+        throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
+      }
+      if (delivery.status !== "pending_approval") {
+        throw new DomainError(
+          "invalid_state_transition",
+          `Delivery ${deliveryId} is ${delivery.status}, not awaiting approval.`,
+          { deliveryId, status: delivery.status },
+        );
+      }
+
+      const approved = Delivery.enqueue(Delivery.approve(delivery, ctx.subject, now), now);
+      await deps.deliveries.update(ctx, approved);
+      await deps.dispatchQueue.enqueue(ctx, approved.id);
+      await deps.events.publish([
+        {
+          type: "delivery.status_changed",
+          accountId: ctx.accountId,
+          occurredAt: now,
+          deliveryId: approved.id,
+          from: delivery.status,
+          to: approved.status,
+          deliveryEvent: null,
+          recipient: null,
+        },
+      ]);
+      return approved;
+    },
+
+    /**
+     * One send and everything that has happened to it — what `mailworker status`
+     * prints.
+     *
+     * The events come back even when none of them changed the status. An event
+     * the state machine refused (out of order, or after a terminal state) is
+     * still a fact about what the provider said, and the case where someone
+     * reaches for this is exactly the case where that fact is the answer.
+     */
+    async timeline(
+      ctx: Caller,
+      deliveryId: Ulid,
+    ): Promise<{ delivery: Delivery; events: DeliveryEvent[] }> {
+      Caller.require(ctx, "message:read");
+      const delivery = await deps.deliveries.findById(ctx, deliveryId);
+      if (delivery === null) {
+        throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
+      }
+      return { delivery, events: await deps.deliveries.listDeliveryEvents(ctx, deliveryId) };
+    },
+
+    /** Sends, newest first. `status: "pending_approval"` is the approval queue. */
+    async list(ctx: Caller, query: ListDeliveriesQuery = {}): Promise<Page<Delivery>> {
+      Caller.require(ctx, "message:read");
+      return await deps.deliveries.list(ctx, query);
+    },
+
+    /** The suppression list: who we must not mail, and why. */
+    async listSuppressions(ctx: Caller): Promise<SuppressionEntry[]> {
+      Caller.require(ctx, "message:read");
+      return await deps.suppressions.list(ctx);
+    },
+
+    async suppress(ctx: Caller, entry: Omit<SuppressionEntry, "createdAt">): Promise<void> {
+      Caller.require(ctx, "message:send");
+      await deps.suppressions.add(ctx, { ...entry, createdAt: deps.clock.now() });
+    },
+
+    /**
+     * Take an address off the list.
+     *
+     * Deliberately allowed even for a hard bounce that Cloudflare synced: an
+     * address can be fixed, and a suppression list with no way out becomes a
+     * list of customers you have permanently stopped talking to. It needs
+     * `admin` because doing it wrongly damages sending reputation for everyone
+     * on the deployment.
+     */
+    async unsuppress(ctx: Caller, address: EmailAddress): Promise<void> {
+      Caller.require(ctx, "admin");
+      await deps.suppressions.remove(ctx, address);
+    },
+
+    /**
+     * What `mailworker doctor` prints: every domain this deployment serves, and
+     * whether its DNS actually says what it needs to say.
+     *
+     * Worth having as a first-class operation rather than a page in the docs.
+     * Every failure it reports is silent in production — mail that goes to spam
+     * because DMARC is missing, an inbox that receives nothing because MX
+     * points at the old host — and a system whose failures are silent needs
+     * somewhere to ask.
+     *
+     * All four lookups per domain run together. They are independent, and a
+     * doctor that takes eight seconds is one people stop running.
+     */
+    async diagnose(ctx: Caller): Promise<DomainDiagnosis[]> {
+      Caller.require(ctx, "admin");
+      const domains = await deps.domains.list(ctx);
+
+      return await Promise.all(
+        domains.map(async (routing) => {
+          const selector = routing.dkimSelector ?? null;
+          const [mx, txt, dmarc, dkim] = await Promise.all([
+            deps.dns.mx(routing.domain),
+            deps.dns.txt(routing.domain),
+            deps.dns.txt(`_dmarc.${routing.domain}`),
+            selector === null
+              ? Promise.resolve<string[]>([])
+              : deps.dns.txt(`${selector}._domainkey.${routing.domain}`),
+          ]);
+
+          const checks: Check[] = [
+            DomainHealthPolicy.mx(mx),
+            DomainHealthPolicy.spf(txt),
+            DomainHealthPolicy.dmarc(dmarc),
+            DomainHealthPolicy.dkim(selector, dkim),
+            DomainHealthPolicy.sendingStatus(routing.sendingStatus),
+          ];
+
+          return { domain: routing.domain, status: DomainHealthPolicy.worst(checks), checks };
+        }),
+      );
+    },
   };
+}
+
+export interface DomainDiagnosis {
+  readonly domain: string;
+  readonly status: CheckStatus;
+  readonly checks: readonly Check[];
 }
 
 export type DeliveryService = ReturnType<typeof createDeliveryService>;

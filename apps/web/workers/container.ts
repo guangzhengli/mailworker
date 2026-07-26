@@ -2,6 +2,7 @@ import type { ApiKeyRepository, CoreDeps, Services } from "@mailworker/core";
 import { AccountId, createServices } from "@mailworker/core";
 import { PostalMimeParser, Rfc5322Builder } from "@mailworker/mime";
 import {
+  CloudflareTransport,
   createDb,
   D1ApiKeys,
   D1Deliveries,
@@ -10,10 +11,13 @@ import {
   D1Inboxes,
   D1Messages,
   D1Suppressions,
+  DohResolver,
   LoggingEventBus,
+  QueueDispatch,
   R2Blobs,
   SystemClock,
   UlidGenerator,
+  UnavailableDispatchQueue,
   UnconfiguredTransport,
   WebCryptoSecrets,
 } from "@web/workers/adapters";
@@ -55,6 +59,13 @@ export function createContainer(env: Env): Container {
   const db = createDb(env.DB);
   const messages = new D1Messages(db);
 
+  // `wrangler types` marks every declared binding as present, which is true of
+  // a deployment and false of the test environment, where neither is bound.
+  // Widening here rather than casting at the use site keeps the optionality
+  // stated once, in the place that knows why.
+  const sendEmail: SendEmail | undefined = env.SEND_EMAIL;
+  const dispatch: Queue<string> | undefined = env.DISPATCH_QUEUE;
+
   const deps: CoreDeps = {
     clock: new SystemClock(),
     ids: new UlidGenerator(),
@@ -68,11 +79,23 @@ export function createContainer(env: Env): Container {
     suppressions: new D1Suppressions(db),
     blobs: new R2Blobs(env.BLOBS),
 
+    dns: new DohResolver(),
     events: new LoggingEventBus(),
     waiter: new DurableWaiter(env.WAITER, messages),
     mimeParser: new PostalMimeParser(),
     mimeBuilder: new Rfc5322Builder(),
-    transport: new UnconfiguredTransport(),
+
+    // Both optional, and for the same reason: Email Routing is free while
+    // Email Sending needs Workers Paid, so "can receive, cannot send" is a real
+    // deployment rather than a broken one. Each missing binding degrades one
+    // capability with an explanation instead of failing the whole Worker at
+    // startup, where nobody would see it.
+    transport:
+      sendEmail === undefined
+        ? new UnconfiguredTransport()
+        : new CloudflareTransport(sendEmail),
+    dispatchQueue:
+      dispatch === undefined ? new UnavailableDispatchQueue() : new QueueDispatch(dispatch),
   };
 
   return {

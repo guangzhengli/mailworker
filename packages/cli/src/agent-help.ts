@@ -55,6 +55,31 @@ RECEIVING
       this is a closed loop: capture a message that broke something, commit the
       fixture, replay it.
 
+SENDING — an irreversible outward action
+  mailworker send --from <inbox> --to <addr...> --subject <s>
+                  [--text b | --html b | --body-file f] [--cc a] [--bcc a]
+                  [--in-reply-to <message-id>] [--idempotency-key K] [--dry-run]
+      Answers 202 with a delivery id BEFORE anything is delivered — at that
+      moment nothing is known about the outcome. Exit 5 means a policy gate
+      refused it (quota, allowlist, loop breaker, suppression); exit 6 means
+      quota. Sends are automated by default, which feeds the loop breaker; pass
+      --interactive only when a human really did initiate it.
+      Repeating a send with the same --idempotency-key returns the ORIGINAL
+      delivery and does not send twice. Use it on every retry.
+
+  mailworker status <delivery-id>
+      The timeline: what the provider has said since. Exit 5 if it reached a
+      terminal failure (bounced/failed/rejected/complained). This is where "did
+      it arrive" is answered — the send response cannot answer it.
+  mailworker approve <delivery-id>
+      Releases a send held for a human. Needs the message:approve scope, which
+      an agent should NOT have — that separation is the point of the queue.
+
+  mailworker doctor
+      Checks MX, SPF, DKIM, DMARC, sending-domain verification and the
+      bindings. Exit 1 on any hard failure. Run it first when mail is not
+      arriving; most "it does not work" is one missing DNS record.
+
 PROVENANCE — READ THIS
   Every message carries provenance.trusted and provenance.injectionRisk.
   "trusted" means the sending domain is cryptographically attributable. It does

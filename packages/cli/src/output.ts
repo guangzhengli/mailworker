@@ -1,4 +1,11 @@
-import type { InboxDto, MessageDto, MessageSummaryDto } from "@mailworker/contract";
+import type {
+  DeliveryDto,
+  DeliveryTimelineDto,
+  DiagnosticsDto,
+  InboxDto,
+  MessageDto,
+  MessageSummaryDto,
+} from "@mailworker/contract";
 
 /**
  * Two audiences, one command.
@@ -81,6 +88,92 @@ export function messageDetail(message: MessageDto): string {
       ),
     );
   }
+  return `${lines.join("\n")}\n`;
+}
+
+export function deliveryLine(delivery: DeliveryDto): string {
+  return `${delivery.id}  ${pad(delivery.status, 18)}  ${delivery.recipients.join(", ")}\n`;
+}
+
+export function deliveryDetail(timeline: DeliveryTimelineDto): string {
+  const { delivery, events } = timeline;
+  const lines = [
+    `Id:         ${delivery.id}`,
+    `Status:     ${delivery.status}`,
+    `Recipients: ${delivery.recipients.join(", ")}`,
+    `Attempts:   ${delivery.attempts}`,
+  ];
+  if (delivery.providerMessageId !== null)
+    lines.push(`Provider:   ${delivery.providerMessageId}`);
+  if (delivery.rejectReason !== null) lines.push(`Rejected:   ${delivery.rejectReason}`);
+  if (delivery.lastError !== null) lines.push(`Error:      ${delivery.lastError}`);
+  if (delivery.approvedBy !== null) {
+    lines.push(`Approved:   ${delivery.approvedBy} at ${delivery.approvedAt}`);
+  }
+
+  lines.push("", "Timeline:");
+  if (events.length === 0) {
+    // Not an error, and worth saying so. At send time nothing has happened yet;
+    // the provider reports back over the following minutes to days.
+    lines.push("  (nothing from the provider yet)");
+  } else {
+    for (const event of events) {
+      const smtp = event.smtpResponse === null ? "" : ` — ${event.smtpResponse}`;
+      lines.push(
+        `  ${event.occurredAt}  ${pad(event.type, 12)} ${event.recipient ?? ""}${smtp}`,
+      );
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * The doctor report.
+ *
+ * Sorted worst-first, and every failing check carries its fix on the next line.
+ * A diagnostic that tells you something is wrong without telling you what to
+ * type is a diagnostic people run once.
+ */
+export function diagnosticsReport(report: DiagnosticsDto): string {
+  const mark: Record<string, string> = {
+    pass: "ok  ",
+    warn: "warn",
+    fail: "FAIL",
+    unknown: "?   ",
+  };
+  const lines: string[] = [];
+
+  for (const domain of report.domains) {
+    lines.push(`${domain.domain}  [${domain.status}]`);
+    const order = ["fail", "warn", "unknown", "pass"];
+    const sorted = [...domain.checks].sort(
+      (a, b) => order.indexOf(a.status) - order.indexOf(b.status),
+    );
+    for (const check of sorted) {
+      lines.push(`  ${mark[check.status]}  ${pad(check.name, 10)} ${check.detail}`);
+      if (check.fix !== undefined && check.status !== "pass")
+        lines.push(`        → ${check.fix}`);
+    }
+    lines.push("");
+  }
+
+  if (report.domains.length === 0) {
+    lines.push("No domains configured. Run `mailworker deploy` first.", "");
+  }
+
+  lines.push("Deployment:");
+  lines.push(
+    `  ${report.deployment.sendingConfigured ? "ok  " : "warn"}  send binding${
+      report.deployment.sendingConfigured
+        ? ""
+        : " absent — this deployment can receive but not send"
+    }`,
+  );
+  lines.push(
+    `  ${report.deployment.dispatchQueueConfigured ? "ok  " : "FAIL"}  dispatch queue${
+      report.deployment.dispatchQueueConfigured ? "" : " absent — sends will be refused"
+    }`,
+  );
   return `${lines.join("\n")}\n`;
 }
 
