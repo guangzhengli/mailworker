@@ -47,11 +47,23 @@ describe("layering", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("detects a layer reference in either import style", () => {
+    // A guard that matches nothing passes vacuously. When imports moved from
+    // `../ports/index.ts` to `@/ports/index.ts`, the old substring checks went
+    // silently blind — so assert the detector still bites before trusting it.
+    expect(referencesLayer("@/ports/index.ts", "ports")).toBe(true);
+    expect(referencesLayer("../ports/index.ts", "ports")).toBe(true);
+    expect(referencesLayer("../../src/testing/index.ts", "testing")).toBe(true);
+    expect(referencesLayer("@/domain/index.ts", "ports")).toBe(false);
+    // Must not fire on a filename that merely contains the layer name.
+    expect(referencesLayer("@/domain/transporters.ts", "transport")).toBe(false);
+  });
+
   it("keeps the domain from importing ports or application code", () => {
     const offenders: string[] = [];
     for (const file of filesUnder(join(SRC, "domain"))) {
       for (const specifier of importsOf(file)) {
-        if (specifier.includes("../ports") || specifier.includes("../application")) {
+        if (referencesLayer(specifier, "ports") || referencesLayer(specifier, "application")) {
           offenders.push(`${file} imports ${specifier}`);
         }
       }
@@ -63,7 +75,7 @@ describe("layering", () => {
     const offenders: string[] = [];
     for (const file of filesUnder(join(SRC, "application"))) {
       for (const specifier of importsOf(file)) {
-        if (specifier.includes("../testing") || specifier.includes("infrastructure")) {
+        if (referencesLayer(specifier, "testing") || specifier.includes("infrastructure")) {
           offenders.push(`${file} imports ${specifier}`);
         }
       }
@@ -71,3 +83,12 @@ describe("layering", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * True when `specifier` points into `layer`, in either the `@/layer/…` alias
+ * form or a relative `…/layer/…` one. Requires a following slash so that
+ * `transporters.ts` does not read as the `transport` layer.
+ */
+function referencesLayer(specifier: string, layer: string): boolean {
+  return new RegExp(`(^@/|/)${layer}/`).test(specifier);
+}

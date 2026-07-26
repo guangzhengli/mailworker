@@ -1,5 +1,5 @@
-import type { Inbox } from "./inbox.ts";
-import { Inbox as InboxVO } from "./inbox.ts";
+import type { Inbox } from "@/domain/inbox.ts";
+import { Inbox as InboxVO } from "@/domain/inbox.ts";
 
 /**
  * When does an expired inbox actually go away?

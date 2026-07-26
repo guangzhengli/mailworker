@@ -1,6 +1,6 @@
-import type { Deps } from "../application/index.ts";
-import type { AuthContext, DomainRouting, Inbox, Scope } from "../domain/index.ts";
-import { AccountId, Inbox as InboxVO } from "../domain/index.ts";
+import type { Deps } from "@/application/index.ts";
+import type { AuthContext, DomainRouting, Inbox, Scope } from "@/domain/index.ts";
+import { AccountId, Inbox as InboxVO } from "@/domain/index.ts";
 import {
   DeterministicIds,
   FakeClock,
@@ -18,7 +18,7 @@ import {
   RecordingEventBus,
   SimpleMimeBuilder,
   SimpleMimeParser,
-} from "./in-memory.ts";
+} from "@/testing/in-memory.ts";
 
 export const TEST_DOMAIN = "mail.example.com";
 

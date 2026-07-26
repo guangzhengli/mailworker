@@ -7,6 +7,12 @@
     "moduleResolution": "bundler",
     "types": [],
 
+    // Imports carry the real `.ts` filename and go through each package's `@/`
+    // alias. Requires `allowImportingTsExtensions` per package (all of ours are
+    // consumed as source by a bundler, so nothing here emits JS). Note that
+    // TypeScript 7 removed `baseUrl` — `paths` resolve relative to the tsconfig.
+    "allowImportingTsExtensions": true,
+
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

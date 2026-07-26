@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LoopBreakerPolicy } from "../../src/domain/index.ts";
+import { LoopBreakerPolicy } from "@/domain/index.ts";
 
 function check(overrides: Partial<Parameters<typeof LoopBreakerPolicy.check>[0]> = {}) {
   return LoopBreakerPolicy.check({

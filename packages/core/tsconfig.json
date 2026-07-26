@@ -5,7 +5,8 @@
     "rootDir": ".",
     "types": ["node"],
     "noEmit": true,
-    "allowImportingTsExtensions": true
+    // TypeScript 7 removed `baseUrl`; `paths` resolve relative to this file.
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

@@ -1,3 +1,4 @@
+import type { Deps, Operation } from "@/application/deps.ts";
 import type {
   AttachmentMeta,
   AuthContext,
@@ -6,7 +7,7 @@ import type {
   Message,
   ThreadId,
   Ulid,
-} from "../domain/index.ts";
+} from "@/domain/index.ts";
 import {
   AddressResolutionPolicy,
   AuthVerdict,
@@ -16,9 +17,8 @@ import {
   Message as MessageVO,
   RfcMessageId,
   ThreadingPolicy,
-} from "../domain/index.ts";
-import { BlobKeys } from "../ports/index.ts";
-import type { Deps, Operation } from "./deps.ts";
+} from "@/domain/index.ts";
+import { BlobKeys } from "@/ports/index.ts";
 
 export interface IngestInboundEmailInput {
   /** Envelope recipient, from the Email Routing handler. */

@@ -1,12 +1,12 @@
-import type { AuthContext, ExtractKind, Message } from "../domain/index.ts";
+import type { Deps, Operation } from "@/application/deps.ts";
+import type { AuthContext, ExtractKind, Message } from "@/domain/index.ts";
 import {
   AuthContext as AuthContextVO,
   Extract,
   invalidArgument,
   Ulid,
-} from "../domain/index.ts";
-import type { WaitCriteria } from "../ports/index.ts";
-import type { Deps, Operation } from "./deps.ts";
+} from "@/domain/index.ts";
+import type { WaitCriteria } from "@/ports/index.ts";
 
 export interface WaitForMessageRequest extends WaitCriteria {
   readonly timeoutMs?: number;

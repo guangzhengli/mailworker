@@ -1,4 +1,4 @@
-import type { AuthContext, EmailAddress, RfcMessageId } from "../domain/index.ts";
+import type { AuthContext, EmailAddress, RfcMessageId } from "@/domain/index.ts";
 
 /**
  * How a composed message leaves the building.

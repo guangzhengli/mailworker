@@ -44,9 +44,15 @@ The marketing site and public live demo live in a **separate** repo
 
 ```bash
 pnpm install
-pnpm test          # every package
-pnpm typecheck
+pnpm check         # biome + typecheck + tests
+pnpm lint          # biome only
+pnpm format        # biome --write
 ```
+
+Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
+Drizzle for D1, React Router 8, pnpm workspaces. Imports use a `@/` alias with
+real `.ts` extensions inside a package, and `@mailworker/*` public exports across
+packages.
 
 `packages/core` tests run on plain Node with no miniflare, no network and no
 Cloudflare account, because every port has an in-memory implementation. That is
@@ -56,6 +62,9 @@ mail handling fast enough that people keep running the suite.
 ```bash
 cd packages/core && pnpm test:watch
 ```
+
+`test/architecture.test.ts` mechanically enforces the layering rule (ADR-5) and
+includes a self-check, so the guard cannot silently stop matching.
 
 ## Requirements (once the Worker exists)
 

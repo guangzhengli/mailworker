@@ -6,7 +6,7 @@ import type {
   Message,
   RfcMessageId,
   Ulid,
-} from "../domain/index.ts";
+} from "@/domain/index.ts";
 
 /**
  * Publishes domain events. Queues in production; a recording array in tests,

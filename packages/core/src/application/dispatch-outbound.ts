@@ -1,14 +1,14 @@
-import type { AuthContext, Message, OutboundMessage, ThreadId } from "../domain/index.ts";
+import type { Deps, Operation } from "@/application/deps.ts";
+import { decodePayload } from "@/application/send-message.ts";
+import type { AuthContext, Message, OutboundMessage, ThreadId } from "@/domain/index.ts";
 import {
   DomainError,
   Message as MessageVO,
   OutboundMessage as OutboundVO,
   ThreadingPolicy,
   Ulid,
-} from "../domain/index.ts";
-import { BlobKeys } from "../ports/index.ts";
-import type { Deps, Operation } from "./deps.ts";
-import { decodePayload } from "./send-message.ts";
+} from "@/domain/index.ts";
+import { BlobKeys } from "@/ports/index.ts";
 
 export interface DispatchOutboundRequest {
   readonly outboundId: string;

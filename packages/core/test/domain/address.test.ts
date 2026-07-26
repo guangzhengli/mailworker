@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AddressPattern, EmailAddress, MailboxAddress } from "../../src/domain/index.ts";
+import { AddressPattern, EmailAddress, MailboxAddress } from "@/domain/index.ts";
 
 describe("EmailAddress", () => {
   it("lowercases the domain but preserves the local part", () => {

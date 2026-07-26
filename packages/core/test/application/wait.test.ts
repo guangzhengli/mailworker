@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ingestInboundEmail, waitForMessage } from "../../src/application/index.ts";
-import { Extract } from "../../src/domain/index.ts";
-import type { Harness } from "../../src/testing/index.ts";
-import { createHarness, rawEmail, TEST_DOMAIN } from "../../src/testing/index.ts";
+import { ingestInboundEmail, waitForMessage } from "@/application/index.ts";
+import { Extract } from "@/domain/index.ts";
+import type { Harness } from "@/testing/index.ts";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@/testing/index.ts";
 
 let h: Harness;
 let wait: ReturnType<typeof waitForMessage>;

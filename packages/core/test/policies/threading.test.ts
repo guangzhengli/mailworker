@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { RfcMessageId, ThreadId } from "../../src/domain/index.ts";
-import { RfcMessageId as Id, ThreadingPolicy } from "../../src/domain/index.ts";
+import type { RfcMessageId, ThreadId } from "@/domain/index.ts";
+import { RfcMessageId as Id, ThreadingPolicy } from "@/domain/index.ts";
 
 const id = (value: string): RfcMessageId => Id.parse(value);
 const thread = (value: string): ThreadId => value as ThreadId;
