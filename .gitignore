@@ -11,6 +11,9 @@ coverage/
 !.dev.vars.example
 worker-configuration.d.ts
 
+# local-only project notes, not for push
+DESIGN.md
+
 # local mailworker CLI state
 .mailworker/
 
