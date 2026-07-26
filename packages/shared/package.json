@@ -1,0 +1,24 @@
+{
+  "name": "@mailworker/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The wire contract: zod schemas, DTOs and error codes shared by the API, SDK, CLI and dashboard.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mailworker/core": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

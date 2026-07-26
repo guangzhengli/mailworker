@@ -1,0 +1,193 @@
+import type {
+  OutboundMessage,
+  SendMessageRequest,
+  StoredDeliveryEvent,
+} from "@mailworker/core";
+import { MAX_RECIPIENTS } from "@mailworker/core";
+import { emailAddress, toIso, ulid } from "@shared/primitives.ts";
+import { z } from "zod";
+
+export const outboundStatus = z.enum([
+  "draft",
+  "pending_approval",
+  "queued",
+  "dispatched",
+  "deferred",
+  "delivered",
+  "bounced",
+  "complained",
+  "failed",
+  "rejected",
+]);
+
+export const deliveryEventType = z.enum([
+  "delivered",
+  "deferred",
+  "bounced",
+  "failed",
+  "rejected",
+  "complained",
+]);
+
+/**
+ * `POST /v1/send`.
+ *
+ * The recipient caps are Cloudflare's (50 across to + cc + bcc, DESIGN.md §2.2)
+ * and the domain enforces the total; capping each list here just stops an
+ * obviously oversized request before it reaches a policy gate.
+ */
+export const sendBody = z
+  .strictObject({
+    from: emailAddress,
+    to: z.array(emailAddress).min(1).max(MAX_RECIPIENTS),
+    cc: z.array(emailAddress).max(MAX_RECIPIENTS).optional(),
+    bcc: z.array(emailAddress).max(MAX_RECIPIENTS).optional(),
+    subject: z.string().max(2000),
+    text: z.string().optional(),
+    html: z.string().optional(),
+    replyTo: emailAddress.optional(),
+    /** Continue a thread, addressed by our message ULID rather than a Message-ID. */
+    inReplyTo: ulid.optional(),
+    headers: z.record(z.string().min(1), z.string()).optional(),
+    /**
+     * Also accepted as the `Idempotency-Key` header, which wins when both are
+     * present. The header suits a proxy or an SDK retry wrapper; the body field
+     * suits whoever is building the request by hand.
+     */
+    idempotencyKey: z.string().min(1).max(255).optional(),
+    /**
+     * True when a machine, not a human, triggered this. Feeds the loop breaker
+     * and sets `Auto-Submitted`, so honesty here is what keeps two agents from
+     * mailing each other until the quota is gone.
+     */
+    automated: z.boolean().optional(),
+  })
+  .transform(
+    (input): SendMessageRequest => ({
+      from: input.from,
+      to: input.to,
+      subject: input.subject,
+      ...(input.cc === undefined ? {} : { cc: input.cc }),
+      ...(input.bcc === undefined ? {} : { bcc: input.bcc }),
+      ...(input.text === undefined ? {} : { text: input.text }),
+      ...(input.html === undefined ? {} : { html: input.html }),
+      ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+      ...(input.inReplyTo === undefined ? {} : { inReplyToMessageId: input.inReplyTo }),
+      ...(input.headers === undefined ? {} : { headers: input.headers }),
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      ...(input.automated === undefined ? {} : { automated: input.automated }),
+    }),
+  );
+
+export const outboundDto = z.object({
+  id: z.string(),
+  inboxId: z.string().nullable(),
+  identityId: z.string().nullable(),
+  /** The stored sent copy, once it exists. `GET /v1/messages/:id` reads it. */
+  messageId: z.string().nullable(),
+  idempotencyKey: z.string().nullable(),
+  status: outboundStatus,
+  attempts: z.number().int().nonnegative(),
+  recipients: z.array(z.string()),
+  providerMessageId: z.string().nullable(),
+  rejectReason: z.string().nullable(),
+  lastError: z.string().nullable(),
+  approvedBy: z.string().nullable(),
+  approvedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type OutboundDto = z.infer<typeof outboundDto>;
+
+/** `payloadKey` stays off the wire for the same reason as a message's `rawKey`. */
+export function toOutboundDto(outbound: OutboundMessage): OutboundDto {
+  return {
+    id: outbound.id,
+    inboxId: outbound.inboxId,
+    identityId: outbound.identityId,
+    messageId: outbound.messageId,
+    idempotencyKey: outbound.idempotencyKey,
+    status: outbound.status,
+    attempts: outbound.attempts,
+    recipients: [...outbound.recipients],
+    providerMessageId: outbound.providerMessageId,
+    rejectReason: outbound.rejectReason,
+    lastError: outbound.lastError,
+    approvedBy: outbound.approvedBy,
+    approvedAt: toIso(outbound.approvedAt),
+    createdAt: toIso(outbound.createdAt),
+    updatedAt: toIso(outbound.updatedAt),
+  };
+}
+
+/**
+ * One line of the delivery timeline.
+ *
+ * `raw` is the provider's own payload, kept verbatim. It is on the wire on
+ * purpose: when a message bounces for a reason our mapping did not anticipate,
+ * the SMTP response the receiving host actually gave is the only thing that
+ * answers why, and making someone open a database to read it would defeat the
+ * point of having a timeline at all.
+ */
+export const deliveryEventDto = z.object({
+  id: z.string(),
+  type: z.string(),
+  recipient: z.string().nullable(),
+  terminal: z.boolean(),
+  smtpCode: z.string().nullable(),
+  smtpResponse: z.string().nullable(),
+  occurredAt: z.string(),
+  raw: z.string().nullable(),
+});
+
+export type DeliveryEventDto = z.infer<typeof deliveryEventDto>;
+
+export function toDeliveryEventDto(event: StoredDeliveryEvent): DeliveryEventDto {
+  return {
+    id: event.id,
+    type: event.type,
+    recipient: event.recipient,
+    terminal: event.terminal,
+    smtpCode: event.smtpCode,
+    smtpResponse: event.smtpResponse,
+    occurredAt: toIso(event.occurredAt),
+    raw: event.raw,
+  };
+}
+
+/**
+ * `GET /v1/send/:id` — the record plus everything the provider has since said
+ * about it, oldest first. This is the half of "did my email arrive" that the
+ * send response itself cannot answer, because at send time nothing has happened
+ * yet (DESIGN.md §2.2).
+ */
+export const deliveryTimelineDto = z.object({
+  outbound: outboundDto,
+  events: z.array(deliveryEventDto),
+});
+
+export type DeliveryTimelineDto = z.infer<typeof deliveryTimelineDto>;
+
+/**
+ * `duplicate` is a success, not a failure: the idempotency key matched an
+ * earlier submission and this is that submission, unsent a second time. A
+ * caller retrying after a timeout wants exactly this, and wants to be able to
+ * tell it apart from having sent twice.
+ */
+export const sendResponse = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("queued"), outbound: outboundDto }),
+  z.object({ outcome: z.literal("pending_approval"), outbound: outboundDto }),
+  z.object({ outcome: z.literal("duplicate"), outbound: outboundDto }),
+]);
+
+export type SendResponse = z.infer<typeof sendResponse>;
+
+export const listOutboundQuery = z.object({
+  status: outboundStatus.optional(),
+  identity: ulid.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  cursor: ulid.optional(),
+});
+
+export type ListOutboundQuery = z.infer<typeof listOutboundQuery>;

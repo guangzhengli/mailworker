@@ -31,8 +31,8 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 | Path | What | State |
 |---|---|---|
 | `packages/core` | Domain model, use cases, ports, in-memory adapters | **built** |
-| `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | planned |
-| `packages/shared` | zod schemas / DTOs shared across API, SDK, CLI | planned |
+| `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
+| `packages/shared` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned |
 | `packages/cli` | `@mailworker/cli` — the agent-facing surface | planned |
 | `apps/web` | The deployable Worker: RRv7 SSR + API + `email()` + queues | planned |
