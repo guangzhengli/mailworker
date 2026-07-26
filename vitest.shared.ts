@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
  * entry. That is exactly what a bare `@/*` cannot express.
  */
 export const packageAliases: Record<string, string> = {
+  "@cli": fileURLToPath(new URL("./packages/cli/src", import.meta.url)),
   "@core": fileURLToPath(new URL("./packages/core/src", import.meta.url)),
   "@mime": fileURLToPath(new URL("./packages/mime/src", import.meta.url)),
   "@contract": fileURLToPath(new URL("./packages/contract/src", import.meta.url)),

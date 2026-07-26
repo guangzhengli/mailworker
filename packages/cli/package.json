@@ -1,0 +1,28 @@
+{
+  "name": "@mailworker/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The agent-facing surface. Human and machine readable at once.",
+  "bin": {
+    "mailworker": "./src/bin.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mailworker/contract": "workspace:*",
+    "@mailworker/core": "workspace:*",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

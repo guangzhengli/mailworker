@@ -17,6 +17,7 @@
     // consumes another's SOURCE, `@` would resolve against the consumer.
     // Paths are relative to THIS file (TypeScript 7 removed `baseUrl`).
     "paths": {
+      "@cli/*": ["./packages/cli/src/*"],
       "@core/*": ["./packages/core/src/*"],
       "@mime/*": ["./packages/mime/src/*"],
       "@contract/*": ["./packages/contract/src/*"],
