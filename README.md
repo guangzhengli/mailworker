@@ -3,15 +3,17 @@
 > Email runtime for AI agents. Self-hosted on your own Cloudflare account.
 > CLI-first, with delivery observability and guardrails on outbound.
 
-**Status: pre-alpha, mail goes both ways.** Inbound: Email Routing to the
-`email()` handler, into D1 and R2, waking a blocked `mailworker wait`, out of
-`GET /v1/messages`, saved as a fixture with `get --raw` and replayed with
-`inject`. Outbound: six policy gates, an approval queue, the `send_email`
-binding, and a delivery timeline built from Cloudflare's event subscriptions.
-Control plane: agent identities with quotas and allowlists, scoped API keys, an
-approval queue, and signed webhooks. The dashboard is next (M4). See
-[DESIGN.md](./DESIGN.md) for the full design — it is the source of truth, and it
-is worth reading before changing anything here.
+**Status: pre-alpha, mail goes both ways and there is a dashboard.** Inbound:
+Email Routing to the `email()` handler, into D1 and R2, waking a blocked
+`mailworker wait`, out of `GET /v1/messages`, saved as a fixture with
+`get --raw` and replayed with `inject`. Outbound: six policy gates, an approval
+queue, the `send_email` binding, and a delivery timeline built from Cloudflare's
+event subscriptions. Control plane: agent identities with quotas and allowlists,
+scoped API keys, an approval queue, and signed webhooks. Dashboard: server-
+rendered pages for all of the above, in the same Worker, with new mail appearing
+by itself over a WebSocket. See [DESIGN.md](./DESIGN.md) for the full design —
+it is the source of truth, and it is worth reading before changing anything
+here.
 
 ## What this is
 
@@ -71,7 +73,7 @@ is stored; there is no endpoint that reads it back.
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned (M5) |
 | `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built**; `init`/`deploy` planned |
-| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, D1/R2/DO/Queues **built** |
+| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, dashboard, D1/R2/DO/Queues **built** |
 
 The marketing site and public live demo live in a **separate** repo
 (`../mailworker-web`), not here.
@@ -83,7 +85,17 @@ pnpm install
 pnpm check         # biome + typecheck + tests
 pnpm lint          # biome only
 pnpm format        # biome --write
+
+cd apps/web
+echo 'MAILWORKER_ADMIN_KEY = "local-dev-admin-key"' > .dev.vars
+pnpm db:migrate:local
+pnpm dev           # the API and the dashboard, in workerd, on :5173
 ```
+
+`vite dev` runs the SSR environment inside workerd with the real bindings from
+`wrangler.jsonc`, so a loader that queries D1 is doing in development exactly
+what it does in production. Sign in at `/login` with the admin key above, or
+with any key from `mailworker keys create`.
 
 Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
 Drizzle for D1, React Router 8, pnpm workspaces. Imports use package-qualified
@@ -124,8 +136,24 @@ the dependency direction between the four bounded contexts (`identity` ←
 about which" is a failing test rather than a diagram. It includes a self-check,
 so the guard cannot silently stop matching. The same
 principle is applied to the other guards in the repo: the error-code
-cross-check and the tenancy assertions were each verified by breaking them on
+cross-check, the tenancy assertions and the "`/v1` never reads a cookie"
+assertion in `test/session.test.ts` were each verified by breaking them on
 purpose.
+
+That last one is worth stating plainly, because it is the dashboard's whole
+CSRF story. Dashboard pages authenticate with an httpOnly cookie; `/v1`
+authenticates with an `Authorization` header and **nothing else**. A browser
+attaches cookies to a cross-site request it was tricked into making and does not
+attach headers, so every mutating endpoint under `/v1` is unreachable that way
+without a token dance. The dashboard can afford that because its loaders call
+the services directly through the shared container rather than making an HTTP
+call to their own Worker.
+
+The live connection is the one place a cookie meets a socket, and it is outside
+`/v1` for exactly that reason: a browser cannot set an `Authorization` header on
+a `new WebSocket()`, so `/events` is on the dashboard side of the split rather
+than an exception to it. WebSockets are also exempt from CORS, so it checks the
+`Origin` header as a second lock behind `SameSite=Lax`.
 
 ## Requirements (once the Worker exists)
 
