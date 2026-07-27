@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Caller, Message, MessageRepository, Waiter } from "@mailworker/core";
+import type { AccountId, Caller, Message, MessageRepository, Waiter } from "@mailworker/core";
 import { WaitCriteria } from "@mailworker/core";
 
 /**
@@ -29,9 +29,51 @@ const LOOKBACK_LIMIT = 50;
  * Nothing is persisted. A waiter is a live caller holding an open request; if
  * this object is evicted, that request is already gone too, and a `wait` that
  * survived its own caller would be waiting for nobody.
+ *
+ * The dashboard's live connection attaches here too, for the reason that made
+ * this object worth having in the first place: `notify` is already the one call
+ * that happens exactly once per stored message, so a socket hanging off it
+ * cannot drift out of step with `wait`. A second mechanism — its own DO, its own
+ * subscription to the event bus — would be a second answer to "has mail
+ * arrived?", and the two would disagree the first time one of them is changed.
  */
 export class MessageWaiter extends DurableObject<Env> {
   readonly #pending = new Map<string, Pending>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    /**
+     * Answered by the runtime while this object stays hibernated. A browser
+     * cannot send a protocol-level ping frame, so an idle dashboard tab has to
+     * keep its connection alive with an ordinary message — and without this,
+     * every one of those would wake the object up to say nothing.
+     */
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Accept a dashboard's live connection. Reached only through
+   * `workers/http/events.ts`, which has already established who is asking.
+   *
+   * `acceptWebSocket` rather than `server.accept()`: the hibernatable form lets
+   * the object be evicted while the socket stays open, so a tab left open
+   * overnight costs storage of the socket rather than duration of an isolate.
+   * The `inboxId` filter rides along in the socket's attachment for the same
+   * reason — instance fields do not survive hibernation, and a filter that
+   * silently emptied itself would turn one inbox's page into a firehose.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("Expected a WebSocket upgrade.", { status: 426 });
+    }
+
+    const inboxId = new URL(request.url).searchParams.get("inbox");
+    const { 0: client, 1: server } = new WebSocketPair();
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ inboxId } satisfies SocketFilter);
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
 
   /**
    * Hold until a matching message is notified, or `timeoutMs` elapses.
@@ -80,6 +122,43 @@ export class MessageWaiter extends DurableObject<Env> {
       this.#pending.delete(waitId);
       pending.resolve(message);
     }
+    this.#broadcast(message);
+  }
+
+  /**
+   * Tell every watching dashboard that something landed.
+   *
+   * Deliberately not the message: the event carries only enough to decide
+   * whether this page is affected, and the page answers "and what does it look
+   * like now" by re-running its loader. Pushing the row itself would mean the
+   * client re-implementing the loader's filters — the search query, the page
+   * cursor, the caller's scopes — to know where to put it, and a second
+   * implementation of a filter is a second set of bugs.
+   *
+   * A `send` on a socket the client has already abandoned throws, and one dead
+   * tab must not stop the live ones from being told.
+   */
+  #broadcast(message: Message): void {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) return;
+
+    const event: LiveEvent = {
+      type: "message.received",
+      id: message.id,
+      inboxId: message.inboxId,
+      receivedAt: message.receivedAt.toISOString(),
+    };
+    const payload = JSON.stringify(event);
+
+    for (const socket of sockets) {
+      const filter = socket.deserializeAttachment() as SocketFilter | null;
+      if (filter?.inboxId != null && filter.inboxId !== message.inboxId) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        // Already gone. `webSocketClose` will not fire for it either.
+      }
+    }
   }
 
   /** How many callers are currently blocked here. For diagnostics and tests. */
@@ -92,6 +171,38 @@ interface Pending {
   readonly criteria: WaitCriteria;
   readonly resolve: (message: Message | null) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+}
+
+/** What a socket asked to hear about, kept where hibernation cannot lose it. */
+interface SocketFilter {
+  readonly inboxId: string | null;
+}
+
+/**
+ * The one thing the live connection ever says. Named and exported because the
+ * browser half parses it (`app/live.ts`), and an ad-hoc object here plus an
+ * ad-hoc cast there is how the two stop agreeing.
+ */
+export interface LiveEvent {
+  readonly type: "message.received";
+  readonly id: string;
+  readonly inboxId: string;
+  readonly receivedAt: string;
+}
+
+/**
+ * The waiter instance for an account.
+ *
+ * One function rather than two call sites doing `idFromName`, because "one
+ * instance per account" is the invariant the whole object depends on: a second
+ * naming scheme would put the dashboard's socket on a different instance from
+ * the `notify` that is supposed to reach it, and nothing would error.
+ */
+export function waiterFor(
+  namespace: DurableObjectNamespace<MessageWaiter>,
+  accountId: AccountId,
+): DurableObjectStub<MessageWaiter> {
+  return namespace.get(namespace.idFromName(accountId));
 }
 
 /**
@@ -132,7 +243,7 @@ export class DurableWaiter implements Waiter {
   }
 
   private stubFor(ctx: Caller): DurableObjectStub<MessageWaiter> {
-    return this.namespace.get(this.namespace.idFromName(ctx.accountId));
+    return waiterFor(this.namespace, ctx.accountId);
   }
 
   /**
