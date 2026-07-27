@@ -1,6 +1,47 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
+import type { Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 import { packageAliases } from "../../vitest.shared";
+
+/**
+ * `virtual:react-router/server-build` only exists once React Router's Vite
+ * plugin has run, and running it here would mean building the whole client
+ * bundle before a single assertion — seconds per run, to test `/v1`, `email()`
+ * and a Durable Object, none of which the dashboard touches.
+ *
+ * So the module is stubbed, and the stub THROWS. A stub that returned an empty
+ * build would make `SELF.fetch("/")` quietly render nothing and pass, which is
+ * the failure mode this whole suite exists to avoid (see the conformance note
+ * above). If a test ever does reach the dashboard, it gets this sentence.
+ */
+function stubServerBuild(): Plugin {
+  const id = "virtual:react-router/server-build";
+  return {
+    name: "mailworker:stub-server-build",
+    resolveId: (source) => (source === id ? `\0${id}` : null),
+    load: (resolved) =>
+      resolved === `\0${id}`
+        ? `export const routes = {};
+           export const entry = {
+             module: {
+               default() {
+                 throw new Error(
+                   "The dashboard is not built in the workerd suite. Test route loaders " +
+                     "directly, or add a Vitest project that runs the React Router plugin."
+                 );
+               },
+             },
+           };
+           export const assets = { entry: { module: "", imports: [] }, routes: {}, url: "", version: "test" };
+           export const publicPath = "/";
+           export const assetsBuildDirectory = "build/client";
+           export const future = {};
+           export const isSpaMode = false;
+           export const ssr = true;
+           export const basename = "/";`
+        : null,
+  };
+}
 
 /**
  * These tests run inside workerd, against a real D1 and a real R2 — not a
@@ -20,6 +61,7 @@ const migrations = await readD1Migrations("./migrations");
 
 export default defineConfig({
   plugins: [
+    stubServerBuild(),
     cloudflareTest({
       // The deployed entry point, loaded in the same isolate as the tests. That
       // is what makes `SELF.fetch` exercise the real router — middleware, error
