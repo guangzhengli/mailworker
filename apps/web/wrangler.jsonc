@@ -10,6 +10,12 @@
   // one origin for the CLI, the SDK and the dashboard alike.
   "observability": { "enabled": true },
 
+  // The dashboard's client bundle, built by Vite. Static files are served
+  // straight off Cloudflare's edge and never reach the Worker, which is what
+  // keeps a page load from costing a request against a Worker that is also
+  // handling inbound mail.
+  "assets": { "directory": "./build/client" },
+
   "d1_databases": [
     {
       "binding": "DB",

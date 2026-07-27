@@ -8,5 +8,11 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["vitest.config.ts", "drizzle.config.ts", "../../vitest.shared.ts"]
+  "include": [
+    "vitest.config.ts",
+    "vite.config.ts",
+    "react-router.config.ts",
+    "drizzle.config.ts",
+    "../../vitest.shared.ts"
+  ]
 }

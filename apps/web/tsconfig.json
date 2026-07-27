@@ -11,9 +11,30 @@
     // here, not a NodeJS.Timeout, and pretending otherwise is how a build passes
     // and a deploy does not. The Node-side config files are checked by
     // tsconfig.node.json instead.
-    "types": ["@cloudflare/vitest-pool-workers/types"],
-    "lib": ["ES2023"],
+    "types": ["@cloudflare/vitest-pool-workers/types", "vite/client"],
+
+    // DOM alongside the Worker types, because `app/` runs in both places: React
+    // Router renders the same route module on the server and hydrates it in the
+    // browser. One project rather than two, because the boundary is not a
+    // directory — `workers/render.ts` imports `app/context.ts` and every loader
+    // imports the container — so a split would leave each project unable to
+    // resolve half of the other's imports.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+
+    // `react-router typegen` writes per-route types (`./+types/<route>`) into
+    // `.react-router/types`, mirroring the app directory. `rootDirs` is what
+    // makes those relative specifiers resolve from the route file's own
+    // location — without it every `import type { Route }` is an error.
+    "rootDirs": [".", "./.react-router/types"],
+
     "noEmit": true
   },
-  "include": ["workers/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
+  "include": [
+    ".react-router/types/**/*",
+    "app/**/*",
+    "workers/**/*.ts",
+    "test/**/*.ts",
+    "worker-configuration.d.ts"
+  ]
 }
