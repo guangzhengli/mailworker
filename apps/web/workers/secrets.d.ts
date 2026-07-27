@@ -16,10 +16,19 @@
  */
 interface Env {
   readonly MAILWORKER_ADMIN_KEY?: string;
+  /**
+   * Seals the dashboard's session cookie. Optional on purpose: absent, the
+   * session key is derived from `MAILWORKER_ADMIN_KEY` instead, so a deployment
+   * needs one secret rather than two to have a working dashboard. Set it to
+   * separate the two lifetimes — rotating the bootstrap key otherwise logs
+   * everyone out.
+   */
+  readonly MAILWORKER_SESSION_SECRET?: string;
 }
 
 declare namespace Cloudflare {
   interface Env {
     readonly MAILWORKER_ADMIN_KEY?: string;
+    readonly MAILWORKER_SESSION_SECRET?: string;
   }
 }

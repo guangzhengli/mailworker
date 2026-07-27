@@ -1,0 +1,407 @@
+/*
+ * One stylesheet, hand-written.
+ *
+ * No Tailwind and no component library: the dashboard is a dozen pages of
+ * tables and definition lists, and a utility framework would add a build step,
+ * a config file and a vocabulary to the repo in exchange for styling that is
+ * shorter to write directly. ADR-8 applies to the frontend too.
+ *
+ * Light and dark both come from the same variables, switched by the reader's
+ * system setting — there is no theme toggle because there is nothing to
+ * remember across a session that the OS does not already know.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfbfa;
+  --panel: #ffffff;
+  --border: #e3e2df;
+  --text: #1c1b19;
+  --muted: #6d6a64;
+  --accent: #a8542a;
+  --accent-soft: #f6ece5;
+  --ok: #2f6f43;
+  --warn: #8a6414;
+  --bad: #a02d21;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171614;
+    --panel: #201f1c;
+    --border: #32302c;
+    --text: #eceae5;
+    --muted: #9c978d;
+    --accent: #e08a58;
+    --accent-soft: #2c231d;
+    --ok: #7fbc92;
+    --warn: #d6b45c;
+    --bad: #e08a7f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.shell-nav {
+  border-right: 1px solid var(--border);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shell-brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 0 10px 14px;
+}
+
+.shell-brand small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.shell-nav a {
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.shell-nav a:hover {
+  background: var(--accent-soft);
+  text-decoration: none;
+}
+.shell-nav a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.shell-nav-spacer {
+  flex: 1;
+}
+
+.shell-who {
+  border-top: 1px solid var(--border);
+  padding: 12px 10px 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.shell-main {
+  padding: 26px 30px 60px;
+  min-width: 0;
+}
+
+.shell-empty {
+  max-width: 460px;
+  margin: 18vh auto;
+  padding: 0 20px;
+  text-align: center;
+}
+
+/* ---------- page furniture ---------- */
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 28px 0 10px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.panel + .panel {
+  margin-top: 14px;
+}
+
+.pad {
+  padding: 16px;
+}
+
+/* ---------- tables ---------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--accent-soft);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.truncate {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- small parts ---------- */
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.tag-ok {
+  color: var(--ok);
+  border-color: currentColor;
+}
+.tag-warn {
+  color: var(--warn);
+  border-color: currentColor;
+}
+.tag-bad {
+  color: var(--bad);
+  border-color: currentColor;
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.live-live .live-dot {
+  color: var(--ok);
+}
+.live-connecting .live-dot {
+  color: var(--warn);
+}
+.live-offline .live-dot {
+  color: var(--bad);
+}
+
+dl.facts {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+dl.facts dt {
+  color: var(--muted);
+}
+dl.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+button,
+.button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover {
+  color: #fff;
+  opacity: 0.9;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 14px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+.notice-bad {
+  color: var(--bad);
+  border-color: currentColor;
+  background: transparent;
+}
+
+/* ---------- message body ---------- */
+
+.body-frame {
+  width: 100%;
+  min-height: 380px;
+  border: 0;
+  background: #fff;
+  display: block;
+}
+
+pre.body-text {
+  margin: 0;
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ---------- timeline ---------- */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.timeline li {
+  display: grid;
+  grid-template-columns: 180px 130px minmax(0, 1fr);
+  gap: 14px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.timeline li:last-child {
+  border-bottom: none;
+}
+
+/* ---------- login ---------- */
+
+.login {
+  max-width: 380px;
+  margin: 16vh auto;
+  padding: 0 20px;
+}
+.login h1 {
+  margin-bottom: 6px;
+}
+.login form {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}

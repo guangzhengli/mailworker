@@ -35,7 +35,31 @@ export async function authenticate(
   if (token === null) {
     throw new DomainError("unauthorized", "Send a bearer token in the Authorization header.");
   }
+  return await callerForToken(container, env, token, now);
+}
 
+/**
+ * The credential check itself, with the transport stripped off.
+ *
+ * Split out because the dashboard authenticates the same tokens from a sealed
+ * cookie rather than from a header (`workers/http/session.ts`). What must not
+ * be duplicated is what follows: the prefix lookup, the constant-time verify,
+ * the revocation check and the shape of the resulting `Caller`. Two copies of
+ * that agree on the day they are written and disagree the first time a scope is
+ * added.
+ *
+ * Note what is *not* split: `/v1` still reads only the `Authorization` header
+ * and never a cookie. A browser attaches cookies to cross-site requests it was
+ * tricked into making and does not attach headers, so keeping the API
+ * header-only is what makes every mutating endpoint under `/v1` unreachable by
+ * CSRF, without a token dance.
+ */
+export async function callerForToken(
+  container: Container,
+  env: Env,
+  token: string,
+  now: Date,
+): Promise<Caller> {
   const admin = env.MAILWORKER_ADMIN_KEY;
   if (admin !== undefined && admin.length > 0 && (await constantTimeEqual(token, admin))) {
     return {
