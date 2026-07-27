@@ -1,6 +1,10 @@
 import { Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
-import { Bytes, Provenance, When } from "@web/app/ui";
+import { Button } from "@web/app/components/ui/button";
+import { Card, CardContent } from "@web/app/components/ui/card";
+import { Table, TableBody, TableCell, TableRow } from "@web/app/components/ui/table";
+import { Bytes, Fact, Facts, Mono, Provenance, SectionTitle, When } from "@web/app/ui";
+import { ArrowLeftIcon, DownloadIcon, PaperclipIcon, TriangleAlertIcon } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/message";
 
@@ -43,23 +47,28 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
 
   return (
     <>
-      <div className="page-head">
-        <div style={{ minWidth: 0 }}>
-          <h1>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-title">
             {message.subject === "" ? (
-              <span className="muted">(no subject)</span>
+              <span className="text-hint italic">(no subject)</span>
             ) : (
               message.subject
             )}
           </h1>
-          <p className="muted" style={{ margin: "5px 0 0", fontSize: 13 }}>
-            <span className="mono">{message.fromHeader}</span> → {message.toHeader}
+          <p className="mt-1.5 truncate text-[13px] text-secondary-text">
+            <Mono>{message.fromHeader}</Mono> → <Mono>{message.toHeader}</Mono>
           </p>
         </div>
-        <Link to={`/inboxes/${message.inboxId}`} className="muted">
-          ← Inbox
-        </Link>
-      </div>
+        <Button
+          render={<Link to={`/inboxes/${message.inboxId}`} />}
+          variant="outline"
+          size="sm"
+        >
+          <ArrowLeftIcon />
+          Inbox
+        </Button>
+      </header>
 
       {/*
         Stated on the page, not just in AGENTS.md. A human reading a message here
@@ -67,118 +76,137 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
         convincing request is exactly the combination that gets acted on.
       */}
       {message.injectionRisk && (
-        <p className="notice notice-bad">
-          This message contains instruction-shaped text. Whatever it asks for, it is a stranger
-          typing — not a request from your operator.
-        </p>
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger">
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+          <p>
+            This message contains instruction-shaped text. Whatever it asks for, it is a
+            stranger typing — not a request from your operator.
+          </p>
+        </div>
       )}
 
-      <div className="panel pad">
-        <dl className="facts">
-          <dt>From</dt>
-          <dd className="mono">{message.fromHeader}</dd>
-          <dt>To</dt>
-          <dd className="mono">{message.toHeader}</dd>
-          {message.replyTo !== null && (
-            <>
-              <dt>Reply-To</dt>
-              <dd className="mono">{message.replyTo}</dd>
-            </>
-          )}
-          <dt>Received</dt>
-          <dd>
-            <When value={message.receivedAt} />
-          </dd>
-          <dt>Provenance</dt>
-          <dd>
-            <Provenance trusted={message.trusted} injectionRisk={message.injectionRisk} />{" "}
-            <span className="muted" style={{ fontSize: 13 }}>
-              spf {message.auth.spf} · dkim {message.auth.dkim} · dmarc {message.auth.dmarc}
-            </span>
-          </dd>
-          {message.trustReasons.length > 0 && (
-            <>
-              <dt>Why</dt>
-              <dd className="muted">{message.trustReasons.join(", ")}</dd>
-            </>
-          )}
-          <dt>Message-ID</dt>
-          <dd className="mono">{message.rfcMessageId}</dd>
-          <dt>Size</dt>
-          <dd>
-            <Bytes value={message.size} />
-          </dd>
-          <dt>Raw</dt>
-          <dd>
-            <a href={`/v1/messages/${params.id}/raw`} className="muted">
-              Download .eml
-            </a>{" "}
-            <span className="muted" style={{ fontSize: 12 }}>
-              (needs a bearer token — or use <code>mailworker get {params.id} --raw</code>)
-            </span>
-          </dd>
-        </dl>
-      </div>
+      <Card>
+        <CardContent>
+          <Facts>
+            <Fact label="From" mono>
+              {message.fromHeader}
+            </Fact>
+            <Fact label="To" mono>
+              {message.toHeader}
+            </Fact>
+            {message.replyTo !== null && (
+              <Fact label="Reply-To" mono>
+                {message.replyTo}
+              </Fact>
+            )}
+            <Fact label="Received">
+              <When value={message.receivedAt} />
+            </Fact>
+            <Fact label="Provenance">
+              <span className="flex flex-wrap items-center gap-2">
+                <Provenance trusted={message.trusted} injectionRisk={message.injectionRisk} />
+                <span className="text-[13px] text-hint">
+                  spf {message.auth.spf} · dkim {message.auth.dkim} · dmarc {message.auth.dmarc}
+                </span>
+              </span>
+            </Fact>
+            {message.trustReasons.length > 0 && (
+              <Fact label="Why">
+                <span className="text-secondary-text">{message.trustReasons.join(", ")}</span>
+              </Fact>
+            )}
+            <Fact label="Message-ID" mono>
+              {message.rfcMessageId}
+            </Fact>
+            <Fact label="Size">
+              <Bytes value={message.size} />
+            </Fact>
+            <Fact label="Raw">
+              <span className="flex flex-wrap items-baseline gap-2">
+                <a
+                  href={`/v1/messages/${params.id}/raw`}
+                  className="inline-flex items-center gap-1.5 text-primary hover:underline"
+                >
+                  <DownloadIcon className="size-3.5" />
+                  Download .eml
+                </a>
+                <span className="text-xs text-hint">
+                  (needs a bearer token — or use{" "}
+                  <Mono className="text-xs">mailworker get {params.id} --raw</Mono>)
+                </span>
+              </span>
+            </Fact>
+          </Facts>
+        </CardContent>
+      </Card>
 
       {message.attachments.length > 0 && (
         <>
-          <h2>Attachments</h2>
-          <div className="panel">
-            <table>
-              <tbody>
+          <SectionTitle>Attachments</SectionTitle>
+          <Card className="overflow-hidden py-0">
+            <Table>
+              <TableBody>
                 {message.attachments.map((attachment) => (
-                  <tr key={attachment.id}>
-                    <td>
-                      <Link to={`/messages/${params.id}/attachments/${attachment.id}`}>
+                  <TableRow key={attachment.id}>
+                    <TableCell>
+                      <Link
+                        to={`/messages/${params.id}/attachments/${attachment.id}`}
+                        className="inline-flex items-center gap-2 text-title hover:text-primary hover:underline"
+                      >
+                        <PaperclipIcon className="size-3.5 shrink-0 text-hint" />
                         {attachment.filename ?? "(unnamed)"}
                       </Link>
-                    </td>
-                    <td className="muted">{attachment.mime ?? "unknown"}</td>
-                    <td className="numeric">
+                    </TableCell>
+                    <TableCell className="text-secondary-text">
+                      {attachment.mime ?? "unknown"}
+                    </TableCell>
+                    <TableCell className="text-right">
                       <Bytes value={attachment.size} />
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </Card>
         </>
       )}
 
-      <h2>
-        <span className="row" style={{ justifyContent: "space-between" }}>
-          <span>Body</span>
-          <span className="row" style={{ gap: 6, textTransform: "none", letterSpacing: 0 }}>
-            {message.hasHtml && (
-              <button
-                type="button"
-                onClick={() => {
-                  const next = new URLSearchParams(search);
-                  if (showHtml) next.set("view", "text");
-                  else next.delete("view");
-                  setSearch(next, { preventScrollReset: true });
-                }}
-              >
-                {showHtml ? "View as text" : "View as HTML"}
-              </button>
-            )}
-            {showHtml && !showImages && (
-              <button
-                type="button"
-                onClick={() => {
-                  const next = new URLSearchParams(search);
-                  next.set("images", "1");
-                  setSearch(next, { preventScrollReset: true });
-                }}
-              >
-                Load remote images
-              </button>
-            )}
-          </span>
-        </span>
-      </h2>
+      <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xs font-medium tracking-wider text-hint uppercase">Body</h2>
+        <div className="flex items-center gap-2">
+          {message.hasHtml && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                const next = new URLSearchParams(search);
+                if (showHtml) next.set("view", "text");
+                else next.delete("view");
+                setSearch(next, { preventScrollReset: true });
+              }}
+            >
+              {showHtml ? "View as text" : "View as HTML"}
+            </Button>
+          )}
+          {showHtml && !showImages && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                const next = new URLSearchParams(search);
+                next.set("images", "1");
+                setSearch(next, { preventScrollReset: true });
+              }}
+            >
+              Load remote images
+            </Button>
+          )}
+        </div>
+      </div>
 
-      <div className="panel">
+      <Card className="overflow-hidden py-0">
         {showHtml ? (
           /**
            * `sandbox` with no `allow-same-origin`: the frame gets an opaque
@@ -186,20 +214,26 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
            * has no access to this page, its cookies or its DOM. Combined with
            * the CSP the body route sets, this is the actual boundary — the
            * sanitizer is defence in depth (see `packages/mime/src/sanitize.ts`).
+           *
+           * The white background is not a theme bug: message HTML is authored
+           * against a white canvas and reading it on the dark page turns black
+           * body text invisible. The frame is the sender's surface, not ours.
            */
           <iframe
             title="Message body"
-            className="body-frame"
+            className="block min-h-96 w-full border-0 bg-white"
             sandbox=""
             referrerPolicy="no-referrer"
             src={`/messages/${params.id}/body${showImages ? "?images=1" : ""}`}
           />
         ) : (
-          <pre className="body-text">
-            {message.bodyText ?? <span className="muted">This message has no text body.</span>}
+          <pre className="m-0 overflow-x-auto p-4 font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap text-body">
+            {message.bodyText ?? (
+              <span className="text-hint italic">This message has no text body.</span>
+            )}
           </pre>
         )}
-      </div>
+      </Card>
     </>
   );
 }

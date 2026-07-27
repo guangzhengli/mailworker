@@ -1,5 +1,9 @@
+import { Button } from "@web/app/components/ui/button";
+import { Toaster } from "@web/app/components/ui/sonner";
+import { ThemeProvider, ThemeScript } from "@web/app/theme";
 import {
   isRouteErrorResponse,
+  Link,
   Links,
   Meta,
   Outlet,
@@ -15,7 +19,12 @@ export const links: Route.LinksFunction = () => [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    /**
+     * `suppressHydrationWarning` on <html> only, and only because ThemeScript
+     * adds a class the server did not render. Scoped to this one element so a
+     * genuine mismatch anywhere below still surfaces.
+     */
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,9 +33,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="referrer" content="no-referrer" />
         <Meta />
         <Links />
+        <ThemeScript />
       </head>
       <body>
-        {children}
+        <ThemeProvider>
+          {children}
+          <Toaster position="bottom-right" />
+        </ThemeProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -55,12 +68,12 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       : "Something went wrong.";
 
   return (
-    <main className="shell-empty">
-      <h1>{title}</h1>
-      <p className="muted">{detail}</p>
-      <p>
-        <a href="/">Back to inboxes</a>
-      </p>
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+      <h1 className="text-2xl font-semibold tracking-tight text-title">{title}</h1>
+      <p className="text-sm text-secondary-text">{detail}</p>
+      <Button render={<Link to="/" />} variant="outline" size="sm">
+        Back to inboxes
+      </Button>
     </main>
   );
 }

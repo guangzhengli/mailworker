@@ -1,407 +1,359 @@
 /*
- * One stylesheet, hand-written.
+ * The design system.
  *
- * No Tailwind and no component library: the dashboard is a dozen pages of
- * tables and definition lists, and a utility framework would add a build step,
- * a config file and a vocabulary to the repo in exchange for styling that is
- * shorter to write directly. ADR-8 applies to the frontend too.
+ * Layering, from the bottom up:
  *
- * Light and dark both come from the same variables, switched by the reader's
- * system setting — there is no theme toggle because there is nothing to
- * remember across a session that the OS does not already know.
+ *   1. Fonts, self-hosted. A dashboard that sets `referrer: no-referrer`
+ *      (root.tsx) should not then ask fonts.googleapis.com for a stylesheet on
+ *      every cold load — the request itself leaks that someone opened this
+ *      deployment. Bundled instead, so the Worker serves everything it needs.
+ *   2. Raw token values, `:root` and `.dark`. The single source of truth for
+ *      colour, radius and shadow.
+ *   3. `@theme inline` — republishes those tokens as Tailwind utilities. The
+ *      `inline` keyword keeps them as live `var()` references rather than
+ *      resolving them at build time, which is the only reason a single
+ *      stylesheet can serve both themes.
+ *   4. Base layer — the handful of element defaults worth setting globally.
+ *
+ * Everything visual reads from step 2. Nothing in `app/` should hardcode a
+ * colour: if a value is worth using twice it is worth a token, and a token is
+ * what makes light and dark stay in agreement without anyone maintaining two
+ * lists.
  */
 
+@import "tailwindcss";
+
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/*
+ * Class-based rather than `prefers-color-scheme`, which is a change from the
+ * stylesheet this replaced.
+ *
+ * The reason is specific to this product: message bodies are third-party HTML,
+ * rendered in a sandboxed iframe with the sender's own styling and overwhelmingly
+ * authored light. Someone reading mail on a dark OS needs to put the chrome in
+ * light too so the page stops fighting the thing it frames — and that is a
+ * per-task decision the OS setting cannot express. The default still follows the
+ * system; see ThemeScript in root.tsx.
+ */
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  color-scheme: light dark;
+  --background: oklch(0.9700 0.0029 264.5420);
+  --foreground: oklch(0.1801 0.0191 255.7673);
+  --card: oklch(1.0000 0 0);
+  --card-foreground: oklch(0.1801 0.0191 255.7673);
+  --popover: oklch(1.0000 0 0);
+  --popover-foreground: oklch(0.1801 0.0191 255.7673);
+  --primary: oklch(0.6007 0.1903 257.9419);
+  --primary-foreground: oklch(1.0000 0 0);
+  --secondary: oklch(0.9394 0.0046 258.3251);
+  --secondary-foreground: oklch(0.2786 0.0211 257.2774);
+  --muted: oklch(0.9504 0.0042 236.4983);
+  --muted-foreground: oklch(0.4789 0.0204 256.3497);
+  --accent: oklch(0.9209 0.0294 257.7666);
+  --accent-foreground: oklch(0.3232 0.1376 260.7577);
+  --destructive: oklch(0.6207 0.2203 24.8903);
+  --destructive-foreground: oklch(1.0000 0 0);
+  --border: oklch(0.8994 0.0064 255.4779);
+  --input: oklch(0.9205 0.0052 247.8807);
+  --ring: oklch(0.6007 0.1903 257.9419);
+  --chart-1: oklch(0.6007 0.1903 257.9419);
+  --chart-2: oklch(0.6369 0.1247 171.0112);
+  --chart-3: oklch(0.5495 0.2003 300.1164);
+  --chart-4: oklch(0.6806 0.1901 45.0513);
+  --chart-5: oklch(0.6198 0.2297 5.1656);
+  --sidebar: oklch(0.9504 0.0042 236.4983);
+  --sidebar-foreground: oklch(0.1801 0.0191 255.7673);
+  --sidebar-primary: oklch(0.6007 0.1903 257.9419);
+  --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.9209 0.0294 257.7666);
+  --sidebar-accent-foreground: oklch(0.3232 0.1376 260.7577);
+  --sidebar-border: oklch(0.8994 0.0064 255.4779);
+  --sidebar-ring: oklch(0.6007 0.1903 257.9419);
 
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --border: #e3e2df;
-  --text: #1c1b19;
-  --muted: #6d6a64;
-  --accent: #a8542a;
-  --accent-soft: #f6ece5;
-  --ok: #2f6f43;
-  --warn: #8a6414;
-  --bad: #a02d21;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  /*
+   * `Variable` suffix: the fontsource packages installed here ship variable
+   * fonts, whose family name carries it. Without the suffix the @font-face
+   * rules above never match and both stacks silently fall through to the
+   * system default — which looks close enough on a Mac to ship by accident.
+   *
+   * Deliberately NOT redefined under `.dark`. Reflowing every line of text on
+   * a theme toggle is a bug wearing a token's clothes.
+   */
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+
+  --radius: 1.5rem;
+  --shadow-x: 0px;
+  --shadow-y: 2px;
+  --shadow-blur: 28px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.10;
+  --shadow-color: #4e5661;
+  --shadow-2xs: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.05);
+  --shadow-xs: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.05);
+  --shadow-sm: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.10), 0px 1px 2px -1px hsl(214.7368 10.8571% 34.3137% / 0.10);
+  --shadow: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.10), 0px 1px 2px -1px hsl(214.7368 10.8571% 34.3137% / 0.10);
+  --shadow-md: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.10), 0px 2px 4px -1px hsl(214.7368 10.8571% 34.3137% / 0.10);
+  --shadow-lg: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.10), 0px 4px 6px -1px hsl(214.7368 10.8571% 34.3137% / 0.10);
+  --shadow-xl: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.10), 0px 8px 10px -1px hsl(214.7368 10.8571% 34.3137% / 0.10);
+  --shadow-2xl: 0px 2px 28px 0px hsl(214.7368 10.8571% 34.3137% / 0.25);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  /* ── Additions ────────────────────────────────────────────────────────
+   * Everything above is the imported palette, unchanged. Everything below
+   * exists because a mail-delivery console needs vocabulary that a general
+   * shadcn theme does not carry. Same authoring style, same oklch space.
+   */
+
+  /*
+   * Text hierarchy.
+   *
+   * The palette ships two levels — `foreground` and `muted-foreground`. A
+   * deliveries row carries five kinds of text at once (recipient, status,
+   * message id, timestamp, size unit) and with two levels they arrive as one
+   * undifferentiated block, which is the single biggest reason a dense table
+   * reads as unfinished. These interpolate between the two that already exist,
+   * on the same hue, so nothing here introduces a new colour.
+   */
+  --text-title: oklch(0.1801 0.0191 255.7673);
+  --text-body: oklch(0.3200 0.0180 256.5000);
+  --text-secondary: oklch(0.4789 0.0204 256.3497);
+  --text-hint: oklch(0.6100 0.0150 256.0000);
+
+  /*
+   * Delivery status.
+   *
+   * `destructive` alone cannot express a delivery lifecycle: `bounced` and
+   * `deferred` are both "not delivered" but one is over and one is still
+   * running, and a table that paints them the same colour is actively
+   * misleading. Three tokens each, following the badge recipe that survives
+   * both themes: solid foreground, 10% fill, 20% border.
+   *
+   * `info` reuses the palette's own primary hue rather than inventing a
+   * seventh colour — an informational badge and a primary button being the
+   * same blue is correct, they are the same level of emphasis.
+   */
+  --success: oklch(0.5800 0.1300 158.0000);
+  --success-bg: oklch(0.5800 0.1300 158.0000 / 0.10);
+  --success-border: oklch(0.5800 0.1300 158.0000 / 0.20);
+  --warning: oklch(0.6300 0.1400 65.0000);
+  --warning-bg: oklch(0.6300 0.1400 65.0000 / 0.10);
+  --warning-border: oklch(0.6300 0.1400 65.0000 / 0.20);
+  --info: oklch(0.6007 0.1903 257.9419);
+  --info-bg: oklch(0.6007 0.1903 257.9419 / 0.10);
+  --info-border: oklch(0.6007 0.1903 257.9419 / 0.20);
+  --danger: oklch(0.6207 0.2203 24.8903);
+  --danger-bg: oklch(0.6207 0.2203 24.8903 / 0.10);
+  --danger-border: oklch(0.6207 0.2203 24.8903 / 0.20);
+  --neutral: oklch(0.4789 0.0204 256.3497);
+  --neutral-bg: oklch(0.4789 0.0204 256.3497 / 0.08);
+  --neutral-border: oklch(0.4789 0.0204 256.3497 / 0.16);
+
+  /*
+   * Neutral interaction fills.
+   *
+   * Hover and selection are structural, not thematic, so they are drawn with
+   * the foreground colour at low alpha rather than with `accent`. Tinting every
+   * hover with the brand colour is what makes a brand colour stop meaning
+   * anything; here it is reserved for the primary button, the active nav item
+   * and links.
+   */
+  --hover: oklch(0.1801 0.0191 255.7673 / 0.04);
+  --selected: oklch(0.1801 0.0191 255.7673 / 0.07);
+
+  /*
+   * A tighter radius for dense controls.
+   *
+   * `--radius` is 1.5rem, which is right for cards and deliberately soft. On a
+   * 32px-tall table control the derived `--radius-md` (22px) is past a pill and
+   * reads as a mistake, so rows, inputs, badges and table chrome use this
+   * instead. One exception, declared in one place, rather than each dense
+   * component inventing its own.
+   */
+  --radius-control: 0.625rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #171614;
-    --panel: #201f1c;
-    --border: #32302c;
-    --text: #eceae5;
-    --muted: #9c978d;
-    --accent: #e08a58;
-    --accent-soft: #2c231d;
-    --ok: #7fbc92;
-    --warn: #d6b45c;
-    --bad: #e08a7f;
+.dark {
+  --background: oklch(0.1492 0.0093 263.9667);
+  --foreground: oklch(0.9602 0.0034 247.8587);
+  --card: oklch(0.1993 0.0111 260.6610);
+  --card-foreground: oklch(0.9602 0.0034 247.8587);
+  --popover: oklch(0.2298 0.0107 260.6838);
+  --popover-foreground: oklch(0.9602 0.0034 247.8587);
+  --primary: oklch(0.6496 0.1885 257.7207);
+  --primary-foreground: oklch(0.1205 0.0097 252.8876);
+  --secondary: oklch(0.2411 0.0097 248.2290);
+  --secondary-foreground: oklch(0.9008 0.0105 247.9427);
+  --muted: oklch(0.2207 0.0091 255.6084);
+  --muted-foreground: oklch(0.6806 0.0194 245.5027);
+  --accent: oklch(0.2804 0.0598 257.7090);
+  --accent-foreground: oklch(0.8435 0.0803 251.0277);
+  --destructive: oklch(0.6789 0.2096 21.9475);
+  --destructive-foreground: oklch(1.0000 0 0);
+  --border: oklch(0.2800 0.0102 260.7048);
+  --input: oklch(0.2800 0.0102 260.7048);
+  --ring: oklch(0.6496 0.1885 257.7207);
+  --chart-1: oklch(0.6496 0.1885 257.7207);
+  --chart-2: oklch(0.6943 0.1346 171.9868);
+  --chart-3: oklch(0.6203 0.1997 300.1454);
+  --chart-4: oklch(0.7171 0.1878 45.3388);
+  --chart-5: oklch(0.6604 0.2297 5.1368);
+  --sidebar: oklch(0.1808 0.0095 255.6419);
+  --sidebar-foreground: oklch(0.9602 0.0034 247.8587);
+  --sidebar-primary: oklch(0.6496 0.1885 257.7207);
+  --sidebar-primary-foreground: oklch(0.1205 0.0097 252.8876);
+  --sidebar-accent: oklch(0.2804 0.0598 257.7090);
+  --sidebar-accent-foreground: oklch(0.8435 0.0803 251.0277);
+  --sidebar-border: oklch(0.2594 0.0104 260.6979);
+  --sidebar-ring: oklch(0.6496 0.1885 257.7207);
+
+  --shadow-x: 0px;
+  --shadow-y: 4px;
+  --shadow-blur: 40px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.45;
+  --shadow-color: #000000;
+  --shadow-2xs: 0px 4px 40px 0px hsl(0 0% 0% / 0.23);
+  --shadow-xs: 0px 4px 40px 0px hsl(0 0% 0% / 0.23);
+  --shadow-sm: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 1px 2px -1px hsl(0 0% 0% / 0.45);
+  --shadow: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 1px 2px -1px hsl(0 0% 0% / 0.45);
+  --shadow-md: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 2px 4px -1px hsl(0 0% 0% / 0.45);
+  --shadow-lg: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 4px 6px -1px hsl(0 0% 0% / 0.45);
+  --shadow-xl: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 8px 10px -1px hsl(0 0% 0% / 0.45);
+  --shadow-2xl: 0px 4px 40px 0px hsl(0 0% 0% / 1.13);
+
+  /* Additions, dark. */
+  --text-title: oklch(0.9602 0.0034 247.8587);
+  --text-body: oklch(0.8400 0.0110 247.0000);
+  --text-secondary: oklch(0.6806 0.0194 245.5027);
+  --text-hint: oklch(0.5400 0.0160 250.0000);
+
+  /*
+   * Status foregrounds lift and desaturate against a near-black page. Carried
+   * over unchanged, they read as neon rather than as colour — the fill and
+   * border percentages hold, only the text hue moves.
+   */
+  --success: oklch(0.7600 0.1500 158.0000);
+  --success-bg: oklch(0.7600 0.1500 158.0000 / 0.12);
+  --success-border: oklch(0.7600 0.1500 158.0000 / 0.22);
+  --warning: oklch(0.8000 0.1400 75.0000);
+  --warning-bg: oklch(0.8000 0.1400 75.0000 / 0.12);
+  --warning-border: oklch(0.8000 0.1400 75.0000 / 0.22);
+  --info: oklch(0.6496 0.1885 257.7207);
+  --info-bg: oklch(0.6496 0.1885 257.7207 / 0.14);
+  --info-border: oklch(0.6496 0.1885 257.7207 / 0.24);
+  --danger: oklch(0.6789 0.2096 21.9475);
+  --danger-bg: oklch(0.6789 0.2096 21.9475 / 0.14);
+  --danger-border: oklch(0.6789 0.2096 21.9475 / 0.24);
+  --neutral: oklch(0.6806 0.0194 245.5027);
+  --neutral-bg: oklch(0.9602 0.0034 247.8587 / 0.07);
+  --neutral-border: oklch(0.9602 0.0034 247.8587 / 0.14);
+
+  --hover: oklch(0.9602 0.0034 247.8587 / 0.05);
+  --selected: oklch(0.9602 0.0034 247.8587 / 0.09);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Additions — `text-title`, `bg-success-bg`, `border-danger-border`, … */
+  --color-title: var(--text-title);
+  --color-body: var(--text-body);
+  --color-secondary-text: var(--text-secondary);
+  --color-hint: var(--text-hint);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+  --color-neutral: var(--neutral);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-border: var(--neutral-border);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-control: var(--radius-control);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-}
 
-* {
-  box-sizing: border-box;
-}
+  body {
+    @apply bg-background text-body font-sans antialiased;
+  }
 
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-
-a {
-  color: var(--accent);
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-
-code,
-.mono {
-  font-family: var(--mono);
-  font-size: 0.9em;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-/* ---------- shell ---------- */
-
-.shell {
-  display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  min-height: 100vh;
-}
-
-.shell-nav {
-  border-right: 1px solid var(--border);
-  padding: 20px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.shell-brand {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  padding: 0 10px 14px;
-}
-
-.shell-brand small {
-  display: block;
-  font-weight: 400;
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.shell-nav a {
-  color: var(--text);
-  padding: 6px 10px;
-  border-radius: 6px;
-}
-.shell-nav a:hover {
-  background: var(--accent-soft);
-  text-decoration: none;
-}
-.shell-nav a.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.shell-nav-spacer {
-  flex: 1;
-}
-
-.shell-who {
-  border-top: 1px solid var(--border);
-  padding: 12px 10px 0;
-  font-size: 12px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.shell-main {
-  padding: 26px 30px 60px;
-  min-width: 0;
-}
-
-.shell-empty {
-  max-width: 460px;
-  margin: 18vh auto;
-  padding: 0 20px;
-  text-align: center;
-}
-
-/* ---------- page furniture ---------- */
-
-.page-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-h1 {
-  font-size: 20px;
-  margin: 0;
-  letter-spacing: -0.01em;
-}
-
-h2 {
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-  margin: 28px 0 10px;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.panel + .panel {
-  margin-top: 14px;
-}
-
-.pad {
-  padding: 16px;
-}
-
-/* ---------- tables ---------- */
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-  font-weight: 500;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-td {
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-tbody tr:last-child td {
-  border-bottom: none;
-}
-
-tbody tr:hover {
-  background: var(--accent-soft);
-}
-
-.numeric {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.truncate {
-  max-width: 0;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- small parts ---------- */
-
-.tag {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-.tag-ok {
-  color: var(--ok);
-  border-color: currentColor;
-}
-.tag-warn {
-  color: var(--warn);
-  border-color: currentColor;
-}
-.tag-bad {
-  color: var(--bad);
-  border-color: currentColor;
-}
-
-.live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: currentColor;
-}
-.live-live .live-dot {
-  color: var(--ok);
-}
-.live-connecting .live-dot {
-  color: var(--warn);
-}
-.live-offline .live-dot {
-  color: var(--bad);
-}
-
-dl.facts {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 8px 16px;
-  margin: 0;
-  font-size: 14px;
-}
-dl.facts dt {
-  color: var(--muted);
-}
-dl.facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-button,
-.button {
-  font: inherit;
-  font-size: 13px;
-  padding: 5px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-  cursor: pointer;
-}
-button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-button.primary:hover {
-  color: #fff;
-  opacity: 0.9;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-input,
-select,
-textarea {
-  font: inherit;
-  font-size: 14px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-  width: 100%;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.notice {
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--accent-soft);
-  font-size: 13px;
-  margin-bottom: 14px;
-}
-.notice-bad {
-  color: var(--bad);
-  border-color: currentColor;
-  background: transparent;
-}
-
-/* ---------- message body ---------- */
-
-.body-frame {
-  width: 100%;
-  min-height: 380px;
-  border: 0;
-  background: #fff;
-  display: block;
-}
-
-pre.body-text {
-  margin: 0;
-  padding: 16px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-/* ---------- timeline ---------- */
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
-}
-.timeline li {
-  display: grid;
-  grid-template-columns: 180px 130px minmax(0, 1fr);
-  gap: 14px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-.timeline li:last-child {
-  border-bottom: none;
-}
-
-/* ---------- login ---------- */
-
-.login {
-  max-width: 380px;
-  margin: 16vh auto;
-  padding: 0 20px;
-}
-.login h1 {
-  margin-bottom: 6px;
-}
-.login form {
-  margin-top: 18px;
-  display: grid;
-  gap: 10px;
+  /*
+   * Message ids, inbox addresses, API key prefixes and delivery ids are read
+   * character by character and compared against something pasted from a
+   * terminal, so digits have to be the same width everywhere they appear.
+   */
+  code,
+  kbd,
+  samp,
+  pre {
+    @apply font-mono;
+  }
 }

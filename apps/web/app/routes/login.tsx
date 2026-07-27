@@ -1,4 +1,15 @@
+import { Button } from "@web/app/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@web/app/components/ui/card";
+import { Input } from "@web/app/components/ui/input";
+import { Label } from "@web/app/components/ui/label";
 import { workerContext } from "@web/app/context";
+import { Mono } from "@web/app/ui";
 import { callerForToken } from "@web/workers/http/auth";
 import {
   callerForRequest,
@@ -80,43 +91,67 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
   const busy = navigation.state !== "idle";
 
   return (
-    <main className="login">
-      <h1>Mailworker</h1>
-      <p className="muted">
-        Sign in with an API key. Mint one with <code>mailworker keys create</code>, or paste the
-        bootstrap admin key.
-      </p>
+    <main className="flex min-h-dvh items-center justify-center px-5 py-12">
+      <div className="w-full max-w-sm">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl tracking-tight">Mailworker</CardTitle>
+            <CardDescription>
+              Sign in with an API key. Mint one with{" "}
+              <Mono className="text-body">mailworker keys create</Mono>, or paste the bootstrap
+              admin key.
+            </CardDescription>
+          </CardHeader>
 
-      {!loaderData.available && (
-        <p className="notice notice-bad">
-          No session secret is configured, so signing in cannot work. Set{" "}
-          <code>MAILWORKER_SESSION_SECRET</code> or <code>MAILWORKER_ADMIN_KEY</code> with{" "}
-          <code>wrangler secret put</code>.
+          <CardContent className="flex flex-col gap-4">
+            {!loaderData.available && (
+              <p className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger">
+                No session secret is configured, so signing in cannot work. Set{" "}
+                <Mono>MAILWORKER_SESSION_SECRET</Mono> or <Mono>MAILWORKER_ADMIN_KEY</Mono> with{" "}
+                <Mono>wrangler secret put</Mono>.
+              </p>
+            )}
+
+            <Form method="post" className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="token">API key</Label>
+                <Input
+                  id="token"
+                  type="password"
+                  name="token"
+                  placeholder="mw_live_…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="font-mono"
+                  /* The field is the only thing on the page; not focusing it
+                     makes the first keystroke go nowhere. */
+                  autoFocus
+                  aria-describedby={actionData?.error === undefined ? undefined : "token-error"}
+                />
+              </div>
+
+              {actionData?.error !== undefined && (
+                <p
+                  id="token-error"
+                  role="alert"
+                  className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger"
+                >
+                  {actionData.error}
+                </p>
+              )}
+
+              <Button type="submit" disabled={busy} className="w-full">
+                {busy ? "Checking…" : "Sign in"}
+              </Button>
+            </Form>
+          </CardContent>
+        </Card>
+
+        <p className="mt-4 px-1 text-xs leading-relaxed text-hint">
+          The key is sealed into an httpOnly cookie and never reaches the page's JavaScript.
+          Revoking the key ends the session.
         </p>
-      )}
-
-      {actionData?.error !== undefined && (
-        <p className="notice notice-bad">{actionData.error}</p>
-      )}
-
-      <Form method="post">
-        <input
-          type="password"
-          name="token"
-          placeholder="mw_live_…"
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="API key"
-        />
-        <button type="submit" className="primary" disabled={busy}>
-          {busy ? "Checking…" : "Sign in"}
-        </button>
-      </Form>
-
-      <p className="muted" style={{ marginTop: 18, fontSize: 13 }}>
-        The key is sealed into an httpOnly cookie and never reaches the page's JavaScript.
-        Revoking the key ends the session.
-      </p>
+      </div>
     </main>
   );
 }

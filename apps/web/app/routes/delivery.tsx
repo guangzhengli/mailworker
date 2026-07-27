@@ -1,6 +1,9 @@
 import { Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
-import { Empty, StatusTag, When } from "@web/app/ui";
+import { Button } from "@web/app/components/ui/button";
+import { Card, CardContent } from "@web/app/components/ui/card";
+import { Empty, Fact, Facts, Mono, SectionTitle, StatusTag, When } from "@web/app/ui";
+import { ArrowLeftIcon } from "lucide-react";
 import { Form, Link } from "react-router";
 import type { Route } from "./+types/delivery";
 
@@ -30,82 +33,78 @@ export default function DeliveryPage({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
             <StatusTag status={delivery.status} />
-          </h1>
-          <p className="muted mono" style={{ margin: "6px 0 0", fontSize: 13 }}>
-            {delivery.id}
-          </p>
+            <h1 className="sr-only">Delivery {delivery.id}</h1>
+          </div>
+          <p className="mt-2 truncate font-mono text-[13px] text-hint">{delivery.id}</p>
         </div>
-        <Link to="/deliveries" className="muted">
-          ← All deliveries
-        </Link>
-      </div>
-
-      {delivery.status === "pending_approval" && mayApprove && (
-        <Form method="post" style={{ marginBottom: 14 }}>
-          <button type="submit" className="primary">
-            Approve and send
-          </button>
-        </Form>
-      )}
-
-      <div className="panel pad">
-        <dl className="facts">
-          <dt>Recipients</dt>
-          <dd className="mono">{delivery.recipients.join(", ")}</dd>
-          <dt>Attempts</dt>
-          <dd className="numeric">{delivery.attempts}</dd>
-          <dt>Provider id</dt>
-          <dd className="mono">
-            {delivery.providerMessageId ?? <span className="muted">—</span>}
-          </dd>
-          <dt>Idempotency key</dt>
-          <dd className="mono">
-            {delivery.idempotencyKey ?? <span className="muted">—</span>}
-          </dd>
-          {delivery.rejectReason !== null && (
-            <>
-              <dt>Rejected because</dt>
-              <dd>{delivery.rejectReason}</dd>
-            </>
+        <div className="flex shrink-0 items-center gap-2">
+          {delivery.status === "pending_approval" && mayApprove && (
+            <Form method="post">
+              <Button type="submit" size="sm">
+                Approve and send
+              </Button>
+            </Form>
           )}
-          {delivery.lastError !== null && (
-            <>
-              <dt>Last error</dt>
-              <dd>{delivery.lastError}</dd>
-            </>
-          )}
-          {delivery.approvedBy !== null && (
-            <>
-              <dt>Approved by</dt>
-              <dd className="mono">
-                {delivery.approvedBy} <When value={delivery.approvedAt} />
-              </dd>
-            </>
-          )}
-          <dt>Created</dt>
-          <dd>
-            <When value={delivery.createdAt} />
-          </dd>
-          <dt>Status changed</dt>
-          <dd>
-            <When value={delivery.statusChangedAt} />
-          </dd>
-        </dl>
-      </div>
+          <Button render={<Link to="/deliveries" />} variant="outline" size="sm">
+            <ArrowLeftIcon />
+            All deliveries
+          </Button>
+        </div>
+      </header>
 
-      <h2>Timeline</h2>
-      <div className="panel">
+      <Card>
+        <CardContent>
+          <Facts>
+            <Fact label="Recipients" mono>
+              {delivery.recipients.join(", ")}
+            </Fact>
+            <Fact label="Attempts">
+              <span className="tabular-nums">{delivery.attempts}</span>
+            </Fact>
+            <Fact label="Provider id" mono>
+              {delivery.providerMessageId ?? <span className="text-hint">—</span>}
+            </Fact>
+            <Fact label="Idempotency key" mono>
+              {delivery.idempotencyKey ?? <span className="text-hint">—</span>}
+            </Fact>
+            {delivery.rejectReason !== null && (
+              <Fact label="Rejected because">
+                <span className="text-danger">{delivery.rejectReason}</span>
+              </Fact>
+            )}
+            {delivery.lastError !== null && (
+              <Fact label="Last error">
+                <span className="text-danger">{delivery.lastError}</span>
+              </Fact>
+            )}
+            {delivery.approvedBy !== null && (
+              <Fact label="Approved by">
+                <Mono>{delivery.approvedBy}</Mono> <When value={delivery.approvedAt} />
+              </Fact>
+            )}
+            <Fact label="Created">
+              <When value={delivery.createdAt} />
+            </Fact>
+            <Fact label="Status changed">
+              <When value={delivery.statusChangedAt} />
+            </Fact>
+          </Facts>
+        </CardContent>
+      </Card>
+
+      <SectionTitle>Timeline</SectionTitle>
+      <Card className="overflow-hidden py-0">
         {events.length === 0 ? (
           <Empty>
-            No provider events yet. They arrive on the <code>mailworker-events</code> queue from
+            No provider events yet. They arrive on the <Mono>mailworker-events</Mono> queue from
             Cloudflare's Email Sending event subscription, usually within a minute.
           </Empty>
         ) : (
-          <ul className="timeline">
+          <ol className="m-0 list-none p-4">
             {/*
               Every event is shown, including ones the state machine refused as
               out of order or post-terminal. Such an event did not change the
@@ -113,30 +112,39 @@ export default function DeliveryPage({ loaderData }: Route.ComponentProps) {
               and someone reading this page is usually reading it *because* that
               fact is the answer.
             */}
-            {events.map((event) => (
-              <li key={event.id}>
-                <span>
-                  <When value={event.occurredAt} />
-                </span>
-                <span>
-                  <StatusTag status={event.type} />
-                  {event.terminal && (
-                    <span className="muted" style={{ fontSize: 11 }}>
-                      {" "}
-                      terminal
-                    </span>
-                  )}
-                </span>
-                <span className="muted" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                  {event.recipient !== null && <span className="mono">{event.recipient} </span>}
-                  {event.smtpCode !== null && <>[{event.smtpCode}] </>}
-                  {event.smtpResponse}
-                </span>
+            {events.map((event, index) => (
+              <li key={event.id} className="relative flex gap-4 pb-5 last:pb-0">
+                {/* The rail stops at the last node rather than running past it,
+                    so the timeline reads as ended rather than as still loading. */}
+                {index < events.length - 1 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-5 bottom-0 left-[3.5px] w-px bg-border"
+                  />
+                )}
+                <span
+                  aria-hidden="true"
+                  className="relative mt-1.5 size-2 shrink-0 rounded-full bg-neutral"
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:items-baseline sm:gap-4">
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusTag status={event.type} />
+                    {event.terminal && (
+                      <span className="text-[11px] text-hint uppercase">terminal</span>
+                    )}
+                  </div>
+                  <When value={event.occurredAt} className="shrink-0 text-[13px]" />
+                  <div className="min-w-0 text-[13px] break-words text-secondary-text">
+                    {event.recipient !== null && <Mono>{event.recipient} </Mono>}
+                    {event.smtpCode !== null && <>[{event.smtpCode}] </>}
+                    {event.smtpResponse}
+                  </div>
+                </div>
               </li>
             ))}
-          </ul>
+          </ol>
         )}
-      </div>
+      </Card>
     </>
   );
 }
