@@ -31,13 +31,22 @@ export type DeliveryEventType =
  * `delivered -> complained` is the one non-obvious edge: a spam complaint
  * legitimately arrives minutes or days AFTER successful delivery, so `delivered`
  * is terminal for the delivery attempt but not for the message's fate.
+ *
+ * `deferred` carries the same outbound edges as `dispatched` because it IS a
+ * dispatched message the provider has not finished with. Its two extra edges are
+ * not hypothetical: the provider retries a deferred message, so a later attempt
+ * can still draw a `rejected`, and a `complained` can arrive for a message whose
+ * `delivered` event we never saw — queues are at-least-once and unordered, so
+ * "we missed the success and only heard about the complaint" is a normal Tuesday
+ * rather than a corruption. Leaving those out stranded such a delivery in
+ * `deferred` forever, since every event that could move it was refused.
  */
 const TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatus[]>> = {
   draft: ["pending_approval", "queued", "rejected"],
   pending_approval: ["queued", "rejected"],
   queued: ["dispatched", "failed", "rejected"],
   dispatched: ["delivered", "deferred", "bounced", "complained", "failed", "rejected"],
-  deferred: ["dispatched", "delivered", "bounced", "failed"],
+  deferred: ["dispatched", "delivered", "bounced", "complained", "failed", "rejected"],
   delivered: ["complained"],
   bounced: [],
   complained: [],

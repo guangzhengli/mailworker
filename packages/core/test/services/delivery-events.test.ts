@@ -112,6 +112,61 @@ describe("delivery.recordEvent", () => {
     expect(result).toEqual({ outcome: "applied", from: "delivered", to: "complained" });
   });
 
+  it("accepts a complaint for a deferred send whose delivered event never arrived", async () => {
+    // Queues are at-least-once and unordered, so "we missed the success and only
+    // heard about the complaint" is ordinary, not corruption. Without this edge
+    // the delivery sat in `deferred` forever, because every event that could
+    // have moved it was refused.
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+    await record(h.ctx, {
+      type: "deferred",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: false,
+      smtpCode: "451",
+    });
+    h.clock.advance(86_400_000);
+    const result = await record(h.ctx, {
+      type: "complained",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+    });
+
+    expect(result).toEqual({ outcome: "applied", from: "deferred", to: "complained" });
+  });
+
+  it("accepts a rejection on a later attempt at a deferred send", async () => {
+    // The provider keeps retrying a deferred message; the attempt that finally
+    // resolves it can resolve it as a refusal.
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+    await record(h.ctx, {
+      type: "deferred",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: false,
+      smtpCode: "451",
+    });
+    h.clock.advance(1000);
+    const result = await record(h.ctx, {
+      type: "rejected",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+      smtpResponse: "550 policy",
+    });
+
+    expect(result).toEqual({ outcome: "applied", from: "deferred", to: "rejected" });
+    const reloaded = await h.deps.deliveries.findById(h.ctx, delivery.id);
+    expect(reloaded?.rejectReason).toBe("550 policy");
+  });
+
   it("drops a stale event instead of throwing", async () => {
     // Throwing here would make the queue retry forever, and out-of-order
     // arrival is normal at scale.
