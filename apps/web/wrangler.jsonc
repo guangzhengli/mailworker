@@ -118,11 +118,14 @@
 
   "migrations": [
     {
-      // `new_classes`, not `new_sqlite_classes`: the waiter persists nothing.
-      // A waiter is a caller holding an open request, and one that outlived its
-      // own request would be waiting for nobody.
+      // The backend is immaterial here — the waiter persists nothing, because a
+      // waiter is a caller holding an open request and one that outlived its own
+      // request would be waiting for nobody. So this takes the only backend
+      // Cloudflare still hands out: new key-value-backed namespaces are no
+      // longer created for accounts without an existing one, and `new_classes`
+      // fails the deploy outright.
       "tag": "v1",
-      "new_classes": ["MessageWaiter"]
+      "new_sqlite_classes": ["MessageWaiter"]
     }
   ],
 
