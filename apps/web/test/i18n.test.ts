@@ -4,6 +4,7 @@ import {
   errorMessage,
   isErrorCode,
   LOCALES,
+  localeFromMatches,
   negotiate,
   translate,
 } from "@web/app/i18n";
@@ -156,6 +157,40 @@ describe("translate", () => {
 
     // @ts-expect-error — and a misspelled variable is caught the same way.
     translate("en", "inboxes.deleteAria", { addres: "a@b.c" });
+  });
+});
+
+describe("localeFromMatches", () => {
+  /**
+   * The shape React Router actually passes to `meta` — see `MetaMatch` in
+   * `react-router/dist/.../routeModules.d.ts`. Written out rather than imported
+   * because the point of the test is that this file agrees with that one: the
+   * first version of `localeFromMatches` read `data`, which `useMatches`
+   * provides and `meta` does not, so every page title silently rendered in
+   * English while the page body around it was Chinese.
+   */
+  const match = (id: string, loaderData: unknown) => ({
+    id,
+    loaderData,
+    pathname: "/",
+    params: {},
+    meta: [],
+  });
+
+  it("reads the locale off the root match", () => {
+    expect(
+      localeFromMatches([match("root", { locale: "zh" }), match("routes/login", undefined)]),
+    ).toBe("zh");
+    expect(localeFromMatches([match("root", { locale: "en" })])).toBe("en");
+  });
+
+  it("falls back to English when the root has no usable locale", () => {
+    expect(localeFromMatches([])).toBe(DEFAULT_LOCALE);
+    expect(localeFromMatches([match("root", undefined)])).toBe(DEFAULT_LOCALE);
+    expect(localeFromMatches([match("root", {})])).toBe(DEFAULT_LOCALE);
+    expect(localeFromMatches([match("root", { locale: "de" })])).toBe(DEFAULT_LOCALE);
+    // A child route carrying a locale must not be mistaken for the root's.
+    expect(localeFromMatches([match("routes/login", { locale: "zh" })])).toBe(DEFAULT_LOCALE);
   });
 });
 

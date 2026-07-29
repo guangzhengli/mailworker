@@ -167,13 +167,23 @@ export function negotiate(acceptLanguage: string | null): Locale {
  * React Router hands `meta` the matched routes and their loader data, and the
  * root's carries the locale — so a page title is translated from the same value
  * the page body used, rather than from a second negotiation that could disagree.
+ *
+ * The field is `loaderData`, not `data`. Both names appear in React Router's own
+ * API — `useMatches` gives `UIMatch.data` — but `MetaMatch` uses `loaderData`,
+ * and reading the wrong one silently returns English for every page title while
+ * the page body translates correctly. Hence the parameter requires `loaderData`
+ * rather than accepting it optionally: if a future version renames it again, the
+ * call sites stop compiling instead of quietly reverting to English.
  */
 export function localeFromMatches(
-  matches: ReadonlyArray<{ readonly id?: string; readonly data?: unknown } | undefined>,
+  // `| undefined` because React Router's generated `Matches` includes it for the
+  // routes a given path did not match. `loaderData` stays required on the rest,
+  // which is what keeps a rename from compiling.
+  matches: ReadonlyArray<{ readonly id: string; readonly loaderData: unknown } | undefined>,
 ): Locale {
-  const data = matches.find((match) => match?.id === "root")?.data;
-  if (typeof data === "object" && data !== null && "locale" in data) {
-    const locale = (data as { locale: unknown }).locale;
+  const rootData = matches.find((match) => match?.id === "root")?.loaderData;
+  if (typeof rootData === "object" && rootData !== null && "locale" in rootData) {
+    const locale = (rootData as { locale: unknown }).locale;
     if (isLocale(locale)) return locale;
   }
   return DEFAULT_LOCALE;
