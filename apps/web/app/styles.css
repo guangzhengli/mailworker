@@ -82,10 +82,23 @@
    * Deliberately NOT redefined under `.dark`. Reflowing every line of text on
    * a theme toggle is a bug wearing a token's clothes.
    */
-  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, sans-serif;
+  /*
+   * The CJK names after the Latin ones are load-bearing now that the dashboard
+   * ships Chinese. Inter and JetBrains Mono subset latin, latin-ext, greek and
+   * cyrillic and carry no Han at all, so every Chinese glyph comes from a
+   * fallback — and left unnamed, that fallback is whatever the browser reaches
+   * for, which on Windows is a serif by default. Naming the platform faces keeps
+   * Latin on Inter and hands Han to the font each OS actually designed for it.
+   *
+   * System faces rather than a webfont, deliberately: a subsetted CJK webfont is
+   * still megabytes, which ADR-8's budget would decline for a dashboard whose
+   * whole point is being cheap to open.
+   */
+  --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
-    SFMono-Regular, Menlo, monospace;
+    SFMono-Regular, Menlo, "PingFang SC", "Microsoft YaHei", monospace;
 
   --radius: 1.5rem;
   --shadow-x: 0px;

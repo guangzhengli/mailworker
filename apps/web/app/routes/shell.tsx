@@ -19,6 +19,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@web/app/components/ui/tooltip";
+import { type MessageKey, useT } from "@web/app/i18n";
+import { LOCALE_NAMES, useLocaleSwitch } from "@web/app/i18n/switch";
 import { cn } from "@web/app/lib/utils";
 import { useTheme } from "@web/app/theme";
 import { useRef, useState } from "react";
@@ -44,18 +46,33 @@ type IconComponent = React.ComponentType<
   { size?: number; className?: string } & React.RefAttributes<AnimatedIconHandle>
 >;
 
+/**
+ * The nav, with message keys rather than labels.
+ *
+ * A module constant cannot call a hook, and translating at the point of render
+ * is what keeps this a static table — the alternative is building the array
+ * inside the component on every render, for six rows that never change.
+ *
+ * `NavKey` rather than the whole `MessageKey` union, because `t()` derives its
+ * required variables from the key: given every key in the catalogue it cannot
+ * prove this one needs none, and demands an interpolation argument. Narrowing to
+ * the `nav.` keys — none of which take variables — is both what makes the call
+ * typecheck and a truer statement of what belongs in this table.
+ */
+type NavKey = Extract<MessageKey, `nav.${string}`>;
+
 const SECTIONS: ReadonlyArray<{
   to: string;
-  label: string;
+  label: NavKey;
   end: boolean;
   Icon: IconComponent;
 }> = [
-  { to: "/", label: "Inboxes", end: true, Icon: MailboxIcon },
-  { to: "/deliveries", label: "Deliveries", end: false, Icon: SendIcon },
-  { to: "/suppressions", label: "Suppressions", end: false, Icon: BanIcon },
-  { to: "/identities", label: "Identities", end: false, Icon: FingerprintIcon },
-  { to: "/keys", label: "API keys", end: false, Icon: KeySquareIcon },
-  { to: "/diagnostics", label: "Diagnostics", end: false, Icon: StethoscopeIcon },
+  { to: "/", label: "nav.inboxes", end: true, Icon: MailboxIcon },
+  { to: "/deliveries", label: "nav.deliveries", end: false, Icon: SendIcon },
+  { to: "/suppressions", label: "nav.suppressions", end: false, Icon: BanIcon },
+  { to: "/identities", label: "nav.identities", end: false, Icon: FingerprintIcon },
+  { to: "/keys", label: "nav.keys", end: false, Icon: KeySquareIcon },
+  { to: "/diagnostics", label: "nav.diagnostics", end: false, Icon: StethoscopeIcon },
 ];
 
 /**
@@ -75,11 +92,12 @@ function NavItem({
 }: {
   to: string;
   end: boolean;
-  label: string;
+  label: NavKey;
   Icon: IconComponent;
   onNavigate?: (() => void) | undefined;
 }) {
   const icon = useRef<AnimatedIconHandle>(null);
+  const { t } = useT();
 
   return (
     <NavLink
@@ -98,7 +116,7 @@ function NavItem({
       }
     >
       <Icon ref={icon} size={18} className="shrink-0" />
-      <span className="truncate">{label}</span>
+      <span className="truncate">{t(label)}</span>
     </NavLink>
   );
 }
@@ -106,7 +124,9 @@ function NavItem({
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
   const icon = useRef<AnimatedIconHandle>(null);
+  const { t } = useT();
   const next = resolvedTheme === "dark" ? "light" : "dark";
+  const label = next === "dark" ? t("shell.themeToDark") : t("shell.themeToLight");
 
   return (
     <Tooltip>
@@ -115,7 +135,7 @@ function ThemeToggle() {
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={`Switch to ${next} theme`}
+            aria-label={label}
             onClick={() => setTheme(next)}
             onMouseEnter={() => icon.current?.startAnimation()}
             onMouseLeave={() => icon.current?.stopAnimation()}
@@ -124,8 +144,44 @@ function ThemeToggle() {
       >
         <SunMoonIcon ref={icon} size={16} />
       </TooltipTrigger>
-      <TooltipContent>Switch to {next} theme</TooltipContent>
+      <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/**
+ * The language switch: a form, not a client-side toggle.
+ *
+ * A POST sets the cookie and the next render is server-side in the new language.
+ * A client-side switch would have to re-translate everything it had already
+ * hydrated and would still leave the following hard navigation to guess.
+ */
+function LocaleToggle() {
+  const { t } = useT();
+  const { next, action } = useLocaleSwitch();
+
+  return (
+    <Form method="post" action={action}>
+      <input type="hidden" name="locale" value={next} />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("shell.languageSwitch")}
+              className="text-[11px] font-medium"
+            />
+          }
+        >
+          {LOCALE_NAMES[next].short}
+        </TooltipTrigger>
+        <TooltipContent>
+          {t("shell.language")}: {LOCALE_NAMES[next].long}
+        </TooltipContent>
+      </Tooltip>
+    </Form>
   );
 }
 
@@ -137,6 +193,7 @@ function SidebarBody({
   onNavigate?: (() => void) | undefined;
 }) {
   const signOut = useRef<AnimatedIconHandle>(null);
+  const { t } = useT();
 
   return (
     <div className="flex h-full flex-col gap-1 p-3">
@@ -145,7 +202,10 @@ function SidebarBody({
           <div className="font-semibold tracking-tight text-title">Mailworker</div>
           <div className="truncate font-mono text-[11px] text-hint">{loaderData.accountId}</div>
         </div>
-        <ThemeToggle />
+        <div className="flex shrink-0 items-center gap-0.5">
+          <LocaleToggle />
+          <ThemeToggle />
+        </div>
       </div>
 
       <nav className="flex flex-col gap-0.5">
@@ -179,7 +239,7 @@ function SidebarBody({
             onMouseLeave={() => signOut.current?.stopAnimation()}
           >
             <LogoutIcon ref={signOut} size={15} />
-            Sign out
+            {t("shell.signOut")}
           </Button>
         </Form>
       </div>
@@ -191,11 +251,12 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const menu = useRef<AnimatedIconHandle>(null);
+  const { t } = useT();
 
-  const current =
-    SECTIONS.find((s) =>
-      s.end ? location.pathname === s.to : location.pathname.startsWith(s.to),
-    )?.label ?? "Mailworker";
+  const section = SECTIONS.find((s) =>
+    s.end ? location.pathname === s.to : location.pathname.startsWith(s.to),
+  );
+  const current = section === undefined ? "Mailworker" : t(section.label);
 
   return (
     <TooltipProvider>
@@ -212,7 +273,7 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Open navigation"
+            aria-label={t("shell.openNav")}
             aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen(true)}
             onMouseEnter={() => menu.current?.startAnimation()}
@@ -236,13 +297,13 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
           <div className="fixed inset-0 z-50 md:hidden">
             <button
               type="button"
-              aria-label="Close navigation"
+              aria-label={t("shell.closeNav")}
               className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
               onClick={() => setDrawerOpen(false)}
             />
             <div
               role="dialog"
-              aria-label="Navigation"
+              aria-label={t("shell.nav")}
               aria-modal="true"
               className="absolute inset-y-0 left-0 w-64 border-r border-sidebar-border bg-sidebar shadow-lg"
               onKeyDown={(event) => {

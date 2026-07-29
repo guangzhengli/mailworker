@@ -9,6 +9,8 @@ import {
 import { Input } from "@web/app/components/ui/input";
 import { Label } from "@web/app/components/ui/label";
 import { workerContext } from "@web/app/context";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { LocaleSwitchLink } from "@web/app/i18n/switch";
 import { Mono } from "@web/app/ui";
 import { callerForToken } from "@web/workers/http/auth";
 import {
@@ -20,7 +22,9 @@ import {
 import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/login";
 
-export const meta: Route.MetaFunction = () => [{ title: "Sign in · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "login.pageTitle") },
+];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   const { env, container } = context.get(workerContext);
@@ -41,7 +45,7 @@ export async function action({ context, request }: Route.ActionArgs) {
   const now = new Date();
 
   if (token.length === 0) {
-    return { error: "Paste an API key." };
+    return { error: "login.emptyKey" as const };
   }
 
   /**
@@ -52,16 +56,12 @@ export async function action({ context, request }: Route.ActionArgs) {
   try {
     await callerForToken(container, env, token, now);
   } catch {
-    return { error: "That key was not accepted. It may be revoked, expired, or mistyped." };
+    return { error: "login.rejected" as const };
   }
 
   const sealed = await seal(env, token, now);
   if (sealed === null) {
-    return {
-      error:
-        "This deployment cannot issue sessions: neither MAILWORKER_SESSION_SECRET " +
-        "nor MAILWORKER_ADMIN_KEY is set.",
-    };
+    return { error: "login.noSessionSecret" as const };
   }
 
   const url = new URL(request.url);
@@ -89,6 +89,7 @@ function safeNext(request: Request): string {
 export default function Login({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  const { t, rich } = useT();
 
   return (
     <main className="flex min-h-dvh items-center justify-center px-5 py-12">
@@ -97,24 +98,26 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
           <CardHeader>
             <CardTitle className="text-xl tracking-tight">Mailworker</CardTitle>
             <CardDescription>
-              Sign in with an API key. Mint one with{" "}
-              <Mono className="text-body">mailworker keys create</Mono>, or paste the bootstrap
-              admin key.
+              {rich("login.description", {
+                command: <Mono className="text-body">mailworker keys create</Mono>,
+              })}
             </CardDescription>
           </CardHeader>
 
           <CardContent className="flex flex-col gap-4">
             {!loaderData.available && (
               <p className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger">
-                No session secret is configured, so signing in cannot work. Set{" "}
-                <Mono>MAILWORKER_SESSION_SECRET</Mono> or <Mono>MAILWORKER_ADMIN_KEY</Mono> with{" "}
-                <Mono>wrangler secret put</Mono>.
+                {rich("login.noSecret", {
+                  session: <Mono>MAILWORKER_SESSION_SECRET</Mono>,
+                  admin: <Mono>MAILWORKER_ADMIN_KEY</Mono>,
+                  command: <Mono>wrangler secret put</Mono>,
+                })}
               </p>
             )}
 
             <Form method="post" className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
-                <Label htmlFor="token">API key</Label>
+                <Label htmlFor="token">{t("login.keyLabel")}</Label>
                 <Input
                   id="token"
                   type="password"
@@ -136,21 +139,24 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
                   role="alert"
                   className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger"
                 >
-                  {actionData.error}
+                  {t(actionData.error)}
                 </p>
               )}
 
               <Button type="submit" disabled={busy} className="w-full">
-                {busy ? "Checking…" : "Sign in"}
+                {busy ? t("login.checking") : t("login.submit")}
               </Button>
             </Form>
           </CardContent>
         </Card>
 
-        <p className="mt-4 px-1 text-xs leading-relaxed text-hint">
-          The key is sealed into an httpOnly cookie and never reaches the page's JavaScript.
-          Revoking the key ends the session.
-        </p>
+        <p className="mt-4 px-1 text-xs leading-relaxed text-hint">{t("login.cookieNote")}</p>
+
+        {/* The one page a reader reaches before they have a session, so the one
+            page where being stuck in the wrong language has no way out. */}
+        <div className="mt-3 flex justify-center">
+          <LocaleSwitchLink />
+        </div>
       </div>
     </main>
   );

@@ -7,18 +7,10 @@
  * registry code, and keeping it separate is what makes it re-syncable.
  */
 
+import { useT } from "@web/app/i18n";
+import { formatAbsolute, formatRelative } from "@web/app/i18n/format";
 import { cn } from "@web/app/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
-
-const ABSOLUTE = new Intl.DateTimeFormat("en-GB", {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  timeZone: "UTC",
-});
 
 /**
  * UTC, always, and labelled as such.
@@ -26,7 +18,8 @@ const ABSOLUTE = new Intl.DateTimeFormat("en-GB", {
  * Rendered on the server, where the reader's timezone is unknown — a local
  * time formatted from a server guess is wrong in a way that is invisible, and
  * this is a log-reading tool where an hour's error changes the conclusion. The
- * `title` carries the ISO string for anyone who needs to paste it.
+ * `title` carries the ISO string for anyone who needs to paste it. Localising
+ * the format does not change the zone; see `i18n/format.ts`.
  */
 export function When({
   value,
@@ -35,7 +28,8 @@ export function When({
   value: Date | string | null;
   className?: string;
 }) {
-  if (value === null) return <span className="text-hint">—</span>;
+  const { t, locale } = useT();
+  if (value === null) return <span className="text-hint">{t("common.dash")}</span>;
   const date = typeof value === "string" ? new Date(value) : value;
   return (
     <time
@@ -43,7 +37,7 @@ export function When({
       title={date.toISOString()}
       className={cn("text-secondary-text tabular-nums", className)}
     >
-      {ABSOLUTE.format(date)}
+      {formatAbsolute(locale, date)}
     </time>
   );
 }
@@ -55,7 +49,8 @@ export function Relative({
   value: Date | string | null;
   className?: string;
 }) {
-  if (value === null) return <span className="text-hint">—</span>;
+  const { t, locale } = useT();
+  if (value === null) return <span className="text-hint">{t("common.dash")}</span>;
   const date = typeof value === "string" ? new Date(value) : value;
   return (
     <time
@@ -63,24 +58,9 @@ export function Relative({
       title={date.toISOString()}
       className={cn("text-secondary-text tabular-nums whitespace-nowrap", className)}
     >
-      {ago(date)}
+      {formatRelative(locale, date)}
     </time>
   );
-}
-
-function ago(date: Date): string {
-  const seconds = Math.round((Date.now() - date.getTime()) / 1000);
-  const future = seconds < 0;
-  const n = Math.abs(seconds);
-  const [value, unit] =
-    n < 60
-      ? [n, "s"]
-      : n < 3600
-        ? [Math.round(n / 60), "m"]
-        : n < 86400
-          ? [Math.round(n / 3600), "h"]
-          : [Math.round(n / 86400), "d"];
-  return future ? `in ${value}${unit}` : `${value}${unit} ago`;
 }
 
 /**
@@ -150,14 +130,15 @@ export function Provenance({
   trusted: boolean;
   injectionRisk: boolean;
 }) {
+  const { t } = useT();
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      <Tag tone={trusted ? "success" : "warning"} title="SPF/DKIM/DMARC attribution">
-        {trusted ? "trusted" : "unverified"}
+      <Tag tone={trusted ? "success" : "warning"} title={t("provenance.attribution")}>
+        {trusted ? t("provenance.trusted") : t("provenance.unverified")}
       </Tag>
       {injectionRisk && (
-        <Tag tone="danger" title="The body contains instruction-shaped text">
-          injection risk
+        <Tag tone="danger" title={t("provenance.injectionRiskTitle")}>
+          {t("provenance.injectionRisk")}
         </Tag>
       )}
     </span>
@@ -172,12 +153,13 @@ export function Provenance({
  * mail has arrived" and "nothing would reach me if it had" they are looking at.
  */
 export function Live({ status }: { status: "connecting" | "live" | "offline" }) {
+  const { t } = useT();
   const label =
     status === "live"
-      ? "Live — new mail appears by itself"
+      ? t("live.liveTitle")
       : status === "connecting"
-        ? "Connecting to the live feed"
-        : "Not connected — reload to see new mail";
+        ? t("live.connectingTitle")
+        : t("live.offlineTitle");
 
   return (
     <span className="inline-flex items-center gap-2 text-xs text-secondary-text" title={label}>
@@ -196,7 +178,11 @@ export function Live({ status }: { status: "connecting" | "live" | "offline" }) 
           )}
         />
       </span>
-      {status}
+      {status === "live"
+        ? t("live.live")
+        : status === "connecting"
+          ? t("live.connecting")
+          : t("live.offline")}
     </span>
   );
 }
@@ -322,13 +308,14 @@ export function Note({ children }: { children: React.ReactNode }) {
  * be slower than the button the browser already has.
  */
 export function Pager({ to }: { to: string }) {
+  const { t } = useT();
   return (
     <div className="mt-4 flex justify-center">
       <a
         href={to}
         className="rounded-control border border-border px-3 py-1.5 text-sm text-secondary-text transition-colors hover:bg-hover hover:text-title"
       >
-        Older
+        {t("common.older")}
       </a>
     </div>
   );

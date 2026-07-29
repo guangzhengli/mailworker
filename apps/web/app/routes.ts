@@ -18,6 +18,13 @@ export default [
   route("login", "routes/login.tsx"),
   route("logout", "routes/logout.tsx"),
 
+  /**
+   * Also outside the shell, and for a different reason: the language switch has
+   * to work on the login page too, which is the one page a reader sees before
+   * they have a `Caller`. Action-only — its loader redirects away.
+   */
+  route("locale", "routes/locale.tsx"),
+
   layout("routes/shell.tsx", [
     index("routes/inboxes.tsx"),
     route("inboxes/:id", "routes/inbox.tsx"),

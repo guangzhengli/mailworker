@@ -24,13 +24,16 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { Empty, Mono, PageHeader, Relative, Tag, When } from "@web/app/ui";
 import { useEffect, useRef } from "react";
 import { Form, Link, useNavigation } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/inboxes";
 
-export const meta: Route.MetaFunction = () => [{ title: "Inboxes · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "inboxes.pageTitle") },
+];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
@@ -84,6 +87,7 @@ export async function action({ context, request }: Route.ActionArgs) {
  */
 function DeleteInbox({ id, address, busy }: { id: string; address: string; busy: boolean }) {
   const icon = useRef<AnimatedIconHandle>(null);
+  const { t, rich } = useT();
 
   return (
     <AlertDialog>
@@ -92,7 +96,7 @@ function DeleteInbox({ id, address, busy }: { id: string; address: string; busy:
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={`Delete ${address}`}
+            aria-label={t("inboxes.deleteAria", { address })}
             className="text-hint hover:text-danger"
             onMouseEnter={() => icon.current?.startAnimation()}
             onMouseLeave={() => icon.current?.stopAnimation()}
@@ -103,21 +107,22 @@ function DeleteInbox({ id, address, busy }: { id: string; address: string; busy:
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete this inbox?</AlertDialogTitle>
+          <AlertDialogTitle>{t("inboxes.deleteTitle")}</AlertDialogTitle>
           <AlertDialogDescription>
-            <Mono className="text-body">{address}</Mono> and every message it holds are removed.
-            This cannot be undone.
+            {rich("inboxes.deleteBody", {
+              address: <Mono className="text-body">{address}</Mono>,
+            })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
           <Form method="post">
             <input type="hidden" name="intent" value="delete" />
             <input type="hidden" name="id" value={id} />
             <AlertDialogAction
               render={
                 <Button type="submit" variant="destructive" disabled={busy}>
-                  Delete inbox
+                  {t("inboxes.deleteConfirm")}
                 </Button>
               }
             />
@@ -132,6 +137,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
   const busy = useNavigation().state !== "idle";
   const created = actionData?.created ?? null;
   const plus = useRef<AnimatedIconHandle>(null);
+  const { t, rich } = useT();
 
   /**
    * The new row appears in the table by itself, so the toast is not what tells
@@ -139,18 +145,18 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
    * read it without hunting for the row that just moved.
    */
   useEffect(() => {
-    if (created !== null) toast.success("Inbox created", { description: created });
-  }, [created]);
+    if (created !== null) toast.success(t("inboxes.created"), { description: created });
+  }, [created, t]);
 
   return (
     <>
-      <PageHeader title="Inboxes" description="Addresses that accept mail for this account.">
+      <PageHeader title={t("inboxes.title")} description={t("inboxes.description")}>
         <Button
           render={<Link to={loaderData.includeExpired ? "/" : "/?expired=1"} />}
           variant="ghost"
           size="sm"
         >
-          {loaderData.includeExpired ? "Hide expired" : "Show expired"}
+          {loaderData.includeExpired ? t("inboxes.hideExpired") : t("inboxes.showExpired")}
         </Button>
       </PageHeader>
 
@@ -159,12 +165,12 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
           <CardContent>
             <Form method="post" className="flex flex-wrap items-end gap-3">
               <div className="flex min-w-48 flex-1 flex-col gap-2">
-                <Label htmlFor="prefix">Address prefix</Label>
+                <Label htmlFor="prefix">{t("inboxes.prefixLabel")}</Label>
                 <Input id="prefix" name="prefix" placeholder="inbox" className="font-mono" />
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="kind">Kind</Label>
+                <Label htmlFor="kind">{t("inboxes.kindLabel")}</Label>
                 {/*
                  * A native select, not the Base UI one. This form is a plain
                  * POST that works with scripting off, and the styled trigger
@@ -182,7 +188,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="ttlMinutes">TTL (minutes)</Label>
+                <Label htmlFor="ttlMinutes">{t("inboxes.ttlLabel")}</Label>
                 <Input
                   id="ttlMinutes"
                   name="ttlMinutes"
@@ -200,7 +206,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
                 onMouseLeave={() => plus.current?.stopAnimation()}
               >
                 <PlusIcon ref={plus} size={16} />
-                Create inbox
+                {t("inboxes.create")}
               </Button>
             </Form>
           </CardContent>
@@ -210,16 +216,16 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
       <Card className="overflow-hidden py-0">
         {loaderData.inboxes.length === 0 ? (
           <Empty>
-            No inboxes yet. Create one above, or run <Mono>mailworker inbox create</Mono>.
+            {rich("inboxes.empty", { command: <Mono>mailworker inbox create</Mono> })}
           </Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Address</TableHead>
-                <TableHead>Kind</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("inboxes.colAddress")}</TableHead>
+                <TableHead>{t("inboxes.colKind")}</TableHead>
+                <TableHead>{t("inboxes.colExpires")}</TableHead>
+                <TableHead>{t("inboxes.colCreated")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
@@ -268,7 +274,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
             variant="outline"
             size="sm"
           >
-            Older
+            {t("common.older")}
           </Button>
         </div>
       )}

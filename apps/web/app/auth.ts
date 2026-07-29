@@ -58,9 +58,19 @@ export async function page<T>(
       // The status comes from `@mailworker/contract`'s table, the same one the
       // API and the CLI read, so there is still exactly one place that decides
       // a quota rejection is a 429.
+      /**
+       * The code goes in `statusText` verbatim, underscores and all.
+       *
+       * `isRouteErrorResponse` exposes the status, the `statusText` and the body
+       * and nothing else — no headers — so this is the only channel by which the
+       * error boundary can learn *which* failure this was, which is what it
+       * needs to render a translated sentence. The body stays the domain's own
+       * message, which names the id and is what the boundary shows underneath.
+       * Humanising the underscores is presentation and now happens there.
+       */
       throw new Response(error.message, {
         status: httpStatusFor(error.code),
-        statusText: error.code.replaceAll("_", " "),
+        statusText: error.code,
       });
     }
 
