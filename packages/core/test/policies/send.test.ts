@@ -18,10 +18,15 @@ function identity(
   });
 }
 
+/**
+ * Defaults to a bound identity with no restrictions on it, because that is what
+ * a correctly minted agent credential looks like — gate 2 refuses an unbound one
+ * outright, so `identity: null` is a case to opt into rather than the baseline.
+ */
 function evaluate(overrides: Partial<Parameters<typeof SendPolicy.evaluate>[0]> = {}) {
   return SendPolicy.evaluate({
     scopes: FULL_SCOPES,
-    identity: null,
+    identity: identity(),
     from: addr("agent@mail.example.com"),
     recipients: [addr("user@corp.com")],
     suppressedRecipients: [],
@@ -32,8 +37,8 @@ function evaluate(overrides: Partial<Parameters<typeof SendPolicy.evaluate>[0]> 
 }
 
 describe("SendPolicy", () => {
-  it("allows a plain send with the right scope", () => {
-    expect(evaluate()).toEqual({ kind: "allow" });
+  it("allows a plain send from a bound identity", () => {
+    expect(evaluate({ identity: identity() })).toEqual({ kind: "allow" });
   });
 
   it("rejects a credential without message:send", () => {
@@ -41,8 +46,26 @@ describe("SendPolicy", () => {
     expect(decision).toMatchObject({ kind: "reject", code: "forbidden" });
   });
 
-  it("lets admin stand in for any scope", () => {
-    expect(evaluate({ scopes: ["admin"] })).toEqual({ kind: "allow" });
+  it("refuses a sending credential that is not bound to an identity", () => {
+    // The gate exists because the three identity gates below it are *skipped*
+    // when there is nothing to meter, not merely relaxed. An unbound key could
+    // send as any address, to anyone, without limit — and `--identity` is an
+    // optional flag, so forgetting it produced exactly that, silently.
+    const decision = evaluate({ identity: null });
+    expect(decision).toMatchObject({ kind: "reject", code: "forbidden" });
+    if (decision.kind === "reject") {
+      expect(decision.details["required"]).toBe("identity");
+      // The message has to say how to fix it: whoever hits this is holding a
+      // key they believed was already metered.
+      expect(decision.reason).toContain("--identity");
+    }
+  });
+
+  it("exempts admin, which cannot be bound to an identity by construction", () => {
+    // Metering the principal that can rewrite the meter would be theatre —
+    // IdentityService refuses to bind an admin key for that reason, so admin has
+    // to be allowed through unbound or it could never send at all.
+    expect(evaluate({ scopes: ["admin"], identity: null })).toEqual({ kind: "allow" });
   });
 
   it("refuses a From address the identity may not use", () => {

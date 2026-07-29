@@ -54,8 +54,12 @@ Three things about that second command are deliberate:
   queue only means something if the principal being approved and the principal
   approving are different. An identity created with `--require-approval` sends
   into a queue a human releases.
-- **The key is bound to an identity**, which is what `SendPolicy` meters. An
-  unbound key is subject only to account-level limits.
+- **The key is bound to an identity**, which is what `SendPolicy` meters, and
+  `--identity` is not optional for a key that may send. The sender rule, the
+  recipient allowlist and the quota are all properties *of* an identity, so an
+  unbound credential does not get generous limits — it skips those three gates
+  entirely. Rather than let a forgotten flag silently mint an unmetered sender,
+  `SendPolicy` refuses the send and says which flag is missing.
 - **`admin` cannot be bound to an identity at all** — an admin key could edit
   the identity's own quota, so the metering would be optional for the thing
   being metered. The API refuses it rather than pretending.

@@ -17,7 +17,12 @@ export type SendDecision =
 
 export interface SendPolicyInput {
   readonly scopes: readonly Scope[];
-  /** Null when the credential is not bound to an agent identity (e.g. a human admin). */
+  /**
+   * Null when the credential is not bound to an agent identity. Gate 2 then
+   * allows the send only for `admin`, which cannot be bound by construction —
+   * for anything else an unbound credential is a misconfiguration, not a
+   * permission level.
+   */
   readonly identity: AgentIdentity | null;
   readonly from: EmailAddress;
   readonly recipients: readonly EmailAddress[];
@@ -29,7 +34,7 @@ export interface SendPolicyInput {
 }
 
 /**
- * The six gates between an agent and the outside world, then the approval hold.
+ * The seven gates between an agent and the outside world, then the approval hold.
  *
  * Ordering is deliberate. Approval is evaluated LAST, after every rejecting
  * gate: if a send would be refused anyway, an agent should get that refusal
@@ -50,7 +55,32 @@ export const SendPolicy = {
       });
     }
 
-    // Gate 2 — is this identity allowed to be this sender?
+    // Gate 2 — is there anything to meter at all?
+    //
+    // Gates 3, 4 and 6 are all properties OF an identity, so an unbound
+    // credential does not merely have generous limits, it skips those gates
+    // entirely: any From address, any recipient, unlimited volume. `--identity`
+    // is an optional flag on `keys create`, which made forgetting it the
+    // difference between a metered agent and an unmetered one — with no error at
+    // any point to say so.
+    //
+    // `admin` is exempt because an admin key cannot be bound to an identity by
+    // construction (it could edit that identity's own quota, so the metering
+    // would be optional for the thing being metered — see IdentityService).
+    // Metering the principal that can rewrite the meter is theatre; the honest
+    // split is that `admin` is a human with the keys to the deployment, and
+    // every credential handed to an agent carries an identity.
+    if (input.identity === null && !Scope.satisfies(input.scopes, "admin")) {
+      return reject(
+        "forbidden",
+        "This credential may send but is not bound to an agent identity, so no " +
+          "quota, sender rule or recipient allowlist applies to it. Mint it with " +
+          "`keys create --identity <name>`.",
+        { required: "identity" },
+      );
+    }
+
+    // Gate 3 — is this identity allowed to be this sender?
     if (input.identity !== null && !AgentIdentity.canSendAs(input.identity, input.from)) {
       return reject(
         "send_rejected",
@@ -59,7 +89,7 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 3 — recipient allowlist.
+    // Gate 4 — recipient allowlist.
     const identity = input.identity;
     if (identity !== null) {
       const blocked = input.recipients.filter(
@@ -74,7 +104,7 @@ export const SendPolicy = {
       }
     }
 
-    // Gate 4 — suppression list. Sending here would bounce or draw a complaint,
+    // Gate 5 — suppression list. Sending here would bounce or draw a complaint,
     // and both damage the account's sending reputation.
     if (input.suppressedRecipients.length > 0) {
       return reject(
@@ -84,7 +114,7 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 5 — quota.
+    // Gate 6 — quota.
     const quota = input.identity?.dailySendQuota ?? null;
     if (quota !== null && input.sentInWindow >= quota) {
       return reject(
@@ -94,7 +124,7 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 6 — loop breaker.
+    // Gate 7 — loop breaker.
     if (input.loop.looping) {
       return reject("loop_detected", input.loop.detail ?? "Send would form a mail loop.", {
         reason: input.loop.reason,
