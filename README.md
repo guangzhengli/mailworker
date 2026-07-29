@@ -77,7 +77,7 @@ is stored; there is no endpoint that reads it back.
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned (M5) |
 | `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built**; `init`/`deploy` planned |
-| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, dashboard, D1/R2/DO/Queues **built** |
+| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, `scheduled()`, dashboard, D1/R2/DO/Queues **built** |
 
 The marketing site and public live demo live in a **separate** repo
 (`../mailworker-web`), not here.

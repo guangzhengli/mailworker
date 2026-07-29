@@ -1,5 +1,6 @@
 import type {
   AttachmentMeta,
+  DomainEvent,
   ExtractKind,
   InboxKind,
   Message,
@@ -15,6 +16,7 @@ import {
   Inbox,
   invalidArgument,
   notFound,
+  RetentionPolicy,
   Ulid,
 } from "@core/domain";
 import type {
@@ -95,6 +97,23 @@ export type WaitOutcome =
 
 export const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 export const MAX_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Inboxes erased per sweep. See `sweepExpired` for why this is bounded at all. */
+export const DEFAULT_SWEEP_LIMIT = 200;
+
+export interface SweepExpiredOptions {
+  /** How long an expired inbox stays readable. Defaults to 24h. */
+  readonly gracePeriodMs?: number;
+  readonly limit?: number;
+}
+
+export interface SweepExpiredResult {
+  /** Inboxes the query returned — the backlog is larger when this equals `limit`. */
+  readonly examined: number;
+  readonly purged: number;
+  readonly messagesDeleted: number;
+  readonly failed: number;
+}
 
 export function createMailboxService(deps: MailboxDeps) {
   return {
@@ -385,6 +404,89 @@ export function createMailboxService(deps: MailboxDeps) {
       }
 
       return { outcome: "matched", message, extracted: extractFrom(message, input.extract) };
+    },
+
+    /**
+     * Erase inboxes whose grace period has run out. Driven by cron.
+     *
+     * Nothing else in the system deletes an expired inbox. `Inbox.canReceive`
+     * stops it taking new mail the instant it expires, which is what a caller
+     * sees — so without this sweep the failure is invisible rather than loud:
+     * the product works exactly as advertised while D1 rows and R2 objects
+     * accumulate forever. An ephemeral inbox that is never erased is just a
+     * persistent inbox that stopped answering.
+     *
+     * `limit` bounds one run rather than the backlog. `findExpired` returns
+     * oldest-expiry-first, so consecutive runs drain in age order and a burst of
+     * ten thousand expiries costs many short invocations instead of one that
+     * exceeds the CPU limit and accomplishes nothing. The default leaves room
+     * under a cron's budget for each inbox to cost a delete of its messages and
+     * a delete of its blobs.
+     *
+     * Per-inbox failures are collected, not thrown: one inbox whose blobs will
+     * not delete must not stop the other 199 from being erased, and the sweep
+     * runs again in an hour anyway. The count comes back so the caller can log
+     * it — a sweep that silently does nothing looks exactly like a sweep that
+     * has nothing to do.
+     */
+    async sweepExpired(
+      ctx: Caller,
+      options: SweepExpiredOptions = {},
+    ): Promise<SweepExpiredResult> {
+      Caller.require(ctx, "inbox:write");
+      const now = deps.clock.now();
+      const gracePeriodMs = options.gracePeriodMs ?? RetentionPolicy.DEFAULT_GRACE_PERIOD_MS;
+      const limit = options.limit ?? DEFAULT_SWEEP_LIMIT;
+
+      // Ask only for inboxes already past expiry + grace. Filtering in the query
+      // rather than after it keeps a long tail of merely-expired inboxes from
+      // consuming the limit and starving the ones actually due for erasure.
+      const candidates = await deps.inboxes.findExpired(
+        ctx,
+        new Date(now.getTime() - gracePeriodMs),
+        limit,
+      );
+
+      const result = { examined: candidates.length, purged: 0, messagesDeleted: 0, failed: 0 };
+      const events: DomainEvent[] = [];
+
+      for (const inbox of candidates) {
+        // The query said "past expiry + grace"; the policy is what decides that
+        // means purge. Re-asking it here is what keeps the rule in one place
+        // instead of half in a WHERE clause.
+        if (RetentionPolicy.decide({ inbox, now, gracePeriodMs }).action !== "purge") continue;
+
+        try {
+          // Same ordering as deleteInbox, for the same reason: a blob that
+          // outlives its row is an orphan the next sweep collects, while a row
+          // that outlives its blob is a message that renders as an error forever.
+          const { storageKeys } = await deps.messages.deleteByInbox(ctx, inbox.id);
+          if (storageKeys.length > 0) await deps.blobs.delete(ctx, storageKeys);
+          await deps.inboxes.deleteById(ctx, inbox.id);
+
+          result.purged += 1;
+          result.messagesDeleted += storageKeys.length;
+          events.push({
+            type: "inbox.expired",
+            accountId: ctx.accountId,
+            occurredAt: now,
+            inboxId: inbox.id,
+            address: inbox.address,
+          });
+        } catch {
+          // Left in place deliberately: it is still expired, so the next run
+          // will find it again. Retrying inside this loop would turn one broken
+          // inbox into a sweep that never reaches the rest of the backlog.
+          result.failed += 1;
+        }
+      }
+
+      // Published once, after the loop. The fan-out is a queue write per event,
+      // and interleaving those with the deletes would put a network call between
+      // a message delete and the blob delete that has to follow it.
+      if (events.length > 0) await deps.events.publish(events);
+
+      return result;
     },
   };
 }

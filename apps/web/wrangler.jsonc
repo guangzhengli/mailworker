@@ -91,6 +91,17 @@
     ]
   },
 
+  // Retention. Nothing else in the deployment deletes an expired inbox, so
+  // without this an ephemeral inbox is only ephemeral in the sense that it stops
+  // answering — the rows and the R2 objects stay forever.
+  //
+  // Hourly, not per-minute: the grace period is 24h (RetentionPolicy), so the
+  // sweep is never racing anything, and each run is capped at 200 inboxes.
+  // An hour of drift on erasing something that expired a day ago costs nothing;
+  // a per-minute cron on an account with no expiries costs 1,440 invocations
+  // a day to log a zero.
+  "triggers": { "crons": ["0 * * * *"] },
+
   "durable_objects": {
     "bindings": [
       {

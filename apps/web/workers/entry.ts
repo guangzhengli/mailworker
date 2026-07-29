@@ -3,15 +3,16 @@ import { app } from "@web/workers/http";
 import { EVENTS_PATH, liveEvents } from "@web/workers/http/events";
 import { queue } from "@web/workers/queue";
 import { renderDashboard } from "@web/workers/render";
+import { scheduled } from "@web/workers/scheduled";
 
 /**
- * One Worker, three ways in (ADR-6).
+ * One Worker, four ways in (ADR-6).
  *
  * `fetch` serves the `/v1` API and the dashboard, `email` receives inbound mail
- * from Email Routing, `queue` dispatches sends and folds in delivery events.
- * One `wrangler deploy`, one URL, one origin — which is what makes
- * `mailworker deploy` a single command and the CLI a single base URL rather
- * than a service map.
+ * from Email Routing, `queue` dispatches sends and folds in delivery events,
+ * and `scheduled` sweeps expired inboxes. One `wrangler deploy`, one URL, one
+ * origin — which is what makes `mailworker deploy` a single command and the CLI
+ * a single base URL rather than a service map.
  *
  * Nothing but wiring lives here. Each handler is a file next door, and none of
  * them decides anything: they translate a protocol into a service call.
@@ -38,6 +39,7 @@ export default {
   },
   email,
   queue,
+  scheduled,
 } satisfies ExportedHandler<Env>;
 
 export { MessageWaiter } from "@web/workers/waiter";
