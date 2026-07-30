@@ -14,36 +14,61 @@
  * Written as a tokenizer rather than a pile of regex replacements — a regex that
  * strips `<script>` is defeated by `<scr<script>ipt>`, while a scanner that
  * walks tags in order is not.
+ *
+ * **Presentation is kept, on purpose.** Inline `style` declarations and the
+ * presentational table attributes both survive, filtered rather than dropped
+ * (`safeStyle`). The alternative was tried and was worse than it sounds: mail is
+ * styled almost entirely inline, because clients strip `<style>` blocks, so
+ * discarding the `style` attribute renders every real message as an unstyled
+ * outline. That is not a preview of the mail — and on the page where a human
+ * approves an outgoing send, it is a preview of something the recipient will
+ * never see.
+ *
+ * `<style>` ELEMENTS are still discarded whole (see `RAW_TEXT`). They are a much
+ * larger surface — selectors, `@import`, media queries — for a much smaller
+ * gain, since a sender who relied on them would already be invisible in Gmail.
  */
 
-/** Tags kept, with the attributes each may carry. */
+/**
+ * Tags kept, with the attributes each may carry.
+ *
+ * The presentational attributes on the table elements (`bgcolor`, `cellpadding`,
+ * `align`, …) are here because table-based layout with presentational attributes
+ * IS how HTML mail is built — it is what survives Outlook — and a preview that
+ * drops them renders a carefully laid out message as a stack of bare rows. They
+ * carry no scheme and no script: the entire attack surface of `bgcolor` is a
+ * colour.
+ *
+ * `style` is not listed per-tag: it is universal, and `renderOpenTag` handles it
+ * for every element. See `safeStyle`.
+ */
 const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   a: ["href", "title"],
   abbr: ["title"],
   b: [],
   blockquote: ["cite"],
   br: [],
-  caption: [],
+  caption: ["align"],
   code: [],
-  col: ["span"],
-  colgroup: ["span"],
+  col: ["span", "width", "align", "valign", "bgcolor"],
+  colgroup: ["span", "width", "align", "valign"],
   dd: [],
-  div: [],
+  div: ["align"],
   dl: [],
   dt: [],
   em: [],
-  h1: [],
-  h2: [],
-  h3: [],
-  h4: [],
-  h5: [],
-  h6: [],
-  hr: [],
+  h1: ["align"],
+  h2: ["align"],
+  h3: ["align"],
+  h4: ["align"],
+  h5: ["align"],
+  h6: ["align"],
+  hr: ["align", "width", "size", "noshade"],
   i: [],
-  img: ["src", "alt", "width", "height", "title"],
+  img: ["src", "alt", "width", "height", "title", "align", "border", "hspace", "vspace"],
   li: [],
   ol: ["start", "type"],
-  p: [],
+  p: ["align"],
   pre: [],
   s: [],
   small: [],
@@ -51,13 +76,13 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   strong: [],
   sub: [],
   sup: [],
-  table: [],
-  tbody: [],
-  td: ["colspan", "rowspan"],
-  tfoot: [],
-  th: ["colspan", "rowspan", "scope"],
-  thead: [],
-  tr: [],
+  table: ["align", "bgcolor", "border", "cellpadding", "cellspacing", "width", "height"],
+  tbody: ["align", "valign", "bgcolor"],
+  td: ["colspan", "rowspan", "align", "valign", "bgcolor", "width", "height", "nowrap"],
+  tfoot: ["align", "valign", "bgcolor"],
+  th: ["colspan", "rowspan", "scope", "align", "valign", "bgcolor", "width", "height"],
+  thead: ["align", "valign", "bgcolor"],
+  tr: ["align", "valign", "bgcolor"],
   u: [],
   ul: [],
 };
@@ -83,6 +108,44 @@ export const RAW_TEXT = new Set([
 ]);
 
 const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+/**
+ * CSS functions an inline `style` may call. Everything else is refused.
+ *
+ * An allowlist rather than a blocklist of `url(` and `expression(`, for the same
+ * reason the tag table is one: a blocklist has to anticipate every dangerous
+ * name, including the ones a future engine adds, while this only has to describe
+ * what mail actually uses.
+ *
+ * `url()` is the notable absence and the deliberate one. It is how CSS reaches
+ * the network — `background-image`, `behavior`, `-moz-binding` all take one —
+ * and a remote fetch from a message body is the read receipt that
+ * `allowRemoteImages` exists to prevent. It cannot be conditionally re-enabled
+ * with that flag either, because there is no `data-blocked-` equivalent for a
+ * CSS declaration: `url()` in a background is not a thing a reader can be asked
+ * about, it either fires or it does not.
+ */
+const STYLE_FUNCTIONS: ReadonlySet<string> = new Set([
+  "rgb",
+  "rgba",
+  "hsl",
+  "hsla",
+  "calc",
+  "min",
+  "max",
+  "clamp",
+  "var",
+  "linear-gradient",
+  "radial-gradient",
+  "repeating-linear-gradient",
+  "repeating-radial-gradient",
+  "translate",
+  "translatex",
+  "translatey",
+  "rotate",
+  "scale",
+  "cubic-bezier",
+]);
 
 export interface SanitizeOptions {
   /**
@@ -261,6 +324,17 @@ function renderOpenTag(
     parts.push(`${attr}="${escapeAttr(raw)}"`);
   }
 
+  // Universal, so it is handled here rather than repeated on all forty entries
+  // of the tag table. Mail is styled almost entirely inline — clients strip
+  // `<style>` blocks, so senders inline everything — which makes this attribute
+  // the difference between a preview that looks like the message and one that
+  // looks like an outline of it.
+  const style = tag.attrs.get("style");
+  if (style !== undefined) {
+    const safe = safeStyle(style);
+    if (safe !== null) parts.push(`style="${escapeAttr(safe)}"`);
+  }
+
   // Outbound links open detached: without noopener the opened page can navigate
   // ours, and without noreferrer it learns where the click came from.
   if (tag.name === "a" && tag.attrs.has("href")) {
@@ -269,6 +343,76 @@ function renderOpenTag(
 
   const suffix = VOID.has(tag.name) ? " /" : "";
   return { html: `<${parts.join(" ")}${suffix}>`, blockedRemoteImages };
+}
+
+/**
+ * Filter an inline `style`, declaration by declaration.
+ *
+ * Per declaration rather than all-or-nothing: one `background:url(…)` in a rule
+ * block should cost that rule, not the forty others that were laying the message
+ * out. A dropped declaration degrades the preview; a dropped block deletes it.
+ *
+ * Note what is NOT the defence here. The sandboxed frame and its CSP are, as
+ * everywhere else in this file — `default-src 'none'` means a `url()` that
+ * somehow got through still could not load. This is the layer that keeps
+ * obviously hostile CSS out of stored and served content, and it is written to
+ * fail closed: anything it cannot confidently parse is discarded rather than
+ * passed along on the assumption that the CSP will catch it.
+ */
+export function safeStyle(raw: string): string | null {
+  const decoded = decodeEntities(raw);
+
+  /**
+   * Two decoding layers that would otherwise let a forbidden token through a
+   * scan of the literal text:
+   *
+   *   - CSS escapes. `\75 rl(…)` reaches the engine as `url(…)`, and
+   *     `\0075rl(…)` does too.
+   *   - Comments. Browsers strip them before parsing, so `u/*x*\/rl(…)` is
+   *     also `url(…)` by the time it matters.
+   *
+   * Both are refused outright instead of being un-escaped and re-checked,
+   * because a decoder written here would be a second implementation of a
+   * browser's and would be wrong in some corner. Neither appears in real mail:
+   * inline CSS is generated by templating tools that emit plain declarations.
+   */
+  if (decoded.includes("\\") || decoded.includes("/*")) return null;
+
+  const kept: string[] = [];
+  // Splitting on `;` misparses a value that contains one inside quotes. Such a
+  // declaration is dropped rather than mangled, which is the right direction to
+  // be wrong in and costs nothing real — `content: "a;b"` is not something mail
+  // does.
+  for (const declaration of decoded.split(";")) {
+    const colon = declaration.indexOf(":");
+    if (colon === -1) continue;
+
+    const property = declaration.slice(0, colon).trim().toLowerCase();
+    const value = declaration.slice(colon + 1).trim();
+    if (value === "") continue;
+    // Vendor prefixes (`-webkit-…`) are ordinary properties and stay.
+    if (!/^-?[a-z][a-z0-9-]*$/.test(property)) continue;
+    if (!functionsAreAllowed(value)) continue;
+
+    kept.push(`${property}:${value}`);
+  }
+
+  return kept.length === 0 ? null : kept.join(";");
+}
+
+/**
+ * Every `(` in the value must be preceded by an allowlisted function name.
+ *
+ * Anchoring on the parenthesis rather than searching for known-bad names is what
+ * makes this fail closed: `u\rl(`, `/**\/url(` and a function invented next year
+ * all present as a `(` whose preceding identifier is not in the set, and all are
+ * refused without this code having to know what they are.
+ */
+function functionsAreAllowed(value: string): boolean {
+  for (const match of value.matchAll(/([a-z-]*)\s*\(/gi)) {
+    if (!STYLE_FUNCTIONS.has(match[1]!.toLowerCase())) return false;
+  }
+  return true;
 }
 
 /**
