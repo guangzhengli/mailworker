@@ -13,13 +13,16 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { Empty, Mono, Note, PageHeader, Tag, When } from "@web/app/ui";
 import { useEffect, useRef } from "react";
 import { Form } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/identities";
 
-export const meta: Route.MetaFunction = () => [{ title: "Identities · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "identities.pageTitle") },
+];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
@@ -64,24 +67,23 @@ export async function action({ context, request }: Route.ActionArgs) {
 export default function Identities({ loaderData, actionData }: Route.ComponentProps) {
   const plus = useRef<AnimatedIconHandle>(null);
   const created = actionData?.created;
+  const { t, rich } = useT();
 
   useEffect(() => {
     if (created !== undefined) {
-      toast.success(`Identity ${created} created`, {
-        description: "Mint a key for it on the API keys page.",
+      toast.success(t("identities.created", { name: created }), {
+        description: t("identities.createdHint"),
       });
     }
-  }, [created]);
+  }, [created, t]);
 
   if (!loaderData.isAdmin) {
     return (
       <>
-        <PageHeader title="Identities" />
+        <PageHeader title={t("identities.title")} />
         <Card>
           <CardContent className="text-sm text-secondary-text">
-            Identities are <Mono>admin</Mono>-only, and this session is not. That is deliberate:
-            the limits an identity carries are exactly the ones the identity must not be able to
-            widen.
+            {rich("identities.adminOnly", { admin: <Mono>admin</Mono> })}
           </CardContent>
         </Card>
       </>
@@ -90,19 +92,15 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
 
   return (
     <>
-      <PageHeader title="Identities" description="What an agent is allowed to be." />
+      <PageHeader title={t("identities.title")} description={t("identities.description")} />
 
-      <Note>
-        A quota, an optional recipient allowlist, and whether every send waits for a human. An
-        identity cannot change its own limits — that is the whole point of declaring them here
-        rather than in the credential.
-      </Note>
+      <Note>{t("identities.note")}</Note>
 
       <Card className="mt-5 mb-5">
         <CardContent>
           <Form method="post" className="flex flex-wrap items-end gap-3">
             <div className="flex min-w-40 flex-col gap-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("field.name")}</Label>
               <Input
                 id="name"
                 name="name"
@@ -114,19 +112,19 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="quota">Daily quota</Label>
+              <Label htmlFor="quota">{t("field.dailyQuota")}</Label>
               <Input
                 id="quota"
                 name="quota"
                 type="number"
                 min={1}
-                placeholder="account limit"
+                placeholder={t("identities.accountLimit")}
                 className="w-36 tabular-nums"
               />
             </div>
 
             <div className="flex min-w-56 flex-1 flex-col gap-2">
-              <Label htmlFor="allowlist">Recipient allowlist</Label>
+              <Label htmlFor="allowlist">{t("identities.allowlistLabel")}</Label>
               <Input
                 id="allowlist"
                 name="allowlist"
@@ -137,7 +135,7 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
 
             <Label className="flex h-9 cursor-pointer items-center gap-2 font-normal">
               <Checkbox name="requireApproval" />
-              require approval
+              {t("identities.requireApproval")}
             </Label>
 
             <Button
@@ -146,7 +144,7 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
               onMouseLeave={() => plus.current?.stopAnimation()}
             >
               <PlusIcon ref={plus} size={16} />
-              Create
+              {t("identities.create")}
             </Button>
           </Form>
         </CardContent>
@@ -154,18 +152,16 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
 
       <Card className="overflow-hidden py-0">
         {loaderData.identities.length === 0 ? (
-          <Empty>
-            No identities. A key without one is subject only to account-level limits.
-          </Empty>
+          <Empty>{t("identities.empty")}</Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead className="text-right">Daily quota</TableHead>
-                <TableHead>Recipients</TableHead>
-                <TableHead>Approval</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("field.name")}</TableHead>
+                <TableHead className="text-right">{t("field.dailyQuota")}</TableHead>
+                <TableHead>{t("field.recipients")}</TableHead>
+                <TableHead>{t("field.approval")}</TableHead>
+                <TableHead>{t("field.created")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -176,17 +172,19 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {identity.dailySendQuota ?? (
-                      <span className="text-hint tabular-nums">account limit</span>
+                      <span className="text-hint tabular-nums">
+                        {t("identities.accountLimit")}
+                      </span>
                     )}
                   </TableCell>
                   <TableCell className="max-w-0 truncate">
                     {identity.recipientAllowlist === null ? (
-                      <span className="text-hint">anyone</span>
+                      <span className="text-hint">{t("identities.anyone")}</span>
                     ) : identity.recipientAllowlist.length === 0 ? (
                       /* An empty allowlist is not "no restriction" — it permits
                          nobody, and reading it as the former is how an identity
                          gets shipped that can never send. */
-                      <Tag tone="warning">nobody</Tag>
+                      <Tag tone="warning">{t("identities.nobody")}</Tag>
                     ) : (
                       <span className="font-mono text-[13px]">
                         {identity.recipientAllowlist.join(", ")}
@@ -195,9 +193,9 @@ export default function Identities({ loaderData, actionData }: Route.ComponentPr
                   </TableCell>
                   <TableCell>
                     {identity.requireApproval ? (
-                      <Tag tone="warning">required</Tag>
+                      <Tag tone="warning">{t("identities.approvalRequired")}</Tag>
                     ) : (
-                      <span className="text-hint">—</span>
+                      <span className="text-hint">{t("common.dash")}</span>
                     )}
                   </TableCell>
                   <TableCell>

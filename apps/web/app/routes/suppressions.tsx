@@ -7,6 +7,13 @@ import { Card, CardContent } from "@web/app/components/ui/card";
 import { Input } from "@web/app/components/ui/input";
 import { Label } from "@web/app/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@web/app/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -14,12 +21,15 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { Empty, Mono, Note, PageHeader, Tag, When } from "@web/app/ui";
 import { useRef } from "react";
 import { Form } from "react-router";
 import type { Route } from "./+types/suppressions";
 
-export const meta: Route.MetaFunction = () => [{ title: "Suppressions · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "suppressions.pageTitle") },
+];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
@@ -52,6 +62,17 @@ export async function action({ context, request }: Route.ActionArgs) {
   });
 }
 
+/**
+ * The reasons the form offers, in the wire vocabulary — so that what you pick
+ * here reads the same as what the table below and the API report back. The
+ * underscore is the only thing softened, and the table softens it the same way.
+ */
+const REASONS = ["manual", "complaint", "hard_bounce", "soft_bounce"] as const;
+
+const REASON_LABELS: Record<string, string> = Object.fromEntries(
+  REASONS.map((reason) => [reason, reason.replaceAll("_", " ")]),
+);
+
 /** Bounces are a fact about the address; manual entries are a decision about it. */
 const REASON_TONES = {
   hard_bounce: "danger",
@@ -63,23 +84,20 @@ const REASON_TONES = {
 export default function Suppressions({ loaderData }: Route.ComponentProps) {
   const { entries, maySuppress, mayRemove } = loaderData;
   const ban = useRef<AnimatedIconHandle>(null);
+  const { t, rich } = useT();
 
   return (
     <>
-      <PageHeader title="Suppressions" description="Addresses we refuse to mail." />
+      <PageHeader title={t("suppressions.title")} description={t("suppressions.description")} />
 
-      <Note>
-        Cloudflare adds hard bounces to its own account-level list automatically and we mirror
-        it, so <Mono>SendPolicy</Mono> can refuse before the API call — which keeps the attempt
-        off the sending reputation and off the bill.
-      </Note>
+      <Note>{rich("suppressions.note", { policy: <Mono>SendPolicy</Mono> })}</Note>
 
       {maySuppress && (
         <Card className="mt-5 mb-5">
           <CardContent>
             <Form method="post" className="flex flex-wrap items-end gap-3">
               <div className="flex min-w-56 flex-1 flex-col gap-2">
-                <Label htmlFor="address">Address</Label>
+                <Label htmlFor="address">{t("field.address")}</Label>
                 <Input
                   id="address"
                   name="address"
@@ -91,17 +109,19 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="reason">Reason</Label>
-                <select
-                  id="reason"
-                  name="reason"
-                  className="h-9 rounded-control border border-border bg-input/30 px-3 text-sm text-body outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                >
-                  <option value="manual">manual</option>
-                  <option value="complaint">complaint</option>
-                  <option value="hard_bounce">hard bounce</option>
-                  <option value="soft_bounce">soft bounce</option>
-                </select>
+                <Label htmlFor="reason">{t("field.reason")}</Label>
+                <Select name="reason" defaultValue="manual" items={REASON_LABELS}>
+                  <SelectTrigger id="reason" className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REASONS.map((reason) => (
+                      <SelectItem key={reason} value={reason}>
+                        {REASON_LABELS[reason]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <Button
@@ -110,7 +130,7 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
                 onMouseLeave={() => ban.current?.stopAnimation()}
               >
                 <BanIcon ref={ban} size={16} />
-                Suppress
+                {t("suppressions.suppress")}
               </Button>
             </Form>
           </CardContent>
@@ -119,15 +139,15 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
 
       <Card className="overflow-hidden py-0">
         {entries.length === 0 ? (
-          <Empty>Nothing suppressed. That is the good state.</Empty>
+          <Empty>{t("suppressions.empty")}</Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Address</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Since</TableHead>
+                <TableHead>{t("field.address")}</TableHead>
+                <TableHead>{t("field.reason")}</TableHead>
+                <TableHead>{t("field.source")}</TableHead>
+                <TableHead>{t("field.since")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
@@ -152,7 +172,7 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
                         <input type="hidden" name="intent" value="remove" />
                         <input type="hidden" name="address" value={entry.address} />
                         <Button type="submit" variant="outline" size="sm">
-                          Remove
+                          {t("suppressions.remove")}
                         </Button>
                       </Form>
                     )}
@@ -164,12 +184,7 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
         )}
       </Card>
 
-      <Note>
-        Removing an entry is deliberately allowed, even for a hard bounce: an address can be
-        fixed, and a suppression list with no way out becomes a list of people you have
-        permanently stopped talking to. It needs <Mono>admin</Mono> because doing it wrongly
-        damages sending reputation for everyone on the deployment.
-      </Note>
+      <Note>{rich("suppressions.removeNote", { admin: <Mono>admin</Mono> })}</Note>
     </>
   );
 }

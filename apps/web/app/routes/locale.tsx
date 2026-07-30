@@ -34,9 +34,9 @@ export async function loader() {
 }
 
 /**
- * Where to go back to, from a hidden field rather than the `Referer` header —
- * `Referer` is stripped by `<meta name="referrer" content="no-referrer">` in
- * `root.tsx`, so it is not available here even for our own navigations.
+ * Where to go back to, from the query string rather than the `Referer` header —
+ * the referrer policy in `root.tsx` decides whether `Referer` arrives at all,
+ * so a switch that depended on it would break the next time that value changed.
  *
  * Same rule as login's `?next=`: only a same-origin path survives, and anything
  * else collapses to `/`. Parsing against the request URL and comparing origins

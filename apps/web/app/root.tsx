@@ -50,8 +50,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         {/* Nothing here is public, and a dashboard URL in a referrer log is a
-            leak of an inbox id to whatever the caller clicked through to. */}
-        <meta name="referrer" content="no-referrer" />
+            leak of an inbox id to whatever the caller clicked through to.
+
+            `same-origin` and not `no-referrer`, which is the stronger-sounding
+            value and the broken one: under `no-referrer` the browser serialises
+            the `Origin` of a same-origin form POST as the literal `null`
+            (Fetch, "append a request Origin header"), and React Router reads a
+            `null` origin as a cross-site action and aborts every mutation.
+            `same-origin` still sends no `Referer` at all to a third party,
+            which is the whole of what the leak above is about. */}
+        <meta name="referrer" content="same-origin" />
         <Meta />
         <Links />
         <ThemeScript />

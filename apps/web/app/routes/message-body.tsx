@@ -1,6 +1,8 @@
 import { Ulid } from "@mailworker/core";
 import { sanitizeHtml } from "@mailworker/mime";
 import { page } from "@web/app/auth";
+import { type Locale, plural } from "@web/app/i18n";
+import { localeFromRequest } from "@web/app/i18n/locale.server";
 import type { Route } from "./+types/message-body";
 
 /**
@@ -47,7 +49,15 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
       "base-uri 'none'",
     ].join("; ");
 
-    return new Response(document(html, blockedRemoteImages, allowRemoteImages), {
+    /**
+     * Off the request, not off a React context: this route returns a `Response`
+     * and has no component, so there is no provider above it. The cookie the
+     * dashboard set is on this request too — the frame is a same-origin
+     * subresource — so the blocked-images note matches the page around it.
+     */
+    const locale = localeFromRequest(request);
+
+    return new Response(document(locale, html, blockedRemoteImages, allowRemoteImages), {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": csp,
@@ -62,17 +72,28 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
   });
 }
 
-function document(html: string, blocked: number, allowRemoteImages: boolean): string {
+function document(
+  locale: Locale,
+  html: string,
+  blocked: number,
+  allowRemoteImages: boolean,
+): string {
   const note =
     blocked > 0 && !allowRemoteImages
-      ? `<p class="blocked">${blocked} remote image${blocked === 1 ? "" : "s"} blocked.</p>`
+      ? `<p class="blocked">${plural(locale, "body.blocked", blocked)}</p>`
       : "";
 
+  /**
+   * `lang` on the frame's own root, because it is a document of its own and does
+   * not inherit the dashboard's. Without it the CJK font stack below never
+   * applies and the note renders in whatever the browser guesses.
+   */
   return `<!doctype html>
-<html><head><meta charset="utf-8">
+<html lang="${locale}"><head><meta charset="utf-8">
 <style>
   :root { color-scheme: light; }
-  body { margin: 0; padding: 16px; font: 15px/1.55 ui-sans-serif, system-ui, sans-serif;
+  body { margin: 0; padding: 16px;
+         font: 15px/1.55 ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
          color: #1c1b19; background: #fff; overflow-wrap: anywhere; }
   img { max-width: 100%; height: auto; }
   table { max-width: 100%; }

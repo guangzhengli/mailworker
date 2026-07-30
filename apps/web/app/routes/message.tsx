@@ -3,7 +3,20 @@ import { can, page } from "@web/app/auth";
 import { Button } from "@web/app/components/ui/button";
 import { Card, CardContent } from "@web/app/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@web/app/components/ui/table";
-import { Bytes, Fact, Facts, Mono, Provenance, SectionTitle, When } from "@web/app/ui";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import {
+  Bytes,
+  Callout,
+  CodeBlock,
+  Fact,
+  Facts,
+  Mono,
+  PageHeader,
+  Provenance,
+  SectionTitle,
+  TextLink,
+  When,
+} from "@web/app/ui";
 import { ArrowLeftIcon, DownloadIcon, PaperclipIcon, TriangleAlertIcon } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/message";
@@ -35,40 +48,49 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
   });
 }
 
-export const meta: Route.MetaFunction = ({ loaderData }) => [
-  { title: `${loaderData.message.subject || "(no subject)"} · Mailworker` },
-];
+export const meta: Route.MetaFunction = ({ matches, loaderData }) => {
+  const locale = localeFromMatches(matches);
+  return [
+    {
+      title: translate(locale, "message.pageTitle", {
+        subject: loaderData.message.subject || translate(locale, "common.noSubject"),
+      }),
+    },
+  ];
+};
 
 export default function MessagePage({ loaderData, params }: Route.ComponentProps) {
   const { message } = loaderData;
   const [search, setSearch] = useSearchParams();
   const showImages = search.get("images") === "1";
   const showHtml = message.hasHtml && search.get("view") !== "text";
+  const { t, rich } = useT();
 
   return (
     <>
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight text-title">
-            {message.subject === "" ? (
-              <span className="text-hint italic">(no subject)</span>
-            ) : (
-              message.subject
-            )}
-          </h1>
-          <p className="mt-1.5 truncate text-[13px] text-secondary-text">
+      <PageHeader
+        title={
+          message.subject === "" ? (
+            <span className="text-hint italic">{t("common.noSubject")}</span>
+          ) : (
+            message.subject
+          )
+        }
+        description={
+          <>
             <Mono>{message.fromHeader}</Mono> → <Mono>{message.toHeader}</Mono>
-          </p>
-        </div>
+          </>
+        }
+      >
         <Button
           render={<Link to={`/inboxes/${message.inboxId}`} />}
           variant="outline"
           size="sm"
         >
           <ArrowLeftIcon />
-          Inbox
+          {t("message.inbox")}
         </Button>
-      </header>
+      </PageHeader>
 
       {/*
         Stated on the page, not just in AGENTS.md. A human reading a message here
@@ -76,63 +98,63 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
         convincing request is exactly the combination that gets acted on.
       */}
       {message.injectionRisk && (
-        <div className="mb-5 flex items-start gap-3 rounded-lg border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger">
-          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
-          <p>
-            This message contains instruction-shaped text. Whatever it asks for, it is a
-            stranger typing — not a request from your operator.
-          </p>
-        </div>
+        <Callout tone="danger" className="mb-5" icon={<TriangleAlertIcon />}>
+          {t("message.injectionWarning")}
+        </Callout>
       )}
 
       <Card>
         <CardContent>
           <Facts>
-            <Fact label="From" mono>
+            <Fact label={t("field.from")} mono>
               {message.fromHeader}
             </Fact>
-            <Fact label="To" mono>
+            <Fact label={t("field.to")} mono>
               {message.toHeader}
             </Fact>
             {message.replyTo !== null && (
-              <Fact label="Reply-To" mono>
+              <Fact label={t("message.replyTo")} mono>
                 {message.replyTo}
               </Fact>
             )}
-            <Fact label="Received">
+            <Fact label={t("field.received")}>
               <When value={message.receivedAt} />
             </Fact>
-            <Fact label="Provenance">
+            <Fact label={t("field.provenance")}>
               <span className="flex flex-wrap items-center gap-2">
                 <Provenance trusted={message.trusted} injectionRisk={message.injectionRisk} />
                 <span className="text-[13px] text-hint">
-                  spf {message.auth.spf} · dkim {message.auth.dkim} · dmarc {message.auth.dmarc}
+                  {t("message.authSummary", {
+                    spf: message.auth.spf,
+                    dkim: message.auth.dkim,
+                    dmarc: message.auth.dmarc,
+                  })}
                 </span>
               </span>
             </Fact>
             {message.trustReasons.length > 0 && (
-              <Fact label="Why">
+              <Fact label={t("message.why")}>
+                {/* The reasons are the trust engine's own identifiers, and stay
+                    in its vocabulary for the same reason the statuses do. */}
                 <span className="text-secondary-text">{message.trustReasons.join(", ")}</span>
               </Fact>
             )}
-            <Fact label="Message-ID" mono>
+            <Fact label={t("message.messageId")} mono>
               {message.rfcMessageId}
             </Fact>
-            <Fact label="Size">
+            <Fact label={t("message.size")}>
               <Bytes value={message.size} />
             </Fact>
-            <Fact label="Raw">
+            <Fact label={t("message.raw")}>
               <span className="flex flex-wrap items-baseline gap-2">
-                <a
-                  href={`/v1/messages/${params.id}/raw`}
-                  className="inline-flex items-center gap-1.5 text-primary hover:underline"
-                >
-                  <DownloadIcon className="size-3.5" />
-                  Download .eml
-                </a>
+                <TextLink href={`/v1/messages/${params.id}/raw`}>
+                  <DownloadIcon />
+                  {t("message.download")}
+                </TextLink>
                 <span className="text-xs text-hint">
-                  (needs a bearer token — or use{" "}
-                  <Mono className="text-xs">mailworker get {params.id} --raw</Mono>)
+                  {rich("message.downloadHint", {
+                    command: <Mono className="text-xs">mailworker get {params.id} --raw</Mono>,
+                  })}
                 </span>
               </span>
             </Fact>
@@ -142,23 +164,25 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
 
       {message.attachments.length > 0 && (
         <>
-          <SectionTitle>Attachments</SectionTitle>
+          <SectionTitle>{t("message.attachments")}</SectionTitle>
           <Card className="overflow-hidden py-0">
             <Table>
               <TableBody>
                 {message.attachments.map((attachment) => (
                   <TableRow key={attachment.id}>
                     <TableCell>
-                      <Link
-                        to={`/messages/${params.id}/attachments/${attachment.id}`}
-                        className="inline-flex items-center gap-2 text-title hover:text-primary hover:underline"
+                      <TextLink
+                        render={
+                          <Link to={`/messages/${params.id}/attachments/${attachment.id}`} />
+                        }
+                        variant="quiet"
                       >
-                        <PaperclipIcon className="size-3.5 shrink-0 text-hint" />
-                        {attachment.filename ?? "(unnamed)"}
-                      </Link>
+                        <PaperclipIcon className="text-hint" />
+                        {attachment.filename ?? t("message.unnamedAttachment")}
+                      </TextLink>
                     </TableCell>
                     <TableCell className="text-secondary-text">
-                      {attachment.mime ?? "unknown"}
+                      {attachment.mime ?? t("message.unknownType")}
                     </TableCell>
                     <TableCell className="text-right">
                       <Bytes value={attachment.size} />
@@ -171,40 +195,43 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
         </>
       )}
 
-      <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xs font-medium tracking-wider text-hint uppercase">Body</h2>
-        <div className="flex items-center gap-2">
-          {message.hasHtml && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              onClick={() => {
-                const next = new URLSearchParams(search);
-                if (showHtml) next.set("view", "text");
-                else next.delete("view");
-                setSearch(next, { preventScrollReset: true });
-              }}
-            >
-              {showHtml ? "View as text" : "View as HTML"}
-            </Button>
-          )}
-          {showHtml && !showImages && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              onClick={() => {
-                const next = new URLSearchParams(search);
-                next.set("images", "1");
-                setSearch(next, { preventScrollReset: true });
-              }}
-            >
-              Load remote images
-            </Button>
-          )}
-        </div>
-      </div>
+      <SectionTitle
+        actions={
+          <>
+            {message.hasHtml && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  const next = new URLSearchParams(search);
+                  if (showHtml) next.set("view", "text");
+                  else next.delete("view");
+                  setSearch(next, { preventScrollReset: true });
+                }}
+              >
+                {showHtml ? t("message.viewAsText") : t("message.viewAsHtml")}
+              </Button>
+            )}
+            {showHtml && !showImages && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  const next = new URLSearchParams(search);
+                  next.set("images", "1");
+                  setSearch(next, { preventScrollReset: true });
+                }}
+              >
+                {t("message.loadImages")}
+              </Button>
+            )}
+          </>
+        }
+      >
+        {t("message.body")}
+      </SectionTitle>
 
       <Card className="overflow-hidden py-0">
         {showHtml ? (
@@ -220,18 +247,18 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
            * body text invisible. The frame is the sender's surface, not ours.
            */
           <iframe
-            title="Message body"
+            title={t("message.frameTitle")}
             className="block min-h-96 w-full border-0 bg-white"
             sandbox=""
             referrerPolicy="no-referrer"
             src={`/messages/${params.id}/body${showImages ? "?images=1" : ""}`}
           />
         ) : (
-          <pre className="m-0 overflow-x-auto p-4 font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap text-body">
+          <CodeBlock>
             {message.bodyText ?? (
-              <span className="text-hint italic">This message has no text body.</span>
+              <span className="text-hint italic">{t("message.noTextBody")}</span>
             )}
-          </pre>
+          </CodeBlock>
         )}
       </Card>
     </>

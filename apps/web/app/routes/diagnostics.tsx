@@ -1,7 +1,8 @@
 import type { CheckStatus } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
-import { Card, CardContent } from "@web/app/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@web/app/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import {
   Empty,
   Fact,
@@ -15,7 +16,9 @@ import {
 } from "@web/app/ui";
 import type { Route } from "./+types/diagnostics";
 
-export const meta: Route.MetaFunction = () => [{ title: "Diagnostics · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "diagnostics.pageTitle") },
+];
 
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services, env }) => {
@@ -53,13 +56,15 @@ const TONE: Record<CheckStatus, Tone> = {
 };
 
 export default function Diagnostics({ loaderData }: Route.ComponentProps) {
+  const { t, rich } = useT();
+
   if (!loaderData.isAdmin) {
     return (
       <>
-        <PageHeader title="Diagnostics" />
+        <PageHeader title={t("diagnostics.title")} />
         <Card>
           <CardContent className="text-sm text-secondary-text">
-            Diagnostics are <Mono>admin</Mono>-only, and this session is not.
+            {rich("diagnostics.adminOnly", { admin: <Mono>admin</Mono> })}
           </CardContent>
         </Card>
       </>
@@ -70,68 +75,74 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <PageHeader title="Diagnostics" description="The same checks mailworker doctor runs." />
+      <PageHeader title={t("diagnostics.title")} description={t("diagnostics.description")} />
 
       <Note>
-        Everything here fails <em>silently</em> in production: mail that lands in spam because
-        DMARC is missing, an inbox that receives nothing because MX points at the old host, a
-        send that works against your own address and fails against a customer because the domain
-        is not verified yet.
+        {rich("diagnostics.note", { silently: <em>{t("diagnostics.silently")}</em> })}
       </Note>
 
-      <SectionTitle>Bindings</SectionTitle>
+      <SectionTitle>{t("diagnostics.bindings")}</SectionTitle>
       <Card>
         <CardContent>
           <Facts>
-            <Fact label="Email Sending">
+            <Fact label={t("diagnostics.emailSending")}>
               {deployment.sendingConfigured ? (
-                <Tag tone="success">bound</Tag>
+                <Tag tone="success">{t("diagnostics.bound")}</Tag>
               ) : (
                 <span className="flex flex-wrap items-center gap-2">
-                  <Tag tone="warning">not bound</Tag>
-                  <span className="text-[13px] text-hint">
-                    Receiving still works — Email Routing is free. Sending needs Workers Paid.
-                  </span>
+                  <Tag tone="warning">{t("diagnostics.notBound")}</Tag>
+                  <span className="text-[13px] text-hint">{t("diagnostics.sendingHint")}</span>
                 </span>
               )}
             </Fact>
-            <Fact label="Dispatch queue">
+            <Fact label={t("diagnostics.dispatchQueue")}>
               {deployment.dispatchQueueConfigured ? (
-                <Tag tone="success">bound</Tag>
+                <Tag tone="success">{t("diagnostics.bound")}</Tag>
               ) : (
-                <Tag tone="danger">not bound</Tag>
+                <Tag tone="danger">{t("diagnostics.notBound")}</Tag>
               )}
             </Fact>
-            <Fact label="Webhook queue">
+            <Fact label={t("diagnostics.webhookQueue")}>
               {deployment.webhookQueueConfigured ? (
-                <Tag tone="success">bound</Tag>
+                <Tag tone="success">{t("diagnostics.bound")}</Tag>
               ) : (
-                <Tag tone="warning">not bound</Tag>
+                <Tag tone="warning">{t("diagnostics.notBound")}</Tag>
               )}
             </Fact>
           </Facts>
         </CardContent>
       </Card>
 
-      <SectionTitle>Domains</SectionTitle>
+      <SectionTitle>{t("diagnostics.domains")}</SectionTitle>
       {domains.length === 0 ? (
         <Card className="py-0">
           <Empty>
-            No domains registered yet. Run <Mono>mailworker deploy</Mono> to onboard one.
+            {rich("diagnostics.noDomains", { command: <Mono>mailworker deploy</Mono> })}
           </Empty>
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
           {domains.map((diagnosis) => (
             <Card key={diagnosis.domain} className="gap-0 overflow-hidden py-0">
-              <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-                <span className="font-mono text-[15px] font-medium text-title">
+              {/* `--card-spacing` narrowed to 3 rather than padding set by hand:
+                  it is the variable `CardHeader` already pads from, and 3 is what
+                  lines the domain up with the first column of the table below. */}
+              <CardHeader className="flex flex-wrap items-center gap-3 border-b pt-3 [--card-spacing:--spacing(3)]">
+                <CardTitle className="font-mono text-[15px] text-title">
                   {diagnosis.domain}
-                </span>
+                </CardTitle>
                 <Tag tone={TONE[diagnosis.status]}>{diagnosis.status}</Tag>
-              </div>
+              </CardHeader>
               <Table>
                 <TableBody>
+                  {/*
+                    A check's name, status, detail and fix are `mailworker
+                    doctor`'s own output, rendered verbatim in both locales. This
+                    page's promise is "the same checks doctor runs", and a
+                    translated detail is one the reader cannot match against the
+                    terminal they are about to run it in. Only the label in front
+                    of the fix belongs to the dashboard.
+                  */}
                   {diagnosis.checks.map((check) => (
                     <TableRow key={check.name}>
                       <TableCell className="w-28 align-top font-medium text-title">
@@ -144,7 +155,7 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
                         <div className="break-words">{check.detail}</div>
                         {check.fix !== undefined && (
                           <div className="mt-1 text-[13px] break-words text-hint">
-                            Fix: {check.fix}
+                            {t("diagnostics.fix", { fix: check.fix })}
                           </div>
                         )}
                       </TableCell>

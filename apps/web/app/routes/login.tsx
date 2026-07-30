@@ -11,7 +11,7 @@ import { Label } from "@web/app/components/ui/label";
 import { workerContext } from "@web/app/context";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { LocaleSwitchLink } from "@web/app/i18n/switch";
-import { Mono } from "@web/app/ui";
+import { Callout, Mono, Note } from "@web/app/ui";
 import { callerForToken } from "@web/workers/http/auth";
 import {
   callerForRequest,
@@ -106,13 +106,13 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
 
           <CardContent className="flex flex-col gap-4">
             {!loaderData.available && (
-              <p className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger">
+              <Callout tone="danger" className="px-3 py-2 text-xs">
                 {rich("login.noSecret", {
                   session: <Mono>MAILWORKER_SESSION_SECRET</Mono>,
                   admin: <Mono>MAILWORKER_ADMIN_KEY</Mono>,
                   command: <Mono>wrangler secret put</Mono>,
                 })}
-              </p>
+              </Callout>
             )}
 
             <Form method="post" className="flex flex-col gap-3">
@@ -134,13 +134,14 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
               </div>
 
               {actionData?.error !== undefined && (
-                <p
+                <Callout
                   id="token-error"
                   role="alert"
-                  className="rounded-control border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger"
+                  tone="danger"
+                  className="px-3 py-2 text-xs"
                 >
                   {t(actionData.error)}
-                </p>
+                </Callout>
               )}
 
               <Button type="submit" disabled={busy} className="w-full">
@@ -150,7 +151,7 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
           </CardContent>
         </Card>
 
-        <p className="mt-4 px-1 text-xs leading-relaxed text-hint">{t("login.cookieNote")}</p>
+        <Note className="mt-4 px-1 text-xs">{t("login.cookieNote")}</Note>
 
         {/* The one page a reader reaches before they have a session, so the one
             page where being stuck in the wrong language has no way out. */}

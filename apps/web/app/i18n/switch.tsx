@@ -1,3 +1,4 @@
+import { Button } from "@web/app/components/ui/button";
 import { LOCALES, type Locale, useT } from "@web/app/i18n";
 import { Form, useLocation } from "react-router";
 
@@ -20,9 +21,10 @@ export const LOCALE_NAMES: Readonly<
  * The parts of a language switch that must not be written twice.
  *
  * `?return=` is the security-relevant half — `routes/locale.tsx` only honours a
- * same-origin path — and `useLocation` is where it comes from, because
- * `root.tsx` sets `no-referrer` and so the `Referer` header is not available to
- * the action even for our own navigations.
+ * same-origin path — and `useLocation` is where it comes from rather than the
+ * `Referer` header: the path the reader is looking at is a thing this component
+ * already knows, and asking the browser for it instead would make the switch
+ * depend on a header that the document's referrer policy is free to strip.
  */
 export function useLocaleSwitch(): {
   readonly locale: Locale;
@@ -52,12 +54,14 @@ export function LocaleSwitchLink({ className }: { className?: string }) {
 
   return (
     <Form method="post" action={action} className={className}>
-      <button
+      <Button
         type="submit"
-        className="rounded-control px-1 py-0.5 text-xs text-hint underline decoration-dotted underline-offset-2 transition-colors hover:text-secondary-text"
+        variant="link"
+        size="xs"
+        className="text-hint underline decoration-dotted underline-offset-2 hover:text-secondary-text"
       >
         {LOCALE_NAMES[next].long}
-      </button>
+      </Button>
     </Form>
   );
 }

@@ -13,6 +13,11 @@ import type { Locale } from "@web/app/i18n";
 /** The BCP 47 tag to format with. `en-GB` because the day-month order was the existing choice. */
 const TAGS: Readonly<Record<Locale, string>> = { en: "en-GB", zh: "zh-CN" };
 
+/** Exposed so `plural()` in `i18n/index.tsx` can reach `Intl.PluralRules` with the same tag. */
+export function localeTag(locale: Locale): string {
+  return TAGS[locale];
+}
+
 /**
  * Formatters are immutable and expensive to construct, so they are cached at
  * module scope. Safe in a reused isolate for exactly the reason a locale

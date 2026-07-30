@@ -11,10 +11,13 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import {
+  Callout,
   Empty,
+  FilterTab,
   FilterTabs,
-  filterTabClass,
+  Note,
   PageHeader,
   Pager,
   StatusTag,
@@ -24,7 +27,9 @@ import { ArrowRightIcon, TriangleAlertIcon } from "lucide-react";
 import { Form, Link } from "react-router";
 import type { Route } from "./+types/deliveries";
 
-export const meta: Route.MetaFunction = () => [{ title: "Deliveries · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "deliveries.pageTitle") },
+];
 
 const FILTERS: readonly (DeliveryStatus | "all")[] = [
   "all",
@@ -86,51 +91,61 @@ export async function action({ context, request }: Route.ActionArgs) {
 
 export default function Deliveries({ loaderData }: Route.ComponentProps) {
   const { deliveries, cursor, status, hasAwaiting, mayApprove } = loaderData;
+  const { t } = useT();
 
   return (
     <>
-      <PageHeader title="Deliveries" description="Everything this account has tried to send." />
+      <PageHeader title={t("deliveries.title")} description={t("deliveries.description")} />
 
       {hasAwaiting && status !== "pending_approval" && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning-border bg-warning-bg px-4 py-3">
-          <span className="flex items-center gap-2 text-sm text-warning">
-            <TriangleAlertIcon className="size-4 shrink-0" />
-            Messages are waiting for approval.
-          </span>
-          <Button
-            render={<Link to="/deliveries?status=pending_approval" />}
-            variant="outline"
-            size="sm"
-          >
-            Review the queue
-            <ArrowRightIcon />
-          </Button>
-        </div>
+        <Callout
+          tone="warning"
+          className="mb-4"
+          icon={<TriangleAlertIcon />}
+          actions={
+            <Button
+              render={<Link to="/deliveries?status=pending_approval" />}
+              variant="outline"
+              size="sm"
+            >
+              {t("deliveries.review")}
+              <ArrowRightIcon />
+            </Button>
+          }
+        >
+          {t("deliveries.awaiting")}
+        </Callout>
       )}
 
       <FilterTabs>
         {FILTERS.map((filter) => (
-          <Link
+          <FilterTab
             key={filter}
             to={filter === "all" ? "/deliveries" : `/deliveries?status=${filter}`}
-            className={filterTabClass(filter === status)}
+            active={filter === status}
           >
-            {filter.replaceAll("_", " ")}
-          </Link>
+            {/* The statuses stay in the wire vocabulary — see `locales/en.ts`.
+                "all" is this page's own word, so it is translated. */}
+            {filter === "all" ? t("deliveries.filterAll") : filter.replaceAll("_", " ")}
+          </FilterTab>
         ))}
       </FilterTabs>
 
       <Card className="overflow-hidden py-0">
         {deliveries.length === 0 ? (
-          <Empty>Nothing sent{status === "all" ? " yet" : ` with status ${status}`}.</Empty>
+          <Empty>
+            {status === "all"
+              ? t("deliveries.emptyAll")
+              : t("deliveries.emptyFiltered", { status })}
+          </Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Status</TableHead>
-                <TableHead>Recipients</TableHead>
-                <TableHead className="text-right">Attempts</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>{t("field.status")}</TableHead>
+                <TableHead>{t("field.recipients")}</TableHead>
+                <TableHead className="text-right">{t("field.attempts")}</TableHead>
+                <TableHead>{t("field.created")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
@@ -154,7 +169,7 @@ export default function Deliveries({ loaderData }: Route.ComponentProps) {
                       <Form method="post">
                         <input type="hidden" name="id" value={delivery.id} />
                         <Button type="submit" size="sm">
-                          Approve
+                          {t("deliveries.approve")}
                         </Button>
                       </Form>
                     )}
@@ -166,12 +181,7 @@ export default function Deliveries({ loaderData }: Route.ComponentProps) {
         )}
       </Card>
 
-      {!mayApprove && (
-        <p className="mt-3 text-[13px] leading-relaxed text-hint">
-          This credential cannot approve sends. That separation is the point of the queue — the
-          principal being approved and the principal approving have to be different (README).
-        </p>
-      )}
+      {!mayApprove && <Note>{t("deliveries.cannotApprove")}</Note>}
 
       {cursor !== null && (
         <Pager

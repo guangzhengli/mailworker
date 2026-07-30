@@ -15,6 +15,13 @@ import {
 import { Input } from "@web/app/components/ui/input";
 import { Label } from "@web/app/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@web/app/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -22,13 +29,16 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
-import { Empty, Mono, Note, PageHeader, Tag, When } from "@web/app/ui";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { CodeBlock, Empty, Mono, Note, PageHeader, Tag, When } from "@web/app/ui";
 import { useRef, useState } from "react";
 import { Form } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/keys";
 
-export const meta: Route.MetaFunction = () => [{ title: "API keys · Mailworker" }];
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "keys.pageTitle") },
+];
 
 /** The set an agent should normally get. `message:approve` is never in it. */
 const AGENT_DEFAULTS = new Set<string>(["inbox:write", "message:read", "message:send"]);
@@ -81,15 +91,16 @@ export async function action({ context, request }: Route.ActionArgs) {
 function MintedKey({ token, name }: { token: string; name: string }) {
   const [open, setOpen] = useState(true);
   const icon = useRef<AnimatedIconHandle>(null);
+  const { t } = useT();
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(token);
-      toast.success("Key copied to clipboard");
+      toast.success(t("keys.copied"));
     } catch {
       // Clipboard access is refused on insecure origins and by some policies.
       // The field is selectable, so say that rather than failing silently.
-      toast.error("Could not copy — select the key and copy it manually");
+      toast.error(t("keys.copyFailed"));
     }
   }
 
@@ -98,16 +109,12 @@ function MintedKey({ token, name }: { token: string; name: string }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{name}</DialogTitle>
-          <DialogDescription>
-            Copy this now. Only the hash is stored, and there is no endpoint that reads it back.
-          </DialogDescription>
+          <DialogDescription>{t("keys.mintedDescription")}</DialogDescription>
         </DialogHeader>
-        <pre className="overflow-x-auto rounded-control border border-border bg-muted px-3 py-2.5 font-mono text-[13px] break-all whitespace-pre-wrap text-title select-all">
-          {token}
-        </pre>
+        <CodeBlock variant="boxed">{token}</CodeBlock>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
-            Done
+            {t("keys.done")}
           </Button>
           <Button
             onClick={copy}
@@ -115,7 +122,7 @@ function MintedKey({ token, name }: { token: string; name: string }) {
             onMouseLeave={() => icon.current?.stopAnimation()}
           >
             <CopyIcon ref={icon} size={16} />
-            Copy key
+            {t("keys.copy")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -125,14 +132,15 @@ function MintedKey({ token, name }: { token: string; name: string }) {
 
 export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
   const plus = useRef<AnimatedIconHandle>(null);
+  const { t, rich } = useT();
 
   if (!loaderData.isAdmin) {
     return (
       <>
-        <PageHeader title="API keys" />
+        <PageHeader title={t("keys.title")} />
         <Card>
           <CardContent className="text-sm text-secondary-text">
-            Key management is <Mono>admin</Mono>-only, and this session is not.
+            {rich("keys.adminOnly", { admin: <Mono>admin</Mono> })}
           </CardContent>
         </Card>
       </>
@@ -141,7 +149,7 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
 
   return (
     <>
-      <PageHeader title="API keys" description="Credentials that can act on this account." />
+      <PageHeader title={t("keys.title")} description={t("keys.description")} />
 
       {actionData?.token != null && actionData.name != null && (
         /* Keyed on the token so a second mint remounts the dialog rather than
@@ -154,26 +162,38 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
           <Form method="post" className="flex flex-col gap-5">
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex min-w-44 flex-1 flex-col gap-2">
-                <Label htmlFor="name">Key name</Label>
+                <Label htmlFor="name">{t("keys.nameLabel")}</Label>
                 <Input id="name" name="name" placeholder="support-bot" required />
               </div>
 
               <div className="flex min-w-52 flex-col gap-2">
-                <Label htmlFor="identityName">Identity</Label>
-                {/* Native, for the same reason as the inbox form: this posts
-                    without JavaScript and the styled trigger does not. */}
-                <select
-                  id="identityName"
+                <Label htmlFor="identityName">{t("keys.identityLabel")}</Label>
+                {/* The empty value is a real choice, not a placeholder — a key
+                    with no identity sends under the account default — so it is
+                    an item in the list with its own label rather than the
+                    trigger's empty state. */}
+                <Select
                   name="identityName"
-                  className="h-9 rounded-control border border-border bg-input/30 px-3 text-sm text-body outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  defaultValue=""
+                  items={{
+                    "": t("keys.noIdentity"),
+                    ...Object.fromEntries(
+                      loaderData.identities.map((identity) => [identity.name, identity.name]),
+                    ),
+                  }}
                 >
-                  <option value="">no identity (account limits only)</option>
-                  {loaderData.identities.map((identity) => (
-                    <option key={identity.id} value={identity.name}>
-                      {identity.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="identityName" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">{t("keys.noIdentity")}</SelectItem>
+                    {loaderData.identities.map((identity) => (
+                      <SelectItem key={identity.id} value={identity.name}>
+                        {identity.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <Button
@@ -182,13 +202,13 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
                 onMouseLeave={() => plus.current?.stopAnimation()}
               >
                 <PlusIcon ref={plus} size={16} />
-                Create key
+                {t("keys.create")}
               </Button>
             </div>
 
             <fieldset className="flex flex-col gap-3">
               <legend className="mb-1 text-xs font-medium tracking-wider text-hint uppercase">
-                Scopes
+                {t("field.scopes")}
               </legend>
               <div className="flex flex-wrap gap-x-5 gap-y-3">
                 {ALL_SCOPES.map((scope) => (
@@ -208,11 +228,10 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
             </fieldset>
 
             <Note>
-              Leave <Mono>message:approve</Mono> unchecked for anything an agent holds. The
-              approval queue only means something if the principal being approved and the
-              principal approving are different. <Mono>admin</Mono> cannot be bound to an
-              identity at all — an admin key could edit that identity's own quota, so the
-              metering would be optional for the thing being metered.
+              {rich("keys.scopesNote", {
+                approve: <Mono>message:approve</Mono>,
+                admin: <Mono>admin</Mono>,
+              })}
             </Note>
           </Form>
         </CardContent>
@@ -220,18 +239,16 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
 
       <Card className="overflow-hidden py-0">
         {loaderData.keys.length === 0 ? (
-          <Empty>
-            No keys yet. The bootstrap admin secret is the only way in until there is one.
-          </Empty>
+          <Empty>{t("keys.empty")}</Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Prefix</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Last used</TableHead>
-                <TableHead>State</TableHead>
+                <TableHead>{t("field.name")}</TableHead>
+                <TableHead>{t("field.prefix")}</TableHead>
+                <TableHead>{t("field.scopes")}</TableHead>
+                <TableHead>{t("field.lastUsed")}</TableHead>
+                <TableHead>{t("field.state")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
@@ -248,7 +265,7 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
                   </TableCell>
                   <TableCell>
                     <Tag tone={key.revokedAt !== null ? "danger" : "success"}>
-                      {key.revokedAt !== null ? "revoked" : "active"}
+                      {key.revokedAt !== null ? t("keys.revoked") : t("keys.active")}
                     </Tag>
                   </TableCell>
                   <TableCell className="text-right">
@@ -257,7 +274,7 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
                         <input type="hidden" name="intent" value="revoke" />
                         <input type="hidden" name="id" value={key.id} />
                         <Button type="submit" variant="outline" size="sm">
-                          Revoke
+                          {t("keys.revoke")}
                         </Button>
                       </Form>
                     )}
@@ -269,10 +286,7 @@ export default function Keys({ loaderData, actionData }: Route.ComponentProps) {
         )}
       </Card>
 
-      <Note>
-        Revoked rather than deleted. After a leak the question is "what did this key do before I
-        noticed", and deleting the row is what makes that question unanswerable.
-      </Note>
+      <Note>{t("keys.revokedNote")}</Note>
     </>
   );
 }

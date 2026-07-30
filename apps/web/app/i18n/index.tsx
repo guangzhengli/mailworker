@@ -1,4 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from "@mailworker/contract";
+import { localeTag } from "@web/app/i18n/format";
 import { type Catalog, en } from "@web/app/i18n/locales/en";
 import { zh } from "@web/app/i18n/locales/zh";
 import { createContext, Fragment, use, useMemo } from "react";
@@ -66,6 +67,12 @@ function template(locale: Locale, key: MessageKey): string {
   return CATALOGS[locale].messages[key] ?? en.messages[key];
 }
 
+function fill(text: string, vars: Readonly<Record<string, string | number>>): string {
+  return text.replaceAll(PLACEHOLDER, (whole, name: string) =>
+    name in vars ? String(vars[name]) : whole,
+  );
+}
+
 /** The string form. For `aria-label`, `title`, `<meta>` and anywhere a ReactNode will not do. */
 export function translate<K extends MessageKey>(
   locale: Locale,
@@ -75,9 +82,44 @@ export function translate<K extends MessageKey>(
   const vars = args[0] as Record<string, string | number> | undefined;
   const text = template(locale, key);
   if (vars === undefined) return text;
-  return text.replaceAll(PLACEHOLDER, (whole, name: string) =>
-    name in vars ? String(vars[name]) : whole,
-  );
+  return fill(text, vars);
+}
+
+/** `K` minus its `.one`/`.other` suffix, distributing so a union of keys gives a union of stems. */
+type StemOf<K, Suffix extends string> = K extends `${infer Stem}.${Suffix}` ? Stem : never;
+
+/**
+ * A key that exists in both an `.one` and an `.other` form.
+ *
+ * `Extract` of the two stem unions is set intersection over string literals, so
+ * adding only half a pair — `body.blocked.other` with no `.one` — leaves the stem
+ * out of this type and fails the call site rather than falling back at runtime.
+ */
+export type PluralKey = Extract<StemOf<MessageKey, "one">, StemOf<MessageKey, "other">>;
+
+const pluralRules = new Map<Locale, Intl.PluralRules>();
+
+function rulesFor(locale: Locale): Intl.PluralRules {
+  const hit = pluralRules.get(locale);
+  if (hit !== undefined) return hit;
+  const made = new Intl.PluralRules(localeTag(locale));
+  pluralRules.set(locale, made);
+  return made;
+}
+
+/**
+ * A count and the sentence that agrees with it.
+ *
+ * The category comes from `Intl.PluralRules`, not from `count === 1`: English
+ * happens to split at one, Chinese does not split at all, and a locale added
+ * later may want `few` and `many`. Any category the catalog does not carry falls
+ * back to `.other`, which every plural key is required to have.
+ */
+export function plural(locale: Locale, key: PluralKey, count: number): string {
+  const category = rulesFor(locale).select(count);
+  const candidate = `${key}.${category}`;
+  const chosen = (candidate in en.messages ? candidate : `${key}.other`) as MessageKey;
+  return fill(template(locale, chosen), { count });
 }
 
 /**

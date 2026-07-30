@@ -47,5 +47,6 @@ export default [
     route("identities", "routes/identities.tsx"),
     route("keys", "routes/keys.tsx"),
     route("diagnostics", "routes/diagnostics.tsx"),
+    route("settings", "routes/settings.tsx"),
   ]),
 ] satisfies RouteConfig;

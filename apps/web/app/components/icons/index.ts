@@ -28,5 +28,6 @@ export { MenuIcon } from "./menu";
 export { PlusIcon } from "./plus";
 export { RefreshCWIcon } from "./refresh-cw";
 export { SendIcon } from "./send";
+export { SettingsGearIcon } from "./settings-gear";
 export { StethoscopeIcon } from "./stethoscope";
 export { SunMoonIcon } from "./sun-moon";

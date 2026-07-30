@@ -11,9 +11,20 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
+import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { cn } from "@web/app/lib/utils";
 import { useLiveMail } from "@web/app/live";
-import { Empty, Live, Mono, Pager, Provenance, Relative, Tag, When } from "@web/app/ui";
+import {
+  Empty,
+  Live,
+  Mono,
+  PageHeader,
+  Pager,
+  Provenance,
+  Relative,
+  Tag,
+  When,
+} from "@web/app/ui";
 import { ArrowLeftIcon, SearchIcon } from "lucide-react";
 import { Form, Link } from "react-router";
 import type { Route } from "./+types/inbox";
@@ -41,8 +52,12 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
   });
 }
 
-export const meta: Route.MetaFunction = ({ loaderData }) => [
-  { title: `${loaderData.inbox.address} · Mailworker` },
+export const meta: Route.MetaFunction = ({ matches, loaderData }) => [
+  {
+    title: translate(localeFromMatches(matches), "inbox.pageTitle", {
+      address: loaderData.inbox.address,
+    }),
+  },
 ];
 
 export default function InboxPage({ loaderData, params }: Route.ComponentProps) {
@@ -50,33 +65,31 @@ export default function InboxPage({ loaderData, params }: Route.ComponentProps) 
   // Scoped to this inbox, so a busy account's other mail does not reload this
   // page. The filter is applied server-side; see `app/live.ts`.
   const live = useLiveMail(params.id);
+  const { t, rich } = useT();
 
   return (
     <>
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="truncate font-mono text-lg font-semibold tracking-tight text-title">
-            {inbox.address}
-          </h1>
-          <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-secondary-text">
+      <PageHeader
+        title={<span className="font-mono text-lg">{inbox.address}</span>}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
             <Tag tone={inbox.kind === "persistent" ? "info" : "neutral"}>{inbox.kind}</Tag>
             {inbox.expiresAt === null ? (
-              "never expires"
+              t("inbox.neverExpires")
             ) : (
               <span>
-                expires <Relative value={inbox.expiresAt} />
+                {rich("inbox.expires", { when: <Relative value={inbox.expiresAt} /> })}
               </span>
             )}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <Live status={live} />
-          <Button render={<Link to="/" />} variant="outline" size="sm">
-            <ArrowLeftIcon />
-            All inboxes
-          </Button>
-        </div>
-      </header>
+          </span>
+        }
+      >
+        <Live status={live} />
+        <Button render={<Link to="/" />} variant="outline" size="sm">
+          <ArrowLeftIcon />
+          {t("inbox.all")}
+        </Button>
+      </PageHeader>
 
       <Form method="get" className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1 sm:max-w-sm">
@@ -84,17 +97,17 @@ export default function InboxPage({ loaderData, params }: Route.ComponentProps) 
           <Input
             name="q"
             defaultValue={q}
-            placeholder="Search subject and body…"
-            aria-label="Search"
+            placeholder={t("inbox.searchPlaceholder")}
+            aria-label={t("inbox.searchLabel")}
             className="pl-9"
           />
         </div>
         <Button type="submit" variant="outline" size="sm">
-          Search
+          {t("inbox.search")}
         </Button>
         {q !== "" && (
           <Button render={<Link to={`/inboxes/${params.id}`} />} variant="ghost" size="sm">
-            Clear
+            {t("inbox.clear")}
           </Button>
         )}
       </Form>
@@ -102,25 +115,18 @@ export default function InboxPage({ loaderData, params }: Route.ComponentProps) 
       <Card className="overflow-hidden py-0">
         {messages.length === 0 ? (
           <Empty>
-            {q === "" ? (
-              <>
-                Nothing here yet. Mail sent to <Mono>{inbox.address}</Mono> will appear the
-                moment it lands.
-              </>
-            ) : (
-              <>
-                No message matches <Mono>{q}</Mono>.
-              </>
-            )}
+            {q === ""
+              ? rich("inbox.empty", { address: <Mono>{inbox.address}</Mono> })
+              : rich("inbox.noMatch", { query: <Mono>{q}</Mono> })}
           </Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>From</TableHead>
-                <TableHead>Subject</TableHead>
-                <TableHead>Provenance</TableHead>
-                <TableHead>Received</TableHead>
+                <TableHead>{t("field.from")}</TableHead>
+                <TableHead>{t("field.subject")}</TableHead>
+                <TableHead>{t("field.provenance")}</TableHead>
+                <TableHead>{t("field.received")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -143,7 +149,7 @@ export default function InboxPage({ loaderData, params }: Route.ComponentProps) 
                         )}
                       >
                         {message.subject === "" ? (
-                          <span className="text-hint italic">(no subject)</span>
+                          <span className="text-hint italic">{t("common.noSubject")}</span>
                         ) : (
                           message.subject
                         )}

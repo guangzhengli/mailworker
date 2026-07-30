@@ -17,6 +17,13 @@ import { Card, CardContent } from "@web/app/components/ui/card";
 import { Input } from "@web/app/components/ui/input";
 import { Label } from "@web/app/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@web/app/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -25,7 +32,7 @@ import {
   TableRow,
 } from "@web/app/components/ui/table";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
-import { Empty, Mono, PageHeader, Relative, Tag, When } from "@web/app/ui";
+import { Empty, Mono, PageHeader, Pager, Relative, Tag, TextLink, When } from "@web/app/ui";
 import { useEffect, useRef } from "react";
 import { Form, Link, useNavigation } from "react-router";
 import { toast } from "sonner";
@@ -170,21 +177,27 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
               </div>
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor="kind">{t("inboxes.kindLabel")}</Label>
+                <Label htmlFor="kind">{t("field.kind")}</Label>
                 {/*
-                 * A native select, not the Base UI one. This form is a plain
-                 * POST that works with scripting off, and the styled trigger
-                 * only submits a value once its JavaScript has run. Two options
-                 * do not justify trading that away.
+                 * `items` as well as the two `SelectItem`s: the popup is not
+                 * mounted on the server, and without the map the trigger renders
+                 * the raw value until it opens. The two kinds are the wire
+                 * vocabulary, so label and value coincide here — but stating the
+                 * map is what keeps the first paint right.
                  */}
-                <select
-                  id="kind"
+                <Select
                   name="kind"
-                  className="h-9 rounded-control border border-border bg-input/30 px-3 text-sm text-body outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  defaultValue="ephemeral"
+                  items={{ ephemeral: "ephemeral", persistent: "persistent" }}
                 >
-                  <option value="ephemeral">ephemeral</option>
-                  <option value="persistent">persistent</option>
-                </select>
+                  <SelectTrigger id="kind" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ephemeral">ephemeral</SelectItem>
+                    <SelectItem value="persistent">persistent</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -222,10 +235,10 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>{t("inboxes.colAddress")}</TableHead>
-                <TableHead>{t("inboxes.colKind")}</TableHead>
-                <TableHead>{t("inboxes.colExpires")}</TableHead>
-                <TableHead>{t("inboxes.colCreated")}</TableHead>
+                <TableHead>{t("field.address")}</TableHead>
+                <TableHead>{t("field.kind")}</TableHead>
+                <TableHead>{t("field.expires")}</TableHead>
+                <TableHead>{t("field.created")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
@@ -233,12 +246,13 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
               {loaderData.inboxes.map((inbox) => (
                 <TableRow key={inbox.id}>
                   <TableCell className="max-w-0 truncate">
-                    <Link
-                      to={`/inboxes/${inbox.id}`}
-                      className="font-mono text-[13px] text-title hover:text-primary hover:underline"
+                    <TextLink
+                      render={<Link to={`/inboxes/${inbox.id}`} />}
+                      variant="quiet"
+                      className="font-mono text-[13px]"
                     >
                       {inbox.address}
-                    </Link>
+                    </TextLink>
                   </TableCell>
                   <TableCell>
                     <Tag tone={inbox.kind === "persistent" ? "info" : "neutral"}>
@@ -264,19 +278,9 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
       </Card>
 
       {loaderData.cursor !== null && (
-        <div className="mt-4 flex justify-center">
-          <Button
-            render={
-              <Link
-                to={`/?cursor=${loaderData.cursor}${loaderData.includeExpired ? "&expired=1" : ""}`}
-              />
-            }
-            variant="outline"
-            size="sm"
-          >
-            {t("common.older")}
-          </Button>
-        </div>
+        <Pager
+          to={`/?cursor=${loaderData.cursor}${loaderData.includeExpired ? "&expired=1" : ""}`}
+        />
       )}
     </>
   );

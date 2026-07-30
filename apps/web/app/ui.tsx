@@ -7,10 +7,15 @@
  * registry code, and keeping it separate is what makes it re-syncable.
  */
 
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { Badge } from "@web/app/components/ui/badge";
+import { Button } from "@web/app/components/ui/button";
 import { useT } from "@web/app/i18n";
 import { formatAbsolute, formatRelative } from "@web/app/i18n/format";
 import { cn } from "@web/app/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Link } from "react-router";
 
 /**
  * UTC, always, and labelled as such.
@@ -71,34 +76,79 @@ export function Relative({
  * table that paints them the same red tells the reader to go chase something
  * that is already handling itself.
  */
-const toneVariants = cva(
-  "inline-flex w-fit shrink-0 items-center gap-1.5 rounded-control border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-  {
-    variants: {
-      tone: {
-        success: "border-success-border bg-success-bg text-success",
-        warning: "border-warning-border bg-warning-bg text-warning",
-        danger: "border-danger-border bg-danger-bg text-danger",
-        info: "border-info-border bg-info-bg text-info",
-        neutral: "border-neutral-border bg-neutral-bg text-neutral",
-      },
-    },
-    defaultVariants: { tone: "neutral" },
-  },
-);
+const TONE_CLASS = {
+  success: "border-success-border bg-success-bg text-success",
+  warning: "border-warning-border bg-warning-bg text-warning",
+  danger: "border-danger-border bg-danger-bg text-danger",
+  info: "border-info-border bg-info-bg text-info",
+  neutral: "border-neutral-border bg-neutral-bg text-neutral",
+} as const;
 
-export type Tone = NonNullable<VariantProps<typeof toneVariants>["tone"]>;
+export type Tone = keyof typeof TONE_CLASS;
 
+const toneVariants = cva("", {
+  variants: { tone: TONE_CLASS },
+  defaultVariants: { tone: "neutral" },
+});
+
+/**
+ * A status word, in one of the five tones.
+ *
+ * The geometry comes from `components/ui/badge` and only the colours are ours,
+ * so a tag and a button of the same height still look like they were drawn by
+ * the same hand — which is what a second, parallel pill implementation loses.
+ */
 export function Tag({
   tone,
   className,
   children,
   ...props
-}: React.ComponentProps<"span"> & VariantProps<typeof toneVariants>) {
+}: Omit<React.ComponentProps<typeof Badge>, "variant"> & VariantProps<typeof toneVariants>) {
   return (
-    <span className={cn(toneVariants({ tone }), className)} {...props}>
+    <Badge variant="outline" className={cn(toneVariants({ tone }), className)} {...props}>
       {children}
-    </span>
+    </Badge>
+  );
+}
+
+const calloutVariants = cva(
+  "flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm",
+  {
+    variants: { tone: TONE_CLASS },
+    defaultVariants: { tone: "info" },
+  },
+);
+
+/**
+ * The banner that has to be read before the content under it.
+ *
+ * The injection warning, the unreleased-approvals prompt and the login form's
+ * refusals were three separately hand-drawn boxes that happened to agree; one
+ * component with the same tone vocabulary as `Tag` means they cannot drift, and
+ * that a fourth one does not get invented. `actions` is right-aligned because a
+ * banner that asks you to go somewhere should put the door on the far side of
+ * the sentence.
+ */
+export function Callout({
+  tone,
+  icon,
+  actions,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div"> &
+  VariantProps<typeof calloutVariants> & {
+    icon?: React.ReactNode;
+    actions?: React.ReactNode;
+  }) {
+  return (
+    <div className={cn(calloutVariants({ tone }), className)} {...props}>
+      <span className="flex min-w-0 items-start gap-2">
+        {icon !== undefined && <span className="mt-px shrink-0 [&>svg]:size-4">{icon}</span>}
+        <span className="min-w-0">{children}</span>
+      </span>
+      {actions}
+    </div>
   );
 }
 
@@ -219,8 +269,8 @@ export function PageHeader({
   description,
   children,
 }: {
-  title: string;
-  description?: string;
+  title: React.ReactNode;
+  description?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
@@ -234,12 +284,24 @@ export function PageHeader({
   );
 }
 
-/** A section heading inside a page. */
-export function SectionTitle({ children }: { children: React.ReactNode }) {
+/**
+ * A section heading inside a page, with room for the controls that belong to
+ * that section — the message body's text/HTML switch is the reason `actions`
+ * exists, and building that row by hand is how the second one ends up a
+ * different size.
+ */
+export function SectionTitle({
+  children,
+  actions,
+}: {
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
   return (
-    <h2 className="mt-8 mb-3 text-xs font-medium tracking-wider text-hint uppercase">
-      {children}
-    </h2>
+    <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-3">
+      <h2 className="text-xs font-medium tracking-wider text-hint uppercase">{children}</h2>
+      {actions !== undefined && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
   );
 }
 
@@ -287,6 +349,78 @@ export function Mono({
   return <span className={cn("font-mono text-[13px]", className)}>{children}</span>;
 }
 
+const textLinkVariants = cva(
+  "inline-flex items-center gap-1.5 transition-colors [&>svg]:size-3.5 [&>svg]:shrink-0",
+  {
+    variants: {
+      variant: {
+        /** A link that is offering an action — a download, a filtered view. */
+        default: "text-primary hover:underline",
+        /** A link that is the row's content: reads as text, behaves as a link. */
+        quiet: "text-title hover:text-primary hover:underline",
+      },
+    },
+    defaultVariants: { variant: "default" },
+  },
+);
+
+/**
+ * A link in running text or in a table cell.
+ *
+ * `render` rather than a `to` prop, following the registry's own convention: the
+ * download and raw-message links must be real navigations to a resource route,
+ * while a link between two dashboard pages should stay client-side, and only the
+ * caller knows which it is — `<TextLink href>` for the former,
+ * `<TextLink render={<Link to=… />}>` for the latter.
+ */
+export function TextLink({
+  className,
+  variant,
+  render,
+  ...props
+}: useRender.ComponentProps<"a"> & VariantProps<typeof textLinkVariants>) {
+  return useRender({
+    defaultTagName: "a",
+    props: mergeProps<"a">({ className: cn(textLinkVariants({ variant }), className) }, props),
+    render,
+    state: { slot: "text-link" },
+  });
+}
+
+const codeBlockVariants = cva(
+  "m-0 overflow-x-auto font-mono text-[13px] leading-relaxed whitespace-pre-wrap",
+  {
+    variants: {
+      variant: {
+        /** Fills its card: a message body, a log. */
+        plain: "p-4 break-words text-body",
+        /**
+         * A value to be taken away, so it is a boxed field rather than a
+         * paragraph: `select-all` makes one click enough, and `break-all` keeps
+         * a 60-character key inside the box instead of widening the dialog.
+         */
+        boxed:
+          "rounded-control border border-border bg-muted px-3 py-2.5 break-all text-title select-all",
+      },
+    },
+    defaultVariants: { variant: "plain" },
+  },
+);
+
+/** Preformatted monospace: message bodies and minted keys. */
+export function CodeBlock({
+  className,
+  variant,
+  children,
+  ...props
+}: React.ComponentProps<"pre"> & VariantProps<typeof codeBlockVariants>) {
+  return (
+    <pre className={cn(codeBlockVariants({ variant }), className)} {...props}>
+      {children}
+    </pre>
+  );
+}
+
 /**
  * The paragraph that explains why a screen behaves the way it does.
  *
@@ -295,8 +429,15 @@ export function Mono({
  * support. Constrained to a reading measure and set below body weight so it
  * reads as commentary rather than as an alert.
  */
-export function Note({ children }: { children: React.ReactNode }) {
-  return <p className="mt-3 max-w-prose text-[13px] leading-relaxed text-hint">{children}</p>;
+export function Note({ className, children, ...props }: React.ComponentProps<"p">) {
+  return (
+    <p
+      className={cn("mt-3 max-w-prose text-[13px] leading-relaxed text-hint", className)}
+      {...props}
+    >
+      {children}
+    </p>
+  );
 }
 
 /**
@@ -311,12 +452,9 @@ export function Pager({ to }: { to: string }) {
   const { t } = useT();
   return (
     <div className="mt-4 flex justify-center">
-      <a
-        href={to}
-        className="rounded-control border border-border px-3 py-1.5 text-sm text-secondary-text transition-colors hover:bg-hover hover:text-title"
-      >
+      <Button render={<Link to={to} />} variant="outline" size="sm">
         {t("common.older")}
-      </a>
+      </Button>
     </div>
   );
 }
@@ -336,11 +474,35 @@ export function FilterTabs({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function filterTabClass(active: boolean): string {
-  return cn(
-    "shrink-0 rounded-control px-3 py-1.5 text-sm whitespace-nowrap transition-colors",
-    active
-      ? "bg-selected font-medium text-title"
-      : "text-secondary-text hover:bg-hover hover:text-title",
+/**
+ * One filter in that row.
+ *
+ * A `Button` rather than a bare styled link — this was a class helper, which is
+ * the shape a control takes right before someone applies it to something that is
+ * not a link and gets a control that looks right and behaves differently. The
+ * selected one keeps its background on hover: a tab that lightens under the
+ * pointer reads as "not currently applied".
+ */
+export function FilterTab({
+  to,
+  active,
+  children,
+}: {
+  to: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      render={<Link to={to} />}
+      variant="ghost"
+      size="sm"
+      className={cn(
+        "shrink-0",
+        active ? "bg-selected font-medium text-title hover:bg-selected" : "text-secondary-text",
+      )}
+    >
+      {children}
+    </Button>
   );
 }

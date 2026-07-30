@@ -8,21 +8,14 @@ import {
   MailboxIcon,
   MenuIcon,
   SendIcon,
+  SettingsGearIcon,
   StethoscopeIcon,
-  SunMoonIcon,
 } from "@web/app/components/icons";
 import { Button } from "@web/app/components/ui/button";
 import { Separator } from "@web/app/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@web/app/components/ui/tooltip";
+import { TooltipProvider } from "@web/app/components/ui/tooltip";
 import { type MessageKey, useT } from "@web/app/i18n";
-import { LOCALE_NAMES, useLocaleSwitch } from "@web/app/i18n/switch";
 import { cn } from "@web/app/lib/utils";
-import { useTheme } from "@web/app/theme";
 import { useRef, useState } from "react";
 import { Form, NavLink, Outlet, useLocation } from "react-router";
 import type { Route } from "./+types/shell";
@@ -38,7 +31,13 @@ import type { Route } from "./+types/shell";
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller }) => {
-    return { subject: caller.subject, scopes: caller.scopes, accountId: caller.accountId };
+    /**
+     * The account id and nothing else. This payload rides along with every
+     * navigation under the shell, and the subject and scopes it used to carry
+     * were read by one block in the footer — which now lives on `/settings`,
+     * where it is fetched by the page that shows it.
+     */
+    return { accountId: caller.accountId };
   });
 }
 
@@ -61,12 +60,14 @@ type IconComponent = React.ComponentType<
  */
 type NavKey = Extract<MessageKey, `nav.${string}`>;
 
-const SECTIONS: ReadonlyArray<{
+type Section = {
   to: string;
   label: NavKey;
   end: boolean;
   Icon: IconComponent;
-}> = [
+};
+
+const SECTIONS: ReadonlyArray<Section> = [
   { to: "/", label: "nav.inboxes", end: true, Icon: MailboxIcon },
   { to: "/deliveries", label: "nav.deliveries", end: false, Icon: SendIcon },
   { to: "/suppressions", label: "nav.suppressions", end: false, Icon: BanIcon },
@@ -74,6 +75,22 @@ const SECTIONS: ReadonlyArray<{
   { to: "/keys", label: "nav.keys", end: false, Icon: KeySquareIcon },
   { to: "/diagnostics", label: "nav.diagnostics", end: false, Icon: StethoscopeIcon },
 ];
+
+/**
+ * Settings is a nav row like the six above, but not one of them: they are views
+ * of the account and it is a view of the reader — theme, language, and who this
+ * session is. So it renders at the foot of the rail, next to sign out, which is
+ * where every other application has taught people to look for it.
+ */
+const SETTINGS: Section = {
+  to: "/settings",
+  label: "nav.settings",
+  end: false,
+  Icon: SettingsGearIcon,
+};
+
+/** For the mobile header's title, which needs every destination, not just the six. */
+const DESTINATIONS: ReadonlyArray<Section> = [...SECTIONS, SETTINGS];
 
 /**
  * A nav row whose icon animates from the row's hover, not the icon's own.
@@ -121,70 +138,6 @@ function NavItem({
   );
 }
 
-function ThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const icon = useRef<AnimatedIconHandle>(null);
-  const { t } = useT();
-  const next = resolvedTheme === "dark" ? "light" : "dark";
-  const label = next === "dark" ? t("shell.themeToDark") : t("shell.themeToLight");
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={label}
-            onClick={() => setTheme(next)}
-            onMouseEnter={() => icon.current?.startAnimation()}
-            onMouseLeave={() => icon.current?.stopAnimation()}
-          />
-        }
-      >
-        <SunMoonIcon ref={icon} size={16} />
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-/**
- * The language switch: a form, not a client-side toggle.
- *
- * A POST sets the cookie and the next render is server-side in the new language.
- * A client-side switch would have to re-translate everything it had already
- * hydrated and would still leave the following hard navigation to guess.
- */
-function LocaleToggle() {
-  const { t } = useT();
-  const { next, action } = useLocaleSwitch();
-
-  return (
-    <Form method="post" action={action}>
-      <input type="hidden" name="locale" value={next} />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="submit"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("shell.languageSwitch")}
-              className="text-[11px] font-medium"
-            />
-          }
-        >
-          {LOCALE_NAMES[next].short}
-        </TooltipTrigger>
-        <TooltipContent>
-          {t("shell.language")}: {LOCALE_NAMES[next].long}
-        </TooltipContent>
-      </Tooltip>
-    </Form>
-  );
-}
-
 function SidebarBody({
   loaderData,
   onNavigate,
@@ -197,15 +150,9 @@ function SidebarBody({
 
   return (
     <div className="flex h-full flex-col gap-1 p-3">
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="min-w-0">
-          <div className="font-semibold tracking-tight text-title">Mailworker</div>
-          <div className="truncate font-mono text-[11px] text-hint">{loaderData.accountId}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <LocaleToggle />
-          <ThemeToggle />
-        </div>
+      <div className="px-3 py-3">
+        <div className="font-semibold tracking-tight text-title">Mailworker</div>
+        <div className="truncate font-mono text-[11px] text-hint">{loaderData.accountId}</div>
       </div>
 
       <nav className="flex flex-col gap-0.5">
@@ -216,19 +163,20 @@ function SidebarBody({
 
       <div className="flex-1" />
 
+      {/* Settings above the rule, sign out below it: one is a place you go, the
+          other ends the session, and a stray click should not be able to mistake
+          them for members of the same list.
+
+          Not a second `nav`: one unlabelled navigation landmark per page is a
+          reader's shortcut, and two of them is a choice they have to make with
+          no way to tell which is which. */}
+      <div className="flex flex-col gap-0.5">
+        <NavItem {...SETTINGS} onNavigate={onNavigate} />
+      </div>
+
       <Separator className="my-2" />
 
       <div className="px-3 pb-1">
-        <div
-          className="truncate font-mono text-[11px] text-secondary-text"
-          title={loaderData.subject}
-        >
-          {loaderData.subject}
-        </div>
-        {/* The scopes are here rather than on a settings page because they are
-            the answer to "why was that button 403" — which is a question asked
-            while looking at the button, not while looking for a settings page. */}
-        <div className="mt-1 mb-3 text-[11px] text-hint">{loaderData.scopes.join(" · ")}</div>
         <Form method="post" action="/logout">
           <Button
             type="submit"
@@ -253,7 +201,7 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
   const menu = useRef<AnimatedIconHandle>(null);
   const { t } = useT();
 
-  const section = SECTIONS.find((s) =>
+  const section = DESTINATIONS.find((s) =>
     s.end ? location.pathname === s.to : location.pathname.startsWith(s.to),
   );
   const current = section === undefined ? "Mailworker" : t(section.label);
@@ -292,6 +240,11 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
          * navigation — every link inside it points at content the trap is
          * currently hiding. Escape and click-outside are the two behaviours
          * that actually matter here, and both are ten lines.
+         *
+         * The scrim below is a bare `button` rather than the styled one: it is a
+         * hit area, not a control. Every class `Button` brings — height,
+         * padding, radius, hover — would have to be overridden to make it fill
+         * the screen, and none of it is a style worth keeping consistent.
          */}
         {drawerOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
