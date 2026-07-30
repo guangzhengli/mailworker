@@ -155,6 +155,27 @@ export interface DispatchDeliveryRequest {
   readonly deliveryId: string;
 }
 
+/** The readable form of a delivery's payload. Attachments are listed, not returned. */
+export interface DeliveryPreview {
+  readonly subject: string;
+  readonly from: EmailAddress;
+  readonly to: readonly EmailAddress[];
+  readonly cc: readonly EmailAddress[];
+  readonly bcc: readonly EmailAddress[];
+  readonly replyTo: EmailAddress | null;
+  readonly text: string | null;
+  readonly html: string | null;
+  readonly attachments: readonly AttachmentManifestEntry[];
+}
+
+export interface AttachmentManifestEntry {
+  readonly filename: string;
+  readonly mime: string;
+  /** Decoded size. */
+  readonly bytes: number;
+  readonly inline: boolean;
+}
+
 export type DispatchOutcome =
   | {
       readonly outcome: "dispatched";
@@ -777,6 +798,60 @@ export function createDeliveryService(deps: DeliveryDeps) {
         throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
       }
       return { delivery, events: await deps.deliveries.listDeliveryEvents(ctx, deliveryId) };
+    },
+
+    /**
+     * What a delivery actually says — read back out of the payload blob.
+     *
+     * This exists because the sent copy in the mailbox is written at DISPATCH,
+     * so for every status before that there is no archived message to read, and
+     * `pending_approval` is precisely the status where someone needs to see the
+     * content. An approval queue whose items cannot be inspected is a button
+     * that says "yes" to something unspecified.
+     *
+     * Attachment CONTENT is deliberately not returned, only the manifest: this
+     * is a preview, and returning 5 MiB of base64 to render a filename would be
+     * a denial of service on our own dashboard.
+     */
+    async preview(ctx: Caller, deliveryId: Ulid): Promise<DeliveryPreview> {
+      Caller.require(ctx, "message:read");
+      const delivery = await deps.deliveries.findById(ctx, deliveryId);
+      if (delivery === null) {
+        throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
+      }
+      if (delivery.payloadKey === null) {
+        throw notFound("message_not_found", `Delivery ${deliveryId} has no stored payload.`, {
+          deliveryId,
+        });
+      }
+
+      const bytes = await deps.blobs.get(ctx, delivery.payloadKey);
+      if (bytes === null) {
+        // Retention swept it, or it was never written. Not an error worth a 500:
+        // the delivery row is intact and the timeline still answers the question
+        // the page was opened to ask.
+        throw notFound("message_not_found", `Payload for ${deliveryId} is gone.`, {
+          deliveryId,
+        });
+      }
+
+      const payload = decodePayload(bytes);
+      return {
+        subject: payload.subject,
+        from: payload.from,
+        to: [...payload.to],
+        cc: [...payload.cc],
+        bcc: [...payload.bcc],
+        replyTo: payload.replyTo,
+        text: payload.text,
+        html: payload.html,
+        attachments: (payload.attachments ?? []).map((one) => ({
+          filename: one.filename,
+          mime: one.mime,
+          bytes: Attachment.byteLength(one.content),
+          inline: one.inline,
+        })),
+      };
     },
 
     /** Sends, newest first. `status: "pending_approval"` is the approval queue. */

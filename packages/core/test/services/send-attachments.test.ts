@@ -1,5 +1,5 @@
 import type { DeliveryService } from "@core/application";
-import { Attachment, SENDING_LIMITS } from "@core/domain";
+import { AgentIdentity, Attachment, SENDING_LIMITS } from "@core/domain";
 import type { Harness } from "@core/testing";
 import { createHarness, TEST_DOMAIN } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -182,5 +182,48 @@ describe("delivery.send with attachments", () => {
     const outcome = await dispatch(h.ctx, { deliveryId: result.delivery.id });
     expect(outcome.outcome).toBe("dispatched");
     expect(h.transport.sent[0]?.attachments).toEqual([]);
+  });
+});
+
+describe("delivery.preview", () => {
+  it("lists attachments without returning their bytes", async () => {
+    const result = await send(h.ctx, {
+      from: FROM,
+      to: ["user@corp.com"],
+      subject: "Invoice",
+      html: "<p>Hi</p>",
+      attachments: [attachment()],
+    });
+
+    const preview = await h.services.delivery.preview(h.ctx, result.delivery.id);
+    expect(preview.subject).toBe("Invoice");
+    expect(preview.html).toBe("<p>Hi</p>");
+    expect(preview.attachments).toEqual([
+      { filename: "report.csv", mime: "text/csv", bytes: 5, inline: false },
+    ]);
+  });
+
+  it("reads a message that is still held for approval", async () => {
+    // The whole point of `preview`: the sent copy is written at dispatch, so
+    // without this an approver would be releasing an id rather than a message.
+    const identity = AgentIdentity.create({
+      id: h.ids.ulid(),
+      accountId: h.ctx.accountId,
+      name: "held",
+      requireApproval: true,
+      now: h.clock.now(),
+    });
+    await h.deps.identities.insert(h.ctx, identity);
+
+    const result = await send(h.asIdentity(identity.id), {
+      from: FROM,
+      to: ["user@corp.com"],
+      subject: "Needs a human",
+      text: "Please check.",
+    });
+    expect(result.outcome).toBe("pending_approval");
+
+    const preview = await h.services.delivery.preview(h.ctx, result.delivery.id);
+    expect(preview.text).toBe("Please check.");
   });
 });

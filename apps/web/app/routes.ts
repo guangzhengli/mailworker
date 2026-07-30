@@ -41,6 +41,8 @@ export default [
 
     route("deliveries", "routes/deliveries.tsx"),
     route("deliveries/:id", "routes/delivery.tsx"),
+    /** Same reasoning as `messages/:id/body`: its own response, its own CSP. */
+    route("deliveries/:id/body", "routes/delivery-body.tsx"),
     route("suppressions", "routes/suppressions.tsx"),
     route("identities", "routes/identities.tsx"),
     route("keys", "routes/keys.tsx"),
