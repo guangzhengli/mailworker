@@ -738,7 +738,19 @@ function safeDate(value: string): Date | null {
 }
 
 export class SimpleMimeBuilder implements MimeBuilder {
+  /**
+   * Every spec it was handed.
+   *
+   * This builder deliberately renders a flat message — a core test has no
+   * business asserting on MIME structure, which is `packages/mime`'s job and is
+   * tested there against a real parser. What a core test DOES need to check is
+   * that the service passed the right things down, and that is what this
+   * records.
+   */
+  readonly specs: BuildMimeSpec[] = [];
+
   async build(spec: BuildMimeSpec): Promise<Uint8Array> {
+    this.specs.push(spec);
     const lines = [
       `From: ${spec.fromName === null ? spec.from : `"${spec.fromName}" <${spec.from}>`}`,
       `To: ${spec.to.join(", ")}`,

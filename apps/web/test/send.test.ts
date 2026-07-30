@@ -1,5 +1,9 @@
 import { env, SELF } from "cloudflare:test";
-import type { DeliveryTimelineDto, InboxDto, SendResponse } from "@mailworker/contract";
+import type {
+  DeliveryTimelineDto,
+  InboxDto,
+  SendResponse,
+} from "@mailworker/contract";
 import { createDb, schema } from "@web/workers/adapters";
 import { toProviderEvent } from "@web/workers/queue";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -138,6 +142,29 @@ describe("POST /v1/send", () => {
     expect(response.status).toBe(403);
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("suppressed_recipient");
+  });
+});
+
+describe("attachments", () => {
+  it("refuses content that is not base64", async () => {
+    const inbox = await createInbox();
+    const { response } = await post(inbox.address, {
+      attachments: [{ filename: "bad.bin", content: "not base64!!" }],
+    });
+    // At the boundary, not inside the queue consumer twenty seconds later where
+    // nobody is listening.
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a message over the size limit", async () => {
+    const inbox = await createInbox();
+    const { response, body } = await post(inbox.address, {
+      attachments: [{ filename: "big.bin", content: "A".repeat(6 * 1024 * 1024) }],
+    });
+    expect(response.status).toBe(413);
+    expect((body as unknown as { error: { code: string } }).error.code).toBe(
+      "message_too_large",
+    );
   });
 });
 

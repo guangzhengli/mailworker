@@ -50,6 +50,8 @@ export interface Harness {
   readonly webhookSender: RecordingWebhookSender;
   readonly events: RecordingEventBus;
   readonly waiter: MemoryWaiter;
+  /** Records the specs it was handed; see `SimpleMimeBuilder`. */
+  readonly mimeBuilder: SimpleMimeBuilder;
 
   /** A context with a narrower scope set, for testing the gates. */
   withScopes(scopes: readonly Scope[]): Caller;
@@ -104,6 +106,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const webhookSender = new RecordingWebhookSender();
   const events = new RecordingEventBus();
   const waiter = new MemoryWaiter();
+  const mimeBuilder = new SimpleMimeBuilder();
 
   const deps: CoreDeps = {
     clock,
@@ -125,7 +128,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     events,
     waiter,
     mimeParser: new SimpleMimeParser(),
-    mimeBuilder: new SimpleMimeBuilder(),
+    mimeBuilder,
   };
 
   const baseCtx: Caller = {
@@ -156,6 +159,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     webhookSender,
     events,
     waiter,
+    mimeBuilder,
 
     withScopes(scopes) {
       return { ...baseCtx, scopes: [...scopes] };

@@ -7,6 +7,7 @@ import type {
   SenderAuth,
   WaitCriteria,
 } from "@core/domain";
+import type { OutboundAttachment } from "@core/domain/ports/transport";
 
 /**
  * Publishes domain events. Queues in production; a recording array in tests,
@@ -95,4 +96,5 @@ export interface BuildMimeSpec {
   readonly references: readonly RfcMessageId[];
   readonly date: Date;
   readonly headers: Readonly<Record<string, string>>;
+  readonly attachments: readonly OutboundAttachment[];
 }

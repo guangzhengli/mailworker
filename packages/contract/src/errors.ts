@@ -52,6 +52,7 @@ export const ERROR_CODES = [
   "loop_detected",
   "suppressed_recipient",
   "approval_required",
+  "message_too_large",
   // access
   "unauthorized",
   "forbidden",
@@ -123,6 +124,10 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
   // 202 with `status: "pending_approval"`. This code is for acting on a message
   // that is still waiting for a human.
   approval_required: 409,
+  // 413 rather than 400: the request was valid in every way except that there
+  // was too much of it, and that is the one thing a caller can act on without
+  // re-reading the schema.
+  message_too_large: 413,
 
   unauthorized: 401,
   forbidden: 403,
@@ -168,6 +173,9 @@ const EXIT_CODE: Readonly<Record<ErrorCode, ExitCode>> = {
   invalid_ulid: ExitCode.USAGE,
   invalid_message_id: ExitCode.USAGE,
   invalid_argument: ExitCode.USAGE,
+  // Not REJECTED: no policy refused this. The caller attached too much, and the
+  // fix is in the call rather than in the account's configuration.
+  message_too_large: ExitCode.USAGE,
 
   inbox_not_found: ExitCode.ERROR,
   inbox_expired: ExitCode.ERROR,

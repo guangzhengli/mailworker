@@ -18,4 +18,12 @@ export const SENDING_LIMITS = {
   MAX_RECIPIENTS: 50,
   /** 16 KiB for all custom headers combined. */
   MAX_HEADER_BYTES: 16 * 1024,
+  /**
+   * Ours, not Cloudflare's — it publishes a total size and no part count.
+   *
+   * A cap is still worth having: every attachment is base64 held in memory
+   * inside a Worker with a 128 MiB ceiling, and a message with 500 one-byte
+   * parts passes the size limit while being nothing anyone meant to send.
+   */
+  MAX_ATTACHMENTS: 20,
 } as const;

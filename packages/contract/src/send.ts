@@ -1,5 +1,10 @@
 import { emailAddress, toIso, ulid } from "@contract/primitives";
-import type { Delivery, DeliveryEvent, SendMessageRequest } from "@mailworker/core";
+import type {
+  AttachmentSpec,
+  Delivery,
+  DeliveryEvent,
+  SendMessageRequest,
+} from "@mailworker/core";
 import { SENDING_LIMITS } from "@mailworker/core";
 import { z } from "zod";
 
@@ -26,6 +31,38 @@ export const deliveryEventType = z.enum([
 ]);
 
 /**
+ * One attachment on the wire, with `content` base64-encoded.
+ *
+ * Base64 rather than multipart because the request is JSON everywhere else and
+ * an agent building one by hand should not have to switch encodings to attach a
+ * file. The charset check is worth doing here rather than at decode time: it is
+ * the difference between a 400 naming the field and a failed `atob` inside a
+ * queue consumer twenty seconds later, where nobody is listening.
+ *
+ * The SIZE, unlike the shape, is not checked here — `Attachment.enforceMessageSize`
+ * owns it, because the limit is a property of Cloudflare's sending API rather
+ * than of this schema, and it applies to the bodies and the attachments together.
+ */
+export const attachmentInput = z
+  .strictObject({
+    filename: z.string().min(1).max(255),
+    /** Defaulted rather than required: most callers know the bytes, not the type. */
+    type: z.string().min(1).max(255).optional(),
+    content: z.base64(),
+    /** Referenced from the HTML body as `cid:<contentId>`. */
+    contentId: z.string().min(1).max(255).optional(),
+  })
+  .transform(
+    (input): AttachmentSpec => ({
+      filename: input.filename,
+      mime: input.type ?? "application/octet-stream",
+      content: input.content,
+      inline: input.contentId !== undefined,
+      contentId: input.contentId ?? null,
+    }),
+  );
+
+/**
  * `POST /v1/send`.
  *
  * The recipient caps are Cloudflare's (50 across to + cc + bcc, DESIGN.md §2.2)
@@ -45,6 +82,7 @@ export const sendBody = z
     /** Continue a thread, addressed by our message ULID rather than a Message-ID. */
     inReplyTo: ulid.optional(),
     headers: z.record(z.string().min(1), z.string()).optional(),
+    attachments: z.array(attachmentInput).max(SENDING_LIMITS.MAX_ATTACHMENTS).optional(),
     /**
      * Also accepted as the `Idempotency-Key` header, which wins when both are
      * present. The header suits a proxy or an SDK retry wrapper; the body field
@@ -70,6 +108,7 @@ export const sendBody = z
       ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
       ...(input.inReplyTo === undefined ? {} : { inReplyToMessageId: input.inReplyTo }),
       ...(input.headers === undefined ? {} : { headers: input.headers }),
+      ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
       ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       ...(input.automated === undefined ? {} : { automated: input.automated }),
     }),

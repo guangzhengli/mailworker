@@ -1,4 +1,9 @@
-import type { BuildMimeSpec, EmailAddress, RfcMessageId } from "@mailworker/core";
+import type {
+  BuildMimeSpec,
+  EmailAddress,
+  OutboundAttachment,
+  RfcMessageId,
+} from "@mailworker/core";
 import { encodeHeaderValue, Rfc5322Builder } from "@mime/build";
 import { PostalMimeParser } from "@mime/parse";
 import { describe, expect, it } from "vitest";
@@ -20,6 +25,7 @@ function spec(overrides: Partial<BuildMimeSpec> = {}): BuildMimeSpec {
     references: [],
     date: new Date("2026-07-01T12:00:00Z"),
     headers: {},
+    attachments: [],
     ...overrides,
   };
 }
@@ -48,6 +54,92 @@ describe("Rfc5322Builder", () => {
     expect(raw).toContain("multipart/alternative");
     // RFC 2046: least-rich first, because a client picks the last part it groks.
     expect(raw.indexOf("text/plain")).toBeLessThan(raw.indexOf("text/html"));
+  });
+
+  describe("attachments", () => {
+    const file = (overrides: Partial<OutboundAttachment> = {}): OutboundAttachment => ({
+      filename: "report.csv",
+      mime: "text/csv",
+      content: new TextEncoder().encode("Name,Amount\nWidget,100"),
+      inline: false,
+      contentId: null,
+      ...overrides,
+    });
+
+    it("nests multipart/alternative inside multipart/mixed", async () => {
+      const raw = await build({
+        text: "plain",
+        html: "<p>rich</p>",
+        attachments: [file()],
+      });
+
+      // The ordering IS the assertion. Inverted — alternative on the outside —
+      // a client that picks the HTML branch discards the attachments along with
+      // the plain-text branch it did not choose.
+      expect(raw.indexOf("multipart/mixed")).toBeLessThan(raw.indexOf("multipart/alternative"));
+    });
+
+    it("round-trips an attachment through the parser", async () => {
+      const raw = await builder.build(spec({ text: "See attached", attachments: [file()] }));
+      const parsed = await parser.parse(raw);
+
+      expect(parsed.bodyText?.trim()).toBe("See attached");
+      expect(parsed.attachments).toHaveLength(1);
+      expect(parsed.attachments[0]?.filename).toBe("report.csv");
+      expect(new TextDecoder().decode(parsed.attachments[0]?.content)).toBe(
+        "Name,Amount\nWidget,100",
+      );
+    });
+
+    it("round-trips binary content byte for byte", async () => {
+      // Every byte value, including the ones that are not valid UTF-8 and the
+      // ones a 7bit transfer encoding would mangle. This is what forces base64
+      // on attachment parts unconditionally.
+      const content = new Uint8Array(256).map((_, i) => i);
+      const raw = await builder.build(
+        spec({
+          attachments: [
+            file({ filename: "blob.bin", mime: "application/octet-stream", content }),
+          ],
+        }),
+      );
+      const parsed = await parser.parse(raw);
+
+      expect(new Uint8Array(parsed.attachments[0]!.content)).toEqual(content);
+    });
+
+    it("marks a contentId attachment inline so cid: references resolve", async () => {
+      const raw = await build({
+        html: '<img src="cid:hero">',
+        attachments: [
+          file({ filename: "hero.png", mime: "image/png", inline: true, contentId: "hero" }),
+        ],
+      });
+
+      expect(raw).toContain("Content-ID: <hero>");
+      expect(raw).toContain("Content-Disposition: inline");
+    });
+
+    it("keeps a single-body message flat when there is an attachment", async () => {
+      // mixed, but no pointless alternative wrapper around one body.
+      const raw = await build({ text: "plain", html: null, attachments: [file()] });
+      expect(raw).toContain("multipart/mixed");
+      expect(raw).not.toContain("multipart/alternative");
+    });
+
+    it("encodes a non-ASCII filename per RFC 2231, and it survives the round trip", async () => {
+      const raw = await builder.build(spec({ attachments: [file({ filename: "报告.csv" })] }));
+      const text = new TextDecoder().decode(raw);
+
+      // RFC 2231, not an RFC 2047 encoded-word: the latter is not legal inside
+      // the quoted-string a filename lives in, and clients that follow the spec
+      // hand the user a file literally named `=?UTF-8?B?...?=`.
+      expect(text).toContain("filename*=UTF-8''");
+      expect(text).not.toContain("=?UTF-8?B?5oql5ZGKLmNzdg==?=");
+
+      const parsed = await parser.parse(raw);
+      expect(parsed.attachments[0]?.filename).toBe("报告.csv");
+    });
   });
 
   it("round-trips through the parser", async () => {

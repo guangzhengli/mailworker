@@ -25,6 +25,7 @@ export type DomainErrorCode =
   | "loop_detected"
   | "suppressed_recipient"
   | "approval_required"
+  | "message_too_large"
   // access
   | "unauthorized"
   | "forbidden"

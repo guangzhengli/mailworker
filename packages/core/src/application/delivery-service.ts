@@ -1,5 +1,6 @@
 import type {
   AgentIdentity,
+  AttachmentSpec,
   Check,
   CheckStatus,
   DeliveryEventType,
@@ -11,6 +12,7 @@ import type {
   ThreadId,
 } from "@core/domain";
 import {
+  Attachment,
   BlobKeys,
   Caller,
   Delivery,
@@ -88,6 +90,8 @@ export interface SendMessageRequest {
   /** Reply into an existing thread by our message ULID. */
   readonly inReplyToMessageId?: string;
   readonly headers?: Record<string, string>;
+  /** Base64 content; see `AttachmentSpec` for why it stays encoded until dispatch. */
+  readonly attachments?: readonly AttachmentSpec[];
   /** Repeat submissions with the same key return the original send. */
   readonly idempotencyKey?: string;
   /** True when a machine triggered this. Drives loop breaking and `Auto-Submitted`. */
@@ -113,6 +117,11 @@ export interface DeliveryPayload {
   readonly inReplyTo: RfcMessageId | null;
   readonly references: readonly RfcMessageId[];
   readonly headers: Record<string, string>;
+  /**
+   * Optional because payloads written before attachments existed do not have
+   * the field, and a queue can still be holding one when this deploys.
+   */
+  readonly attachments?: readonly AttachmentSpec[];
 }
 
 export interface DispatchDeliveryRequest {
@@ -177,6 +186,16 @@ export function createDeliveryService(deps: DeliveryDeps) {
       if (input.text === undefined && input.html === undefined) {
         throw invalidArgument("A message needs `text`, `html`, or both.");
       }
+
+      // Before the reads below, not after: this needs no I/O to decide, and a
+      // 6 MiB attachment should not cost an inbox lookup and a quota count
+      // before being told it is too big.
+      const attachments = input.attachments ?? [];
+      Attachment.enforceMessageSize({
+        text: input.text ?? null,
+        html: input.html ?? null,
+        attachments,
+      });
 
       const from = EmailAddress.parse(input.from);
       const to = input.to.map((value) => EmailAddress.parse(value));
@@ -281,6 +300,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           // from its side too (RFC 3834).
           "Auto-Submitted": LoopBreakerPolicy.autoSubmittedHeader(input.automated ?? false),
         },
+        attachments,
       };
 
       const payloadKey = BlobKeys.deliveryPayload(ctx.accountId, deliveryId);
@@ -380,6 +400,19 @@ export function createDeliveryService(deps: DeliveryDeps) {
       }
       const payload = decodePayload(bytes);
 
+      /**
+       * The one decode. Both the transport and the archived `.eml` want the same
+       * bytes, so they are produced once and shared rather than each decoding the
+       * base64 — a 5 MiB attachment decoded twice is 10 MiB of a Worker's 128 MiB.
+       */
+      const attachments = (payload.attachments ?? []).map((spec) => ({
+        filename: spec.filename,
+        mime: spec.mime,
+        content: Attachment.decode(spec),
+        inline: spec.inline,
+        contentId: spec.contentId,
+      }));
+
       const result = await deps.transport.dispatch(ctx, {
         from: payload.from,
         fromName: null,
@@ -394,7 +427,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
         inReplyTo: payload.inReplyTo,
         references: payload.references,
         headers: payload.headers,
-        attachments: [],
+        attachments,
       });
 
       if (!result.ok) {
@@ -449,6 +482,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
         references: payload.references,
         date: now,
         headers: payload.headers,
+        attachments,
       });
       const rawKey = BlobKeys.rawMessage(ctx.accountId, messageId);
       await deps.blobs.put(ctx, rawKey, raw, { contentType: "message/rfc822" });

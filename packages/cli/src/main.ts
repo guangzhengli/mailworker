@@ -1,6 +1,7 @@
 import { AGENT_HELP } from "@cli/agent-help";
 import { ApiError, type Client, createClient } from "@cli/client";
 import { ConfigError, resolveConfig } from "@cli/config";
+import { UsageError } from "@cli/errors";
 import { inboxCommand } from "@cli/inbox";
 import { identitiesCommand, keysCommand, webhooksCommand } from "@cli/keys";
 import { getCommand, injectCommand, lsCommand, seenCommand } from "@cli/messages";
@@ -84,6 +85,10 @@ export async function run(argv: readonly string[]): Promise<number> {
     if (error instanceof ConfigError) {
       process.stderr.write(`${error.message}\n`);
       return ExitCode.AUTH;
+    }
+    if (error instanceof UsageError) {
+      process.stderr.write(`${error.message}\n`);
+      return ExitCode.USAGE;
     }
     if (error instanceof ApiError) {
       process.stderr.write(`${error.message}\n`);
