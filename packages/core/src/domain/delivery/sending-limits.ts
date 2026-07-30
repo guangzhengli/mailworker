@@ -26,4 +26,11 @@ export const SENDING_LIMITS = {
    * parts passes the size limit while being nothing anyone meant to send.
    */
   MAX_ATTACHMENTS: 20,
+  /**
+   * Also ours. A batch is sent one message at a time (see `sendBatch`), so the
+   * cap is really a cap on how long one request may hold a Worker — 100 sends,
+   * each a handful of D1 reads and an R2 write, is about the most that fits
+   * comfortably inside a request's CPU budget.
+   */
+  MAX_BATCH: 100,
 } as const;

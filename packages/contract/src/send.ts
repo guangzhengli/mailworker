@@ -1,6 +1,8 @@
+import { errorCode } from "@contract/errors";
 import { emailAddress, toIso, ulid } from "@contract/primitives";
 import type {
   AttachmentSpec,
+  BatchSendItem,
   Delivery,
   DeliveryEvent,
   SendMessageRequest,
@@ -237,6 +239,68 @@ export const sendResponse = z.discriminatedUnion("outcome", [
 ]);
 
 export type SendResponse = z.infer<typeof sendResponse>;
+
+/**
+ * `POST /v1/send/batch` — up to 100 messages, each judged on its own.
+ *
+ * A flat array rather than `{ messages: [...] }` would have been shorter, but an
+ * object leaves room to add batch-wide options later without a second endpoint.
+ */
+export const sendBatchBody = z.strictObject({
+  messages: z.array(sendBody).min(1).max(SENDING_LIMITS.MAX_BATCH),
+});
+
+/**
+ * One result per submitted message, in submission order.
+ *
+ * `index` is redundant with the array position and is on the wire anyway: it
+ * survives a client that filters or sorts the array, which is the first thing
+ * anyone does with a batch result they intend to retry.
+ *
+ * Note that `error` here is a per-message verdict, not a failed request. The
+ * response is 207: some of these were accepted. A caller that treats any non-2xx
+ * as "nothing was sent" would be wrong about the other 99, so the status code
+ * has to say "mixed" out loud.
+ */
+export const sendBatchItem = z.discriminatedUnion("outcome", [
+  z.object({ index: z.number().int(), outcome: z.literal("queued"), delivery: deliveryDto }),
+  z.object({
+    index: z.number().int(),
+    outcome: z.literal("pending_approval"),
+    delivery: deliveryDto,
+  }),
+  z.object({ index: z.number().int(), outcome: z.literal("duplicate"), delivery: deliveryDto }),
+  z.object({
+    index: z.number().int(),
+    outcome: z.literal("error"),
+    error: z.object({
+      code: errorCode,
+      message: z.string(),
+      details: z.record(z.string(), z.unknown()),
+    }),
+  }),
+]);
+
+export const sendBatchResponse = z.object({
+  items: z.array(sendBatchItem),
+  /** So a caller can branch without scanning the array. */
+  accepted: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export type SendBatchItem = z.infer<typeof sendBatchItem>;
+export type SendBatchResponse = z.infer<typeof sendBatchResponse>;
+
+export function toSendBatchItem(item: BatchSendItem): SendBatchItem {
+  if (item.outcome === "error") {
+    return {
+      index: item.index,
+      outcome: "error",
+      error: { code: item.code, message: item.message, details: { ...item.details } },
+    };
+  }
+  return { index: item.index, outcome: item.outcome, delivery: toDeliveryDto(item.delivery) };
+}
 
 export const listDeliveriesQuery = z.object({
   status: deliveryStatus.optional(),

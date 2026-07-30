@@ -1,10 +1,12 @@
-import type { SendResponse } from "@mailworker/contract";
+import type { SendBatchResponse, SendResponse } from "@mailworker/contract";
 import {
   addSuppressionBody,
   listDeliveriesQuery,
+  sendBatchBody,
   sendBody,
   toDeliveryDto,
   toDeliveryEventDto,
+  toSendBatchItem,
 } from "@mailworker/contract";
 import { EmailAddress, Ulid } from "@mailworker/core";
 import type { HttpEnv } from "@web/workers/http/env";
@@ -46,6 +48,31 @@ export const send = new Hono<HttpEnv>()
     // a caller retrying after a timeout is asking "did this already happen".
     // 202 for pending_approval too — accepted, awaiting a human.
     return c.json(body, result.outcome === "duplicate" ? 200 : 202);
+  })
+
+  /**
+   * Many messages, one request, one verdict each.
+   *
+   * 207 rather than 202, always — even when every message was accepted. A status
+   * that changed with the contents would mean a client had to handle three
+   * shapes on the happy path, and the one thing worth optimising for here is
+   * that nobody writes `if (res.ok)` and silently drops the message that a
+   * suppression gate refused. Read `items`.
+   */
+  .post("/batch", async (c) => {
+    const parsed = sendBatchBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return invalid(c, parsed.error);
+
+    const results = await c.var.services.delivery.sendBatch(c.var.caller, parsed.data.messages);
+    const items = results.map(toSendBatchItem);
+    const failed = items.filter((item) => item.outcome === "error").length;
+
+    const body: SendBatchResponse = {
+      items,
+      accepted: items.length - failed,
+      failed,
+    };
+    return c.json(body, 207);
   })
 
   .get("/", async (c) => {

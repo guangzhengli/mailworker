@@ -4,6 +4,7 @@ import type {
   Check,
   CheckStatus,
   DeliveryEventType,
+  DomainErrorCode,
   DomainEvent,
   DomainEventType,
   Page,
@@ -20,9 +21,11 @@ import {
   DomainHealthPolicy,
   EmailAddress,
   invalidArgument,
+  isDomainError,
   LoopBreakerPolicy,
   Message,
   notFound,
+  SENDING_LIMITS,
   SendPolicy,
   ThreadingPolicy,
   Ulid,
@@ -110,6 +113,23 @@ export type SendResult =
   | { readonly outcome: "pending_approval"; readonly delivery: Delivery }
   | { readonly outcome: "duplicate"; readonly delivery: Delivery };
 
+/**
+ * One message's fate inside a batch.
+ *
+ * `index` is on every item, including the failures, because the response is the
+ * only thing correlating a result back to the message the caller submitted — and
+ * a rejected message has no delivery id to correlate by.
+ */
+export type BatchSendItem =
+  | ({ readonly index: number } & SendResult)
+  | {
+      readonly index: number;
+      readonly outcome: "error";
+      readonly code: DomainErrorCode;
+      readonly message: string;
+      readonly details: Readonly<Record<string, unknown>>;
+    };
+
 /** What `dispatch-delivery` reads back out of the blob store. */
 export interface DeliveryPayload {
   readonly from: EmailAddress;
@@ -166,7 +186,10 @@ export type RecordEventOutcome =
   | { readonly outcome: "unmatched" };
 
 export function createDeliveryService(deps: DeliveryDeps) {
-  return {
+  // Named rather than returned anonymously so `sendBatch` can call `send`
+  // without `this`, which would break the moment a caller destructured the
+  // service — and destructuring a service is exactly what a test does.
+  const service = {
     /**
      * Everything between "an agent wants to send" and "it is safe to hand to a
      * transport". Ends at `queued`; `dispatch` does the network call.
@@ -360,6 +383,62 @@ export function createDeliveryService(deps: DeliveryDeps) {
       // Last, after the row, the payload and the decision are all durable.
       await deps.dispatchQueue.enqueue(ctx, delivery.id);
       return { outcome: "queued", delivery };
+    },
+
+    /**
+     * Many messages in one call, each judged on its own.
+     *
+     * Two decisions here are load-bearing.
+     *
+     * **Sequential, not `Promise.all`.** Three of the seven gates — quota, the
+     * loop breaker, and the suppression list — read counts that the sends before
+     * them have just changed. Run concurrently, a hundred messages would all read
+     * the same pre-batch count and a quota with one message of room left would
+     * admit all hundred. The gates are only meaningful if each send sees the
+     * effect of its predecessors, and that means one at a time.
+     *
+     * **Partial success, not all-or-nothing.** A batch of 100 where recipient 37
+     * is suppressed sends the other 99 and reports the one. Failing the whole
+     * batch would be the wrong trade in both directions: mail that was fine goes
+     * unsent, and there is nothing to roll back the ones already handed to the
+     * transport anyway. The caller gets an item per message and decides.
+     */
+    async sendBatch(
+      ctx: Caller,
+      messages: readonly SendMessageRequest[],
+    ): Promise<readonly BatchSendItem[]> {
+      Caller.require(ctx, "message:send");
+
+      if (messages.length === 0) {
+        throw invalidArgument("A batch needs at least one message.");
+      }
+      if (messages.length > SENDING_LIMITS.MAX_BATCH) {
+        throw invalidArgument(
+          `Too many messages: ${messages.length} (max ${SENDING_LIMITS.MAX_BATCH}).`,
+          { count: messages.length, max: SENDING_LIMITS.MAX_BATCH },
+        );
+      }
+
+      const items: BatchSendItem[] = [];
+      for (const [index, message] of messages.entries()) {
+        try {
+          items.push({ index, ...(await service.send(ctx, message)) });
+        } catch (error) {
+          // A domain error is this message's verdict and belongs in its slot.
+          // Anything else is the deployment failing rather than the message
+          // being wrong, and turning that into a per-item result would report
+          // 99 successes for a batch that never ran.
+          if (!isDomainError(error)) throw error;
+          items.push({
+            index,
+            outcome: "error",
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          });
+        }
+      }
+      return items;
     },
 
     /**
@@ -855,6 +934,8 @@ export function createDeliveryService(deps: DeliveryDeps) {
       );
     },
   };
+
+  return service;
 }
 
 export interface DomainDiagnosis {

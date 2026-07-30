@@ -2,6 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import type {
   DeliveryTimelineDto,
   InboxDto,
+  SendBatchResponse,
   SendResponse,
 } from "@mailworker/contract";
 import { createDb, schema } from "@web/workers/adapters";
@@ -142,6 +143,68 @@ describe("POST /v1/send", () => {
     expect(response.status).toBe(403);
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("suppressed_recipient");
+  });
+});
+
+describe("POST /v1/send/batch", () => {
+  async function batch(messages: Record<string, unknown>[]) {
+    const response = await api("/v1/send/batch", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    });
+    return { response, body: (await response.json()) as SendBatchResponse };
+  }
+
+  it("answers 207 with one item per message", async () => {
+    const inbox = await createInbox();
+    const { response, body } = await batch([
+      { from: inbox.address, to: ["a@elsewhere.test"], subject: "One", text: "x" },
+      { from: inbox.address, to: ["b@elsewhere.test"], subject: "Two", text: "y" },
+    ]);
+
+    // 207 even when everything succeeded. A status that varied with the
+    // contents would mean a client had to handle three shapes on the happy
+    // path, and the failure mode of getting that wrong is silently dropping the
+    // one message a gate refused.
+    expect(response.status).toBe(207);
+    expect(body.accepted).toBe(2);
+    expect(body.failed).toBe(0);
+    expect(body.items.map((item) => item.index)).toEqual([0, 1]);
+  });
+
+  it("reports a per-message refusal without failing the batch", async () => {
+    const inbox = await createInbox();
+    await api("/v1/suppressions", {
+      method: "POST",
+      body: JSON.stringify({ address: "bounced@elsewhere.test", reason: "hard_bounce" }),
+    });
+
+    const { response, body } = await batch([
+      { from: inbox.address, to: ["fine@elsewhere.test"], subject: "One", text: "x" },
+      { from: inbox.address, to: ["bounced@elsewhere.test"], subject: "Two", text: "y" },
+    ]);
+
+    expect(response.status).toBe(207);
+    expect(body.accepted).toBe(1);
+    expect(body.failed).toBe(1);
+    const failure = body.items[1];
+    if (failure?.outcome !== "error") throw new Error("expected an error item");
+    expect(failure.error.code).toBe("suppressed_recipient");
+  });
+
+  it("rejects the whole request when the batch is over the cap", async () => {
+    const inbox = await createInbox();
+    const { response } = await batch(
+      Array.from({ length: 101 }, (_, i) => ({
+        from: inbox.address,
+        to: ["a@elsewhere.test"],
+        subject: `#${i}`,
+        text: "x",
+      })),
+    );
+    // Schema-level, so nothing is sent. A partial prefix of a batch the caller
+    // did not ask for would be the worst available answer.
+    expect(response.status).toBe(400);
   });
 });
 
