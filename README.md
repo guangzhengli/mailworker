@@ -7,8 +7,9 @@
 Email Routing to the `email()` handler, into D1 and R2, waking a blocked
 `mailworker wait`, out of `GET /v1/messages`, saved as a fixture with
 `get --raw` and replayed with `inject`. Outbound: six policy gates, an approval
-queue, the `send_email` binding, and a delivery timeline built from Cloudflare's
-event subscriptions. Control plane: agent identities with quotas and allowlists,
+queue, the `send_email` binding, attachments, batch sends, caller metadata that
+rides along on every delivery webhook, and a delivery timeline built from
+Cloudflare's event subscriptions. Control plane: agent identities with quotas and allowlists,
 scoped API keys, an approval queue, and signed webhooks. Dashboard: server-
 rendered pages for all of the above, in the same Worker, with new mail appearing
 by itself over a WebSocket. See [DESIGN.md](./DESIGN.md) for the full design —

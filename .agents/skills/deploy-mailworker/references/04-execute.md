@@ -185,7 +185,8 @@ WR secret put MAILWORKER_ADMIN_KEY --name mailworker < "$SCRATCH/admin-key"
 ```
 
 Keep the file until step 16 (verification needs the value), then `rm -f` it.
-Also write `.mailworker/config.json` for the CLI:
+Also write `.mailworker/config.json` — for the CLI, and for the human who has to
+sign in to the dashboard:
 
 ```json
 { "url": "<deployed url>", "token": "<the admin key>" }
@@ -194,6 +195,11 @@ Also write `.mailworker/config.json` for the CLI:
 `.mailworker/` is gitignored (confirmed in `.gitignore`). This is the bootstrap
 credential, not a scoped key — mint a real one later with `mailworker keys
 create --identity …`, which is the whole reason the admin key exists.
+
+Once the cleanup step deletes `$SCRATCH/admin-key`, **this file is the only
+readable copy of the value** — `secret list` returns names, never values, and
+nothing echoed it to the terminal. The CLI finds it by itself; a person opening
+`/login` does not. So the final report has to name the file: see item 6 there.
 
 **Verify:** `WR secret list --name mailworker` lists `MAILWORKER_ADMIN_KEY`
 (names only, no values).
@@ -471,5 +477,13 @@ Cover:
    in particular, with the command to re-check:
    `WR email sending dns get <MAIL_HOST>`. Once verified, flip the row:
    `UPDATE domains SET sending_status='verified' WHERE name='<MAIL_HOST>'`.
-6. Next steps that are the user's to take: mint a scoped key instead of using
+6. **How to sign in.** The dashboard is at `<url>/login` and the field on it
+   wants the bootstrap admin key, so say where that value now lives: the `token`
+   field of `.mailworker/config.json`, written in step 9 and gitignored. Point at
+   the file — **never paste the value into the report.** It is the only readable
+   copy: the scratchpad file was deleted at cleanup and a Worker secret cannot be
+   read back. Losing it means rotating `MAILWORKER_ADMIN_KEY`, which also signs
+   out every open dashboard session, because
+   `apps/web/workers/http/session.ts:47` derives the session-sealing key from it.
+7. Next steps that are the user's to take: mint a scoped key instead of using
    the admin key, and decide whether the dashboard needs a custom domain.
