@@ -78,6 +78,17 @@ export interface Delivery {
   /** Set once the sent copy has been written to the message store. */
   readonly messageId: Ulid | null;
   readonly idempotencyKey: string | null;
+  /**
+   * Caller-defined key/value pairs, opaque to us, carried on every webhook
+   * event about this delivery.
+   *
+   * It lives on the aggregate rather than in the payload blob because that is
+   * where it has to be readable from: a bounce arriving three days later is
+   * handled by `recordEvent`, which loads the delivery row and never touches
+   * the payload. Metadata that could only be read by fetching a blob from R2
+   * would be metadata nobody could afford to put on an event.
+   */
+  readonly metadata: Readonly<Record<string, string>>;
 
   readonly status: DeliveryStatus;
   readonly attempts: number;
@@ -106,6 +117,7 @@ export interface CreateDeliveryInput {
   readonly identityId?: Ulid | null;
   readonly idempotencyKey?: string | null;
   readonly payloadKey?: string | null;
+  readonly metadata?: Readonly<Record<string, string>>;
 }
 
 export const Delivery = {
@@ -129,6 +141,7 @@ export const Delivery = {
       identityId: input.identityId ?? null,
       messageId: null,
       idempotencyKey: input.idempotencyKey ?? null,
+      metadata: Object.freeze({ ...input.metadata }),
       status: "draft",
       attempts: 0,
       recipients: [...input.recipients],

@@ -15,6 +15,13 @@
       "when": 1785080149175,
       "tag": "0001_messages_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785080149176,
+      "tag": "0002_delivery_metadata",
+      "breakpoints": true
     }
   ]
 }

@@ -59,7 +59,7 @@ SENDING — an irreversible outward action
   mailworker send --from <inbox> --to <addr...> --subject <s>
                   [--text b | --html b | --body-file f] [--cc a] [--bcc a]
                   [--in-reply-to <message-id>] [--idempotency-key K] [--dry-run]
-                  [--attach path...] [--inline cid=path...]
+                  [--attach path...] [--inline cid=path...] [--metadata k=v...]
       Answers 202 with a delivery id BEFORE anything is delivered — at that
       moment nothing is known about the outcome. Exit 5 means a policy gate
       refused it (quota, allowlist, loop breaker, suppression); exit 6 means
@@ -71,6 +71,9 @@ SENDING — an irreversible outward action
       image you reference from the HTML as <img src="cid:CID">. Body and
       attachments together cap at 5 MiB encoded — over that, exit 2, before
       anything is queued.
+      --metadata k=v pairs come back on status and on every webhook about this
+      send, including a bounce days later. Use them to correlate rather than
+      keeping your own id-to-delivery table.
 
   mailworker status <delivery-id>
       The timeline: what the provider has said since. Exit 5 if it reached a

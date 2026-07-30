@@ -22,6 +22,19 @@ interface EventBase {
   readonly occurredAt: Date;
 }
 
+/**
+ * Every event about a send carries the caller's metadata back to them.
+ *
+ * This is the half of the feature that makes it worth having. A `metadata` you
+ * can only read by fetching the delivery is a convenience; one that rides along
+ * on the bounce webhook three days later is what lets a subscriber route that
+ * bounce to the right tenant without a lookup — which is the only reason to have
+ * attached it at send time.
+ */
+interface DeliveryEventBase extends EventBase {
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
 export type DomainEvent =
   | (EventBase & {
       readonly type: "inbox.created";
@@ -55,28 +68,28 @@ export type DomainEvent =
       readonly recipient: EmailAddress;
       readonly reason: UnroutableReason;
     })
-  | (EventBase & {
+  | (DeliveryEventBase & {
       readonly type: "delivery.queued";
       readonly deliveryId: Ulid;
       readonly recipients: readonly EmailAddress[];
     })
-  | (EventBase & {
+  | (DeliveryEventBase & {
       readonly type: "delivery.approval_requested";
       readonly deliveryId: Ulid;
       readonly reason: string;
     })
-  | (EventBase & {
+  | (DeliveryEventBase & {
       readonly type: "delivery.rejected";
       readonly deliveryId: Ulid | null;
       readonly reason: string;
       readonly code: string;
     })
-  | (EventBase & {
+  | (DeliveryEventBase & {
       readonly type: "delivery.dispatched";
       readonly deliveryId: Ulid;
       readonly providerMessageId: string | null;
     })
-  | (EventBase & {
+  | (DeliveryEventBase & {
       readonly type: "delivery.status_changed";
       readonly deliveryId: Ulid;
       readonly from: DeliveryStatus;

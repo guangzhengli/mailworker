@@ -208,6 +208,12 @@ export const deliveries = sqliteTable(
     /** Points at the stored sent copy once there is one. */
     messageId: text("message_id"),
     idempotencyKey: text("idempotency_key"),
+    /**
+     * Caller-defined key/value pairs, opaque to us. On the row rather than in
+     * the payload blob because `recordEvent` reads this row and never the blob —
+     * see the field's comment on the `Delivery` aggregate.
+     */
+    metadata: text("metadata", { mode: "json" }).$type<Record<string, string>>(),
     /** See the state machine in DESIGN.md §4.3. */
     status: text("status").notNull(),
     attempts: integer("attempts").notNull().default(0),

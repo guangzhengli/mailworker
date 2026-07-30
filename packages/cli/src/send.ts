@@ -31,6 +31,7 @@ interface SendOptions extends OutputOptions {
   idempotencyKey?: string;
   attach?: string[];
   inline?: string[];
+  metadata?: string[];
   automated?: boolean;
   dryRun?: boolean;
 }
@@ -61,6 +62,7 @@ export function sendCommand(client: () => Client): Command {
     .option("--idempotency-key <key>", "repeat submissions return the original send")
     .option("--attach <path...>", "attach a file")
     .option("--inline <cid=path...>", "attach a file referenced from the HTML as cid:<cid>")
+    .option("--metadata <key=value...>", "pairs echoed on the delivery and its webhooks")
     .option("--interactive", "declare this as human-initiated, not automated")
     .option("--dry-run", "print what would be sent and stop")
     .option("--json", "print the outcome as JSON")
@@ -92,6 +94,7 @@ export function sendCommand(client: () => Client): Command {
           ? {}
           : { idempotencyKey: options.idempotencyKey }),
         ...(attachments.length === 0 ? {} : { attachments }),
+        ...(options.metadata === undefined ? {} : { metadata: parsePairs(options.metadata) }),
         automated: options.interactive !== true,
       };
 
@@ -249,4 +252,15 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 function mimeOf(filename: string): string {
   const extension = filename.includes(".") ? filename.split(".").pop() : undefined;
   return MIME_BY_EXTENSION[(extension ?? "").toLowerCase()] ?? "application/octet-stream";
+}
+
+/** `key=value` repeated, for `--metadata`. Values may contain `=`; keys may not. */
+function parsePairs(pairs: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of pairs) {
+    const index = pair.indexOf("=");
+    if (index <= 0) throw usage(`--metadata wants key=value, got "${pair}".`);
+    out[pair.slice(0, index)] = pair.slice(index + 1);
+  }
+  return out;
 }

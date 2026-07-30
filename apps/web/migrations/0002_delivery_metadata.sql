@@ -1,0 +1,11 @@
+-- Hand-written, for the same reason as 0001: drizzle-kit cannot diff this
+-- schema unattended. Its 0001 snapshot still calls this table
+-- `outbound_messages` — the name it had before 0000_init.sql was edited by
+-- hand — so `generate` stops to ask whether `deliveries` is a new table or a
+-- rename, and hangs waiting for an answer in any non-interactive shell.
+-- 0002_snapshot.json corrects that drift, so the next `generate` runs clean.
+--
+-- Nullable with no default: a delivery sent before this column existed has no
+-- metadata, which is not the same fact as having empty metadata, and the
+-- adapter reads NULL back as `{}` anyway.
+ALTER TABLE `deliveries` ADD `metadata` text;

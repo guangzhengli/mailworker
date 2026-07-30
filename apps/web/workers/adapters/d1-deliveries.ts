@@ -141,6 +141,10 @@ function toRow(ctx: Caller, delivery: Delivery): typeof deliveries.$inferInsert 
     identityId: delivery.identityId,
     messageId: delivery.messageId,
     idempotencyKey: delivery.idempotencyKey,
+    // Null rather than `{}` for the empty case, so a row that never had metadata
+    // is distinguishable from one whose metadata was cleared, and so the column
+    // costs nothing on the overwhelming majority of sends that have none.
+    metadata: Object.keys(delivery.metadata).length === 0 ? null : { ...delivery.metadata },
     status: delivery.status,
     attempts: delivery.attempts,
     recipients: [...delivery.recipients],
@@ -164,6 +168,7 @@ export function toDelivery(row: DeliveryRow): Delivery {
     identityId: row.identityId as Ulid | null,
     messageId: row.messageId as Ulid | null,
     idempotencyKey: row.idempotencyKey,
+    metadata: row.metadata ?? {},
     status: row.status as Delivery["status"],
     attempts: row.attempts,
     recipients: row.recipients as EmailAddress[],

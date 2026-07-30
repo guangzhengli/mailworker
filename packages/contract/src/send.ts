@@ -63,6 +63,21 @@ export const attachmentInput = z
   );
 
 /**
+ * Caller-defined key/value pairs, echoed on the delivery and on every webhook
+ * event about it.
+ *
+ * Capped in count and length because this is stored on the row that every list
+ * query reads, and because an unbounded map on an audit record is somewhere to
+ * put a whole message body — which would then be exempt from the retention that
+ * governs message bodies.
+ */
+export const metadataInput = z
+  .record(z.string().min(1).max(64), z.string().max(512))
+  .refine((value) => Object.keys(value).length <= 20, {
+    message: "At most 20 metadata keys.",
+  });
+
+/**
  * `POST /v1/send`.
  *
  * The recipient caps are Cloudflare's (50 across to + cc + bcc, DESIGN.md §2.2)
@@ -83,6 +98,7 @@ export const sendBody = z
     inReplyTo: ulid.optional(),
     headers: z.record(z.string().min(1), z.string()).optional(),
     attachments: z.array(attachmentInput).max(SENDING_LIMITS.MAX_ATTACHMENTS).optional(),
+    metadata: metadataInput.optional(),
     /**
      * Also accepted as the `Idempotency-Key` header, which wins when both are
      * present. The header suits a proxy or an SDK retry wrapper; the body field
@@ -109,6 +125,7 @@ export const sendBody = z
       ...(input.inReplyTo === undefined ? {} : { inReplyToMessageId: input.inReplyTo }),
       ...(input.headers === undefined ? {} : { headers: input.headers }),
       ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       ...(input.automated === undefined ? {} : { automated: input.automated }),
     }),
@@ -121,6 +138,8 @@ export const deliveryDto = z.object({
   /** The stored sent copy, once it exists. `GET /v1/messages/:id` reads it. */
   messageId: z.string().nullable(),
   idempotencyKey: z.string().nullable(),
+  /** Whatever the caller attached at send time. `{}` when they attached nothing. */
+  metadata: z.record(z.string(), z.string()),
   status: deliveryStatus,
   attempts: z.number().int().nonnegative(),
   recipients: z.array(z.string()),
@@ -143,6 +162,7 @@ export function toDeliveryDto(delivery: Delivery): DeliveryDto {
     identityId: delivery.identityId,
     messageId: delivery.messageId,
     idempotencyKey: delivery.idempotencyKey,
+    metadata: { ...delivery.metadata },
     status: delivery.status,
     attempts: delivery.attempts,
     recipients: [...delivery.recipients],

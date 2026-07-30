@@ -92,6 +92,13 @@ export interface SendMessageRequest {
   readonly headers?: Record<string, string>;
   /** Base64 content; see `AttachmentSpec` for why it stays encoded until dispatch. */
   readonly attachments?: readonly AttachmentSpec[];
+  /**
+   * Caller-defined key/value pairs, echoed on the delivery and on every webhook
+   * event about it. Opaque to us on purpose: this is how a caller correlates a
+   * bounce three days later with the order, tenant or test run that caused the
+   * send, without us having to model any of those.
+   */
+  readonly metadata?: Record<string, string>;
   /** Repeat submissions with the same key return the original send. */
   readonly idempotencyKey?: string;
   /** True when a machine triggered this. Drives loop breaking and `Auto-Submitted`. */
@@ -272,6 +279,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
             type: "delivery.rejected",
             accountId: ctx.accountId,
             occurredAt: now,
+            metadata: input.metadata ?? {},
             deliveryId: null,
             reason: decision.reason,
             code: decision.code,
@@ -316,6 +324,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
         identityId: identity?.id ?? null,
         idempotencyKey: input.idempotencyKey ?? null,
         payloadKey,
+        metadata: input.metadata ?? {},
         now,
       });
 
@@ -327,6 +336,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
             type: "delivery.approval_requested",
             accountId: ctx.accountId,
             occurredAt: now,
+            metadata: delivery.metadata,
             deliveryId: delivery.id,
             reason: decision.reason,
           },
@@ -341,6 +351,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           type: "delivery.queued",
           accountId: ctx.accountId,
           occurredAt: now,
+          metadata: delivery.metadata,
           deliveryId: delivery.id,
           recipients,
         },
@@ -445,6 +456,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
             type: "delivery.rejected",
             accountId: ctx.accountId,
             occurredAt: now,
+            metadata: failed.metadata,
             deliveryId: failed.id,
             reason: result.error,
             code: "send_rejected",
@@ -521,6 +533,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           type: "delivery.dispatched",
           accountId: ctx.accountId,
           occurredAt: now,
+          metadata: dispatched.metadata,
           deliveryId: dispatched.id,
           providerMessageId: result.providerMessageId,
         },
@@ -606,6 +619,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           type: "delivery.status_changed",
           accountId: ctx.accountId,
           occurredAt: event.occurredAt,
+          metadata: applied.delivery.metadata,
           deliveryId: applied.delivery.id,
           from: delivery.status,
           to: applied.delivery.status,
@@ -654,6 +668,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           type: "delivery.status_changed",
           accountId: ctx.accountId,
           occurredAt: now,
+          metadata: approved.metadata,
           deliveryId: approved.id,
           from: delivery.status,
           to: approved.status,

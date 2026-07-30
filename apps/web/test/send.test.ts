@@ -145,7 +145,24 @@ describe("POST /v1/send", () => {
   });
 });
 
-describe("attachments", () => {
+describe("attachments and metadata", () => {
+  it("round-trips both onto the delivery record", async () => {
+    const inbox = await createInbox();
+    const { response, body } = await post(inbox.address, {
+      attachments: [{ filename: "report.csv", type: "text/csv", content: "aGVsbG8=" }],
+      metadata: { tenant: "acme", orderId: "A-1" },
+    });
+
+    expect(response.status).toBe(202);
+    expect(body.delivery.metadata).toEqual({ tenant: "acme", orderId: "A-1" });
+
+    // Metadata is on the row, so it survives a fresh read — which is what a
+    // bounce handler days later actually does.
+    const reread = await api(`/v1/send/${body.delivery.id}`);
+    const timeline = (await reread.json()) as DeliveryTimelineDto;
+    expect(timeline.delivery.metadata).toEqual({ tenant: "acme", orderId: "A-1" });
+  });
+
   it("refuses content that is not base64", async () => {
     const inbox = await createInbox();
     const { response } = await post(inbox.address, {
