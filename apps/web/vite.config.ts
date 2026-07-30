@@ -24,4 +24,18 @@ import { packageAliases } from "../../vitest.shared";
 export default defineConfig({
   plugins: [cloudflare({ viteEnvironment: { name: "ssr" } }), tailwindcss(), reactRouter()],
   resolve: { alias: packageAliases },
+
+  /**
+   * Fail on a busy port rather than sliding to the next one.
+   *
+   * Vite's default is to take 5174 when 5173 is occupied, and it says so in one
+   * line that scrolls past. What that looks like from the outside is a dev
+   * server that "did not shut down" — the old process is still serving 5173,
+   * still holding the local D1, and the browser tab you left open is talking to
+   * it rather than to the one you just started. `strictPort` turns that into an
+   * error naming the port, which is the question worth answering: who has it.
+   *
+   * `lsof -ti tcp:5173` is the answer, and `kill` is the fix.
+   */
+  server: { port: 5173, strictPort: true },
 });
