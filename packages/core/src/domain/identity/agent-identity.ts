@@ -28,6 +28,11 @@ export interface AgentIdentity {
   readonly dailySendQuota: number | null;
   /** When true every send lands in `pending_approval` for a human to release. */
   readonly requireApproval: boolean;
+  /**
+   * Provisioned by the deployment rather than declared by an operator. The
+   * `console` identity dashboard sends are metered against is the only one.
+   */
+  readonly managed: boolean;
   readonly createdAt: Date;
 }
 
@@ -40,6 +45,7 @@ export interface CreateAgentIdentityInput {
   readonly recipientAllowlist?: readonly string[] | null;
   readonly dailySendQuota?: number | null;
   readonly requireApproval?: boolean;
+  readonly managed?: boolean;
 }
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -66,17 +72,16 @@ export const AgentIdentity = {
       recipientAllowlist: input.recipientAllowlist ? [...input.recipientAllowlist] : null,
       dailySendQuota: quota,
       requireApproval: input.requireApproval ?? false,
+      managed: input.managed ?? false,
       createdAt: input.now,
     };
   },
 
-  /** May this identity put `from` in the From header? */
   canSendAs(identity: AgentIdentity, from: EmailAddress): boolean {
     if (identity.sendAs === null) return true;
     return AddressPattern.matches(identity.sendAs, from);
   },
 
-  /** May this identity send to `recipient`? */
   canSendTo(identity: AgentIdentity, recipient: EmailAddress): boolean {
     if (identity.recipientAllowlist === null) return true;
     return AddressPattern.matchesAny(identity.recipientAllowlist, recipient);

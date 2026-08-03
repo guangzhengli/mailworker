@@ -16,6 +16,13 @@ export type DeliveryStatus =
   | "failed"
   | "rejected";
 
+/**
+ * Who authored the send. A `console` delivery came from a human in the
+ * dashboard, so it never enters the approval queue — the person sending is the
+ * person who would approve it.
+ */
+export type DeliverySource = "agent" | "console";
+
 /** The six event types Cloudflare Email Sending publishes to a queue. */
 export type DeliveryEventType =
   | "delivered"
@@ -71,7 +78,6 @@ const TERMINAL: ReadonlySet<DeliveryStatus> = new Set<DeliveryStatus>([
 export interface Delivery {
   readonly id: Ulid;
   readonly accountId: AccountId;
-  /** The inbox this was sent from. */
   readonly inboxId: Ulid | null;
   /** The agent identity that authored it — the unit SendPolicy meters. */
   readonly identityId: Ulid | null;
@@ -89,6 +95,7 @@ export interface Delivery {
    * would be metadata nobody could afford to put on an event.
    */
   readonly metadata: Readonly<Record<string, string>>;
+  readonly source: DeliverySource;
 
   readonly status: DeliveryStatus;
   readonly attempts: number;
@@ -118,10 +125,10 @@ export interface CreateDeliveryInput {
   readonly idempotencyKey?: string | null;
   readonly payloadKey?: string | null;
   readonly metadata?: Readonly<Record<string, string>>;
+  readonly source?: DeliverySource;
 }
 
 export const Delivery = {
-  /** Re-exported so callers checking the cap do not need a second import. */
   MAX_RECIPIENTS: SENDING_LIMITS.MAX_RECIPIENTS,
 
   create(input: CreateDeliveryInput): Delivery {
@@ -142,6 +149,7 @@ export const Delivery = {
       messageId: null,
       idempotencyKey: input.idempotencyKey ?? null,
       metadata: Object.freeze({ ...input.metadata }),
+      source: input.source ?? "agent",
       status: "draft",
       attempts: 0,
       recipients: [...input.recipients],
@@ -165,7 +173,6 @@ export const Delivery = {
     return TERMINAL.has(status);
   },
 
-  /** Low-level transition. Prefer the intention-revealing helpers below. */
   transitionTo(
     delivery: Delivery,
     to: DeliveryStatus,
