@@ -19,9 +19,9 @@ arrives and can print just the OTP, so "sign up, then read the code out of the
 verification email" is two commands rather than a polling loop.
 
 ```sh
-id=$(npx mailworker@latest inbox create --prefix signup --json | jq -r .id)
+id=$(npx @mailworker/cli@latest inbox create --prefix signup --json | jq -r .id)
 # … drive the signup flow against the address that command printed …
-CODE=$(npx mailworker@latest wait --inbox "$id" --extract otp --timeout 60s) || exit $?
+CODE=$(npx @mailworker/cli@latest wait --inbox "$id" --extract otp --timeout 60s) || exit $?
 ```
 
 ## Before anything else: is there a deployment?
@@ -30,7 +30,7 @@ Mailworker is **self-hosted**. There is no hosted service and no shared sandbox 
 every deployment belongs to whoever created it on their own Cloudflare account.
 
 ```sh
-npx mailworker@latest doctor
+npx @mailworker/cli@latest doctor
 ```
 
 | Result | What it means | Do this |
@@ -68,7 +68,7 @@ testing a flow end to end, and the reason a wrong key is a real incident rather
 than a typo.
 
 ```sh
-npx mailworker@latest env ls
+npx @mailworker/cli@latest env ls
 ```
 
 ## Exit codes — branch on these, never parse the message
@@ -93,12 +93,12 @@ use the plain output only when a human is going to read it.
 ```sh
 # One inbox per test. It is one database insert, not a Cloudflare API call, so
 # they are cheap; sharing one between tests is what makes tests flaky.
-id=$(npx mailworker@latest inbox create --prefix signup --ttl 10m --json | jq -r .id)
-addr=$(npx mailworker@latest inbox ls --json | jq -r ".[] | select(.id==\"$id\") | .address")
+id=$(npx @mailworker/cli@latest inbox create --prefix signup --ttl 10m --json | jq -r .id)
+addr=$(npx @mailworker/cli@latest inbox ls --json | jq -r ".[] | select(.id==\"$id\") | .address")
 
 # … your flow submits $addr …
 
-CODE=$(npx mailworker@latest wait --inbox "$id" --extract otp --timeout 60s)
+CODE=$(npx @mailworker/cli@latest wait --inbox "$id" --extract otp --timeout 60s)
 case $? in
   0) ;;                      # $CODE holds the code and nothing else
   4) echo "no mail in 60s"; exit 1 ;;
@@ -117,7 +117,7 @@ and anything that arrives in the gap is still matched.
 ### 2 · Send — an irreversible outward action
 
 ```sh
-npx mailworker@latest send --from <inbox> --to someone@example.com \
+npx @mailworker/cli@latest send --from <inbox> --to someone@example.com \
   --subject "Hello" --text "Body" --idempotency-key "$REQUEST_ID"
 ```
 
@@ -141,8 +141,8 @@ Prefer it when you are unsure.
 ### 3 · Replay — turn a broken message into a fixture
 
 ```sh
-npx mailworker@latest get <message-id> --raw > fixture.eml
-npx mailworker@latest inject fixture.eml --to <address>
+npx @mailworker/cli@latest get <message-id> --raw > fixture.eml
+npx @mailworker/cli@latest inject fixture.eml --to <address>
 ```
 
 `inject` replays raw bytes through the exact path real mail takes, so a message

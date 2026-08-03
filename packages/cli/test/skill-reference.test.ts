@@ -19,7 +19,7 @@ describe("the skill's CLI reference", () => {
     expect(end, `${SKILL_REFERENCE} is missing its END marker.`).toBeGreaterThan(start);
 
     const generated = contents.slice(start + BEGIN.length, end).trim();
-    expect(generated, "Out of date. Run `pnpm --filter mailworker skill:sync`.").toBe(
+    expect(generated, "Out of date. Run `pnpm --filter @mailworker/cli skill:sync`.").toBe(
       AGENT_HELP.trim(),
     );
   });

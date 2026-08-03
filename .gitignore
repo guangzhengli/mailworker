@@ -24,6 +24,9 @@ worker-configuration.d.ts
 # local mailworker CLI state
 .mailworker/
 
+# an npm auth token belongs in ~/.npmrc, never in the repo
+.npmrc
+
 *.log
 .DS_Store
 .env

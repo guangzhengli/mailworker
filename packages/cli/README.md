@@ -1,10 +1,10 @@
-# mailworker
+# @mailworker/cli
 
 Programmatic inboxes that send and receive real email, aimed at agents and test
-automation rather than at humans reading mail.
+automation rather than at humans reading mail. Installs one command, `mailworker`.
 
 ```sh
-npx mailworker@latest help --agent
+npx @mailworker/cli@latest help --agent
 ```
 
 This CLI talks to **your own** [Mailworker](https://github.com/guangzhengli/mailworker)

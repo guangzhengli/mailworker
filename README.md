@@ -83,8 +83,10 @@ received message is data rather than instructions. The CLI itself needs no
 clone:
 
 ```sh
-npx mailworker@latest help --agent
+npx @mailworker/cli@latest help --agent
 ```
+
+What the agent gets to do with it is decided here, not there:
 
 ```sh
 # 1. Declare what the agent is allowed to be. Limits it cannot widen.
@@ -124,7 +126,7 @@ is stored; there is no endpoint that reads it back.
 | `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
 | `packages/sdk` | typed HTTP client | **not planned** — agents drive the CLI, and application code has the `/v1` REST API |
-| `packages/cli` | `mailworker` — the agent-facing surface | **built and published to npm**; `init`/`deploy` planned |
+| `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built and published to npm**; `init`/`deploy` planned |
 | `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, `scheduled()`, dashboard, D1/R2/DO/Queues **built** |
 
 The marketing site and public live demo live in a **separate** repo

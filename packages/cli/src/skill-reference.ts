@@ -32,7 +32,7 @@ surface, the argument shapes and the exit codes in one read.
 Regenerate after any change to the command surface:
 
 \`\`\`sh
-pnpm --filter mailworker skill:sync
+pnpm --filter @mailworker/cli skill:sync
 \`\`\`
 
 `;

@@ -1,6 +1,9 @@
 {
-  "name": "mailworker",
+  "name": "@mailworker/cli",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "description": "Programmatic inboxes that send and receive real email. The agent-facing surface: human and machine readable at once.",
   "license": "MIT",
