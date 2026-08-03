@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Using Mailworker",
+      "description": "Send and receive real email from an agent or a test — throwaway inboxes, blocking on the verification email, and outbound mail through policy gates.",
+      "skills": ["mailworker"]
+    },
+    {
+      "title": "Running your own deployment",
+      "description": "Provisioning Mailworker into a Cloudflare account and shipping changes to it. Only useful if you are self-hosting it, which everyone using it is.",
+      "skills": ["deploy-mailworker", "update-mailworker"]
+    },
+    {
+      "title": "Cloudflare",
+      "description": "Cloudflare's own published skills, vendored so a fresh clone can deploy without hunting them down. Their work, not this project's.",
+      "skills": [
+        "cloudflare-email-service",
+        "workers-best-practices",
+        "durable-objects",
+        "wrangler"
+      ]
+    }
+  ]
+}
