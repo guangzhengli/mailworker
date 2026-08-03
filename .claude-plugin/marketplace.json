@@ -1,0 +1,22 @@
+{
+  "name": "mailworker",
+  "description": "Email for AI agents: throwaway inboxes, blocking on the verification email, and guardrailed outbound mail.",
+  "owner": {
+    "name": "guangzhengli",
+    "url": "https://github.com/guangzhengli"
+  },
+  "plugins": [
+    {
+      "name": "mailworker",
+      "source": "./",
+      "description": "Send and receive real email from an agent or a test — create a throwaway inbox, block until the verification message arrives, extract an OTP, and send outbound mail through policy gates. Requires your own Mailworker deployment on Cloudflare.",
+      "version": "0.1.0",
+      "author": {
+        "name": "guangzhengli"
+      },
+      "category": "testing",
+      "tags": ["email", "testing", "otp", "e2e"],
+      "skills": ["./skills/mailworker"]
+    }
+  ]
+}

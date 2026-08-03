@@ -1,6 +1,8 @@
 ---
 name: update-mailworker
 description: Ship a code change to the already-deployed Mailworker Worker on Cloudflare — rebuild the client bundle, apply any new D1 migration, deploy, verify, and roll back if the verification fails. Classifies the change first, because most changes need nothing but `wrangler deploy` while a schema change, a new Durable Object class, a new binding or a changed queue payload each need one extra ordered step. Use for "deploy my changes", "redeploy", "ship this", "push the update", "apply the migration". For provisioning a deployment that does not exist yet, use `deploy-mailworker` instead.
+metadata:
+  internal: true
 ---
 
 # Update a live Mailworker deployment

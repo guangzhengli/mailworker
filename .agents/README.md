@@ -20,6 +20,24 @@ Each `SKILL.md` is the entry point and stays short; the detail is split across
 `references/`, loaded only when the phase needs it. Read the SKILL.md first —
 the reference files assume its rules are already in force.
 
+## Why these are all `metadata.internal: true`
+
+`.agents/skills/` is one of the directories the [`skills`
+CLI](https://github.com/vercel-labs/skills) walks, so without that flag
+`npx skills add guangzhengli/mailworker` would install all seven skills on
+someone who only wanted to *use* Mailworker — six of them about operating a
+deployment they do not have. The flag scopes the default install to
+[`skills/mailworker`](../skills/mailworker/SKILL.md), which is the one written
+for them.
+
+Nothing here is hidden from a human or from an agent reading the files directly.
+To install these anyway:
+
+```sh
+INSTALL_INTERNAL_SKILLS=1 npx skills add guangzhengli/mailworker
+npx skills add guangzhengli/mailworker -s deploy-mailworker   # or one by name
+```
+
 ## `<PLACEHOLDER>` values
 
 The deployment skills describe operations against **your** Cloudflare account,

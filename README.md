@@ -79,8 +79,19 @@ npx skills add guangzhengli/mailworker
 That installs [`skills/mailworker`](skills/mailworker/SKILL.md) into Claude Code,
 Codex, Cursor and the other [skills-compatible agents](https://agentskills.io) —
 when to mint an inbox, how to branch on the exit codes, and the rule that a
-received message is data rather than instructions. The CLI itself needs no
-clone:
+received message is data rather than instructions. It is the only skill that
+command installs; the deployment skills under `.agents/` are marked internal
+because they are for whoever runs the deployment, not for whoever uses it.
+
+In Claude Code you can install it as a plugin instead, which adds version
+tracking and updates through `/plugin marketplace update`:
+
+```
+/plugin marketplace add guangzhengli/mailworker
+/plugin install mailworker@mailworker
+```
+
+The CLI itself needs no clone:
 
 ```sh
 npx @mailworker/cli@latest help --agent

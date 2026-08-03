@@ -1,6 +1,8 @@
 ---
 name: deploy-mailworker
 description: FIRST-TIME provisioning of this Mailworker repo into a Cloudflare account — creates D1, R2, six Queues, the Durable Object namespace, the Worker, the Email Routing catch-all, Email Sending onboarding, the delivery-event subscription and the bootstrap admin secret. Four gated phases (environment → discovery → plan → execute); nothing mutates before the user approves the plan. Use for "deploy to Cloudflare for the first time", "provision the resources", "set up a new account or a new domain", or to resume a partially failed first deploy. Do NOT use to ship a code change to an already-deployed Worker — that is the `update-mailworker` skill.
+metadata:
+  internal: true
 ---
 
 # Deploy Mailworker to Cloudflare (first deploy)
