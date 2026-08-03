@@ -46,12 +46,12 @@ export function resolveConfig(overrides: ConfigOverrides = {}, env = process.env
 
   if (url === undefined || url.length === 0) {
     throw new ConfigError(
-      "No deployment URL. Set MAILWORKER_URL, pass --url, or run `mailworker init`.",
+      `No deployment URL. Set MAILWORKER_URL, pass --url, or put "url" in ${PROJECT_FILE}.`,
     );
   }
   if (token === undefined || token.length === 0) {
     throw new ConfigError(
-      "No API token. Set MAILWORKER_TOKEN, pass --token, or run `mailworker init`.",
+      `No API token. Set MAILWORKER_TOKEN, pass --token, or put "token" in ${PROJECT_FILE}.`,
     );
   }
 

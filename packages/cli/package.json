@@ -1,27 +1,52 @@
 {
-  "name": "@mailworker/cli",
-  "version": "0.0.0",
-  "private": true,
+  "name": "mailworker",
+  "version": "0.1.0",
   "type": "module",
-  "description": "The agent-facing surface. Human and machine readable at once.",
+  "description": "Programmatic inboxes that send and receive real email. The agent-facing surface: human and machine readable at once.",
+  "license": "MIT",
+  "homepage": "https://github.com/guangzhengli/mailworker#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangzhengli/mailworker.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/guangzhengli/mailworker/issues"
+  },
+  "keywords": [
+    "email",
+    "email-testing",
+    "inbox",
+    "otp",
+    "agent",
+    "ai-agent",
+    "cli",
+    "cloudflare",
+    "e2e-testing"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
-    "mailworker": "./src/bin.ts"
+    "mailworker": "./dist/mailworker.js"
   },
-  "exports": {
-    ".": "./src/main.ts"
-  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "build": "esbuild src/bin.ts --bundle --minify --platform=node --target=node22 --format=esm --outfile=dist/mailworker.js --tsconfig=tsconfig.json",
+    "prepack": "pnpm build",
+    "skill:sync": "tsx --tsconfig tsconfig.json scripts/sync-skill-reference.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
+  "devDependencies": {
     "@mailworker/contract": "workspace:*",
     "@mailworker/core": "workspace:*",
-    "commander": "^15.0.0"
-  },
-  "devDependencies": {
     "@types/node": "^22.15.3",
+    "commander": "^15.0.0",
+    "esbuild": "^0.28.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
