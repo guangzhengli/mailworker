@@ -6,7 +6,7 @@ import { Button } from "@web/app/components/ui/button";
 import { Card } from "@web/app/components/ui/card";
 import { Input } from "@web/app/components/ui/input";
 import { Table, TableBody, TableCell, TableRow } from "@web/app/components/ui/table";
-import { useT } from "@web/app/i18n";
+import { type MessageKey, useT } from "@web/app/i18n";
 import { formatAbsolute, formatRelative } from "@web/app/i18n/format";
 import { cn } from "@web/app/lib/utils";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -149,8 +149,27 @@ const DELIVERY_TONES: Record<string, Tone> = {
   pending_approval: "warning",
 };
 
+const DELIVERY_LABELS = {
+  draft: "status.draft",
+  pending_approval: "status.pendingApproval",
+  queued: "status.queued",
+  dispatched: "status.dispatched",
+  deferred: "status.deferred",
+  delivered: "status.delivered",
+  bounced: "status.bounced",
+  complained: "status.complained",
+  failed: "status.failed",
+  rejected: "status.rejected",
+} as const satisfies Record<string, MessageKey>;
+
+function deliveryLabel(t: (key: MessageKey) => string, value: string): string {
+  const key = DELIVERY_LABELS[value as keyof typeof DELIVERY_LABELS];
+  return key === undefined ? value.replaceAll("_", " ") : t(key);
+}
+
 export function StatusTag({ status }: { status: string }) {
-  return <Tag tone={DELIVERY_TONES[status] ?? "neutral"}>{status.replaceAll("_", " ")}</Tag>;
+  const { t } = useT();
+  return <Tag tone={DELIVERY_TONES[status] ?? "neutral"}>{deliveryLabel(t, status)}</Tag>;
 }
 
 /**
@@ -806,7 +825,7 @@ export function Timeline({ events }: { events: readonly TimelineEvent[] }) {
           <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <span className="font-medium text-sm text-title">
-                {event.type.replaceAll("_", " ")}
+                {deliveryLabel(t, event.type)}
               </span>
               <When value={event.occurredAt} className="text-[13px]" />
               {event.terminal && (

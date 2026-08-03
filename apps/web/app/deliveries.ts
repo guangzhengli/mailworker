@@ -7,9 +7,8 @@ import type { MessageKey } from "@web/app/i18n";
  *
  * The ten-status state machine is the right vocabulary for a log and the wrong
  * one for a filter bar: it makes someone learn the machine before they can pick
- * a tab. The wire status stays visible on every row and on the detail page — it
- * is what you grep for — but the choice of what to look at is made in these
- * terms.
+ * a tab. The human-facing label is shown on each row; the raw wire status stays
+ * available in technical details for log and API correlation.
  */
 export type Bucket = "waiting" | "moving" | "problem" | "done";
 
