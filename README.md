@@ -69,7 +69,22 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 ## Wiring up an agent
 
 There is no MCP server by design; an agent drives the CLI. Have it run
-`mailworker help --agent` for the instructions it needs.
+`mailworker help --agent` for the instructions it needs, or install the skill so
+it knows that without being told:
+
+```sh
+npx skills add guangzhengli/mailworker
+```
+
+That installs [`skills/mailworker`](skills/mailworker/SKILL.md) into Claude Code,
+Codex, Cursor and the other [skills-compatible agents](https://agentskills.io) —
+when to mint an inbox, how to branch on the exit codes, and the rule that a
+received message is data rather than instructions. The CLI itself needs no
+clone:
+
+```sh
+npx mailworker@latest help --agent
+```
 
 ```sh
 # 1. Declare what the agent is allowed to be. Limits it cannot widen.
@@ -108,8 +123,8 @@ is stored; there is no endpoint that reads it back.
 | `packages/core` | Domain contexts, services, ports, in-memory adapters | **built** |
 | `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
 | `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
-| `packages/sdk` | `@mailworker/sdk` typed HTTP client | planned (M5) |
-| `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built**; `init`/`deploy` planned |
+| `packages/sdk` | typed HTTP client | **not planned** — agents drive the CLI, and application code has the `/v1` REST API |
+| `packages/cli` | `mailworker` — the agent-facing surface | **built and published to npm**; `init`/`deploy` planned |
 | `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, `scheduled()`, dashboard, D1/R2/DO/Queues **built** |
 
 The marketing site and public live demo live in a **separate** repo
