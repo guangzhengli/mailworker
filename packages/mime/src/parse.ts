@@ -95,7 +95,6 @@ function firstOccurrenceOf(headers: readonly Header[]): Record<string, string> {
 function renderAddress(address: PostalAddress | undefined): string {
   if (address === undefined) return "";
   if (address.address === undefined) {
-    // A group ("undisclosed-recipients:;"). Render its members.
     return address.group.map((member) => renderMailbox(member.name, member.address)).join(", ");
   }
   return renderMailbox(address.name, address.address);
@@ -165,7 +164,6 @@ function parseDate(value: string | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-/** Text derived from an HTML body, or null when there is nothing to derive. */
 function deriveText(html: string | undefined): string | null {
   if (html === undefined || html.trim() === "") return null;
   return emptyToNull(htmlToText(html));

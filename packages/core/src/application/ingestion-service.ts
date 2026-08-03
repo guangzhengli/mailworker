@@ -77,8 +77,6 @@ export function createIngestionService(deps: IngestionDeps) {
         return { outcome: "unroutable", reason: "unparseable_recipient" };
       }
 
-      // 1. Where does this belong? One lookup covers both the exact address and the
-      //    `+tag` form, because matchKey already stripped the tag.
       const existing = await deps.inboxes.findByAddress(ctx, recipient.matchKey);
       const routing = await deps.domains.findRouting(ctx, recipient.domain);
       const resolution = AddressResolutionPolicy.resolve({
@@ -100,7 +98,6 @@ export function createIngestionService(deps: IngestionDeps) {
         return { outcome: "unroutable", reason: resolution.reason };
       }
 
-      // 2. Materialise the inbox, minting one if the domain is in autocreate mode.
       let inbox: Inbox;
       if (resolution.kind === "autocreate") {
         inbox = Inbox.create({
@@ -139,7 +136,6 @@ export function createIngestionService(deps: IngestionDeps) {
         };
       }
 
-      // 3. Parse.
       const parsed = await deps.mimeParser.parse(input.raw);
       const messageUlid = deps.ids.ulid();
       // A message with no Message-ID cannot be deduplicated or threaded by anyone,
@@ -148,7 +144,6 @@ export function createIngestionService(deps: IngestionDeps) {
       const rfcMessageId =
         parsed.rfcMessageId ?? RfcMessageId.parse(`${messageUlid}@${inbox.domain}`);
 
-      // 4. Threading: one query for every candidate ancestor, then a pure decision.
       const candidates = ThreadingPolicy.candidateIds(parsed.inReplyTo, parsed.references);
       const known =
         candidates.length > 0
@@ -161,11 +156,8 @@ export function createIngestionService(deps: IngestionDeps) {
         known,
       });
 
-      // 5. Trust. Inbound content is untrusted input; this records provenance so
-      //    every consumer can see it, and never implies the body is safe to obey.
       const trust = SenderTrust.assess(parsed.auth, { bodyText: parsed.bodyText ?? "" });
 
-      // 6. Archive the original before inserting the row (see the note above).
       const rawKey = BlobKeys.rawMessage(ctx.accountId, messageUlid);
       await deps.blobs.put(ctx, rawKey, input.raw, { contentType: "message/rfc822" });
 
@@ -234,7 +226,6 @@ export function createIngestionService(deps: IngestionDeps) {
         return { outcome: "duplicate", rfcMessageId };
       }
 
-      // 7. Only now is it safe to wake up anyone waiting: the message is durable.
       await deps.waiter.notify(ctx, message);
       await deps.events.publish([
         ...events,

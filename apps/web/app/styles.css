@@ -241,7 +241,6 @@
   --shadow-xl: 0px 4px 40px 0px hsl(0 0% 0% / 0.45), 0px 8px 10px -1px hsl(0 0% 0% / 0.45);
   --shadow-2xl: 0px 4px 40px 0px hsl(0 0% 0% / 1.13);
 
-  /* Additions, dark. */
   --text-title: oklch(0.9602 0.0034 247.8587);
   --text-body: oklch(0.8400 0.0110 247.0000);
   --text-secondary: oklch(0.6806 0.0194 245.5027);
@@ -306,7 +305,6 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Additions — `text-title`, `bg-success-bg`, `border-danger-border`, … */
   --color-title: var(--text-title);
   --color-body: var(--text-body);
   --color-secondary-text: var(--text-secondary);

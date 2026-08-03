@@ -86,7 +86,6 @@ const SettingsGearIcon = forwardRef<SettingsGearIconHandle, SettingsGearIconProp
           width={size}
           xmlns="http://www.w3.org/2000/svg"
         >
-          {/* The hub stays put; only the toothed ring turns. */}
           <motion.g
             animate={controls}
             initial="normal"

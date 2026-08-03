@@ -18,7 +18,6 @@ import { DEFAULT_LOCALE, isLocale, type Locale, negotiate } from "@web/app/i18n"
 const COOKIE_NAME = "mw_locale";
 const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
 
-/** Cookie, then `Accept-Language`, then English. */
 export function localeFromRequest(request: Request): Locale {
   const stored = readCookie(request.headers.get("Cookie"), COOKIE_NAME);
   if (isLocale(stored)) return stored;

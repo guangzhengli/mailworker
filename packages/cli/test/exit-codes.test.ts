@@ -53,7 +53,6 @@ function fakeClient(responses: Partial<Client>): Client {
   } as Client;
 }
 
-/** Runs the program the way `run()` does, minus the process-level plumbing. */
 async function invoke(client: Client, argv: string[]): Promise<number> {
   const program = buildProgram(() => client);
   try {

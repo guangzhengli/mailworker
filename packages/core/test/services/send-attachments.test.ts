@@ -16,7 +16,6 @@ beforeEach(async () => {
   await h.seedInbox(FROM);
 });
 
-/** "hello" — small enough to assert on byte for byte. */
 const HELLO = "aGVsbG8=";
 
 function base64Of(bytes: number): string {

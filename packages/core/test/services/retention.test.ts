@@ -17,7 +17,6 @@ beforeEach(() => {
   sweep = h.services.mailbox.sweepExpired;
 });
 
-/** An inbox with one message in it, so a purge has blobs to collect. */
 async function seedWithMail(address: string, ttlMs: number): Promise<Ulid> {
   const inbox = await h.seedInbox(address, { kind: "ephemeral", ttlMs });
   await h.services.ingestion.ingest(h.ctx, {

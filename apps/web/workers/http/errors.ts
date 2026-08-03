@@ -43,7 +43,6 @@ export function onError(err: Error, c: Context): Response {
   }
 
   if (err instanceof HTTPException) {
-    // Raised by Hono itself — an unparseable body, a payload over the limit.
     const code: ErrorCode = err.status === 413 ? "payload_too_large" : "invalid_argument";
     return failure(c, code, err.message);
   }

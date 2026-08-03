@@ -29,8 +29,6 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 export async function loader({ context, request }: Route.LoaderArgs) {
   const { env, container } = context.get(workerContext);
 
-  // Already signed in: skip the form rather than invite a second, redundant
-  // paste of a credential.
   if ((await callerForRequest(container, env, request, new Date())) !== null) {
     throw redirect(safeNext(request));
   }
@@ -126,8 +124,6 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
                   autoComplete="off"
                   spellCheck={false}
                   className="font-mono"
-                  /* The field is the only thing on the page; not focusing it
-                     makes the first keystroke go nowhere. */
                   autoFocus
                   aria-describedby={actionData?.error === undefined ? undefined : "token-error"}
                 />
@@ -153,8 +149,6 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
 
         <Note className="mt-4 px-1 text-xs">{t("login.cookieNote")}</Note>
 
-        {/* The one page a reader reaches before they have a session, so the one
-            page where being stuck in the wrong language has no way out. */}
         <div className="mt-3 flex justify-center">
           <LocaleSwitchLink />
         </div>

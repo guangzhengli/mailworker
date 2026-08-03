@@ -30,7 +30,6 @@ const OK: LoopVerdict = { looping: false, reason: null, detail: null };
  */
 export const MAX_REFERENCES_DEPTH = 50;
 
-/** Messages we will send to one counterparty within `EXCHANGE_WINDOW_MS`. */
 export const MAX_EXCHANGES_PER_WINDOW = 10;
 export const EXCHANGE_WINDOW_MS = 60 * 60 * 1000;
 

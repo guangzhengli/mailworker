@@ -95,7 +95,6 @@ export class MessageWaiter extends DurableObject<Env> {
     });
   }
 
-  /** Give up on a wait whose answer came from somewhere else. Idempotent. */
   async cancel(waitId: string): Promise<void> {
     const pending = this.#pending.get(waitId);
     if (pending === undefined) return;
@@ -161,7 +160,6 @@ export class MessageWaiter extends DurableObject<Env> {
     }
   }
 
-  /** How many callers are currently blocked here. For diagnostics and tests. */
   async pendingCount(): Promise<number> {
     return this.#pending.size;
   }

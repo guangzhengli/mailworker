@@ -52,8 +52,6 @@ export async function liveEvents(request: Request, env: Env): Promise<Response> 
    * explanation — so the code has to be the explanation.
    */
   if (caller === null) return new Response("Not signed in.", { status: 401 });
-  // `admin` satisfies this too — `Scope.satisfies` is the one place that decides
-  // what implies what, and asking it here keeps that from being restated.
   if (!Caller.has(caller, "message:read")) {
     return new Response("This credential cannot read messages.", { status: 403 });
   }

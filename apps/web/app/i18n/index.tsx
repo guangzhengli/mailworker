@@ -73,7 +73,6 @@ function fill(text: string, vars: Readonly<Record<string, string | number>>): st
   );
 }
 
-/** The string form. For `aria-label`, `title`, `<meta>` and anywhere a ReactNode will not do. */
 export function translate<K extends MessageKey>(
   locale: Locale,
   key: K,

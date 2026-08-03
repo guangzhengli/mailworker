@@ -18,7 +18,6 @@ import { Inbox } from "@core/domain/mailbox/inbox";
 export const DEFAULT_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
 export type RetentionAction =
-  /** Still live. */
   | { readonly action: "keep" }
   /** Past expiry, inside the grace period: readable, refuses new mail. */
   | { readonly action: "read_only"; readonly deleteAfter: Date }

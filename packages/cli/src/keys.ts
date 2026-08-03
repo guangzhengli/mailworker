@@ -81,7 +81,6 @@ export function keysCommand(client: () => Client): Command {
   return keys;
 }
 
-/** `mailworker identities` — the limits a key can be bound to. */
 export function identitiesCommand(client: () => Client): Command {
   const identities = new Command("identities").description("Agent identities and their limits");
 

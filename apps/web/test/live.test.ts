@@ -86,7 +86,6 @@ async function deliver(to: string, subject: string): Promise<void> {
   );
 }
 
-/** Open a live connection the way a browser would, cookie and all. */
 async function connect(
   options: { inbox?: string; cookie?: boolean; origin?: string | null } = {},
 ): Promise<Response> {
@@ -102,7 +101,6 @@ async function connect(
   return await SELF.fetch(url, { headers });
 }
 
-/** The next event a socket delivers, as the browser would parse it. */
 function nextEvent(socket: WebSocket): Promise<LiveEvent> {
   return new Promise((resolve, reject) => {
     socket.addEventListener("message", (event: MessageEvent) => {

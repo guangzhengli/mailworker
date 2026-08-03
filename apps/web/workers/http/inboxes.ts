@@ -39,7 +39,5 @@ export const inboxes = new Hono<HttpEnv>()
 
   .delete("/:id", async (c) => {
     await c.var.services.mailbox.deleteInbox(c.var.caller, Ulid.parse(c.req.param("id")));
-    // No body. There is nothing to say about a thing that is gone, and a client
-    // that wants to know it worked has the status.
     return c.body(null, 204);
   });

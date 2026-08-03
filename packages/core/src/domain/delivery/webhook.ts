@@ -69,7 +69,6 @@ export const WebhookSubscription = {
     };
   },
 
-  /** Does this subscription want this event? */
   wants(subscription: WebhookSubscription, event: DomainEvent): boolean {
     if (!subscription.enabled) return false;
     return subscription.events.length === 0 || subscription.events.includes(event.type);

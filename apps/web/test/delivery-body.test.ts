@@ -154,7 +154,6 @@ describe("GET /deliveries/:id/body", () => {
     const html = await response.text();
     const csp = response.headers.get("Content-Security-Policy") ?? "";
 
-    // Sanitizer.
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("onclick");
     // CSP, which the browser enforces regardless of what the markup says. No

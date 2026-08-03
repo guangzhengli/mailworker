@@ -47,7 +47,6 @@ export class R2Blobs implements BlobStore {
 }
 
 function isOwned(ctx: Caller, key: string): boolean {
-  // `raw/{account}/…`, `att/{account}/…`, `out/{account}/…`
   return key.split("/")[1] === ctx.accountId;
 }
 

@@ -48,10 +48,8 @@ export const deliveryEventType = z.enum([
 export const attachmentInput = z
   .strictObject({
     filename: z.string().min(1).max(255),
-    /** Defaulted rather than required: most callers know the bytes, not the type. */
     type: z.string().min(1).max(255).optional(),
     content: z.base64(),
-    /** Referenced from the HTML body as `cid:<contentId>`. */
     contentId: z.string().min(1).max(255).optional(),
   })
   .transform(
@@ -96,7 +94,6 @@ export const sendBody = z
     text: z.string().optional(),
     html: z.string().optional(),
     replyTo: emailAddress.optional(),
-    /** Continue a thread, addressed by our message ULID rather than a Message-ID. */
     inReplyTo: ulid.optional(),
     headers: z.record(z.string().min(1), z.string()).optional(),
     attachments: z.array(attachmentInput).max(SENDING_LIMITS.MAX_ATTACHMENTS).optional(),
@@ -137,10 +134,8 @@ export const deliveryDto = z.object({
   id: z.string(),
   inboxId: z.string().nullable(),
   identityId: z.string().nullable(),
-  /** The stored sent copy, once it exists. `GET /v1/messages/:id` reads it. */
   messageId: z.string().nullable(),
   idempotencyKey: z.string().nullable(),
-  /** Whatever the caller attached at send time. `{}` when they attached nothing. */
   metadata: z.record(z.string(), z.string()),
   status: deliveryStatus,
   attempts: z.number().int().nonnegative(),
@@ -283,7 +278,6 @@ export const sendBatchItem = z.discriminatedUnion("outcome", [
 
 export const sendBatchResponse = z.object({
   items: z.array(sendBatchItem),
-  /** So a caller can branch without scanning the array. */
   accepted: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
 });
@@ -326,7 +320,6 @@ export const checkDto = z.object({
   name: z.string(),
   status: checkStatus,
   detail: z.string(),
-  /** The next action, when there is one. */
   fix: z.string().optional(),
 });
 
@@ -338,7 +331,6 @@ export const domainDiagnosisDto = z.object({
 
 export const diagnosticsDto = z.object({
   domains: z.array(domainDiagnosisDto),
-  /** Cross-cutting facts a per-domain check cannot express. */
   deployment: z.object({
     sendingConfigured: z.boolean(),
     dispatchQueueConfigured: z.boolean(),

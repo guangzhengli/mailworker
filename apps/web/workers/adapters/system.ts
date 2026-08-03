@@ -39,7 +39,6 @@ export class UlidGenerator implements IdGenerator {
   }
 }
 
-/** Bearer secrets over WebCrypto: `crypto.getRandomValues` plus SHA-256. */
 export class WebCryptoSecrets implements Secrets {
   generate(byteLength = 24): string {
     const bytes = crypto.getRandomValues(new Uint8Array(byteLength));

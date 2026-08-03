@@ -39,14 +39,12 @@ export const RfcMessageId = {
     if (value.startsWith("<")) value = value.slice(1);
     if (value.endsWith(">")) value = value.slice(0, -1);
     value = value.trim();
-    // Must look like id-left@id-right and contain no whitespace.
     if (value.length === 0 || value.length > MAX_LENGTH) return null;
     if (/\s/.test(value)) return null;
     if (!value.includes("@")) return null;
     return value as RfcMessageId;
   },
 
-  /** Wire form, for writing headers. */
   toHeader(id: RfcMessageId): string {
     return `<${id}>`;
   },
@@ -69,7 +67,6 @@ export const RfcMessageId = {
 } as const;
 
 export const ThreadId = {
-  /** Every thread is named after its root message. */
   fromRoot(rootId: RfcMessageId): ThreadId {
     return rootId as string as ThreadId;
   },

@@ -334,7 +334,6 @@ function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {
   };
 }
 
-/** The fields a summary and a full message share. */
 function summaryFields(
   row: MessageRow,
 ): Omit<MessageSummary, "attachmentCount" | "hasText" | "hasHtml" | "preview"> {

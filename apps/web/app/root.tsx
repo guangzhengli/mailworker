@@ -101,8 +101,6 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const routed = isRouteErrorResponse(error);
   const code = routed && isErrorCode(error.statusText) ? error.statusText : null;
 
-  // The status line keeps its technical shape — "404 inbox not found" — because
-  // that is what gets pasted into an issue. The translated sentence is below it.
   const title = routed
     ? `${error.status} ${error.statusText.replaceAll("_", " ")}`
     : t("boundary.title");

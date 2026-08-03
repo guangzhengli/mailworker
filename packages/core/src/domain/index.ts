@@ -12,7 +12,6 @@
  * quietly becoming a fifth context.
  */
 
-// Shared vocabulary. Depends on no context; every context may depend on it.
 export * from "@core/domain/blob-keys";
 export * from "@core/domain/delivery";
 export * from "@core/domain/email-address";
@@ -24,6 +23,5 @@ export * from "@core/domain/identity";
 export * from "@core/domain/ingestion";
 export * from "@core/domain/mailbox";
 export * from "@core/domain/pagination";
-// What the domain needs from the outside world, in its own words.
 export * from "@core/domain/ports";
 export * from "@core/domain/ulid";

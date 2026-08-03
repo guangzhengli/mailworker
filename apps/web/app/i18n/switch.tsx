@@ -34,8 +34,6 @@ export function useLocaleSwitch(): {
   const { locale } = useT();
   const location = useLocation();
 
-  // Two locales, so "next" is the other one. A third would make this a list, and
-  // a chain of toggles is not a way to choose between three things.
   const next = (LOCALES.find((candidate) => candidate !== locale) ?? locale) as Locale;
   const returnTo = `${location.pathname}${location.search}`;
 

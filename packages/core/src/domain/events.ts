@@ -58,7 +58,6 @@ export type DomainEvent =
       readonly injectionRisk: boolean;
     })
   | (EventBase & {
-      /** Stored a duplicate we already had. Useful when debugging retries. */
       readonly type: "message.duplicate";
       readonly rfcMessageId: string;
       readonly inboxId: Ulid;
@@ -111,7 +110,6 @@ export type DomainEvent =
 
 export type DomainEventType = DomainEvent["type"];
 
-/** Narrow a heterogeneous event list, e.g. in tests or a webhook filter. */
 export function eventsOfType<T extends DomainEventType>(
   events: readonly DomainEvent[],
   type: T,

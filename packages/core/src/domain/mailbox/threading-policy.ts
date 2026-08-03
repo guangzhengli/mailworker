@@ -13,7 +13,6 @@ import { ThreadId } from "@core/domain/mailbox/message-id";
  * exactly one implementation deciding it.
  */
 export interface ThreadResolutionInput {
-  /** The Message-ID of the message being stored. */
   readonly ownMessageId: RfcMessageId;
   readonly inReplyTo: RfcMessageId | null;
   /** The `References` chain, oldest first, as RFC 5322 specifies. */
@@ -44,7 +43,6 @@ export const ThreadingPolicy = {
     for (let i = references.length - 1; i >= 0; i--) {
       ordered.push(references[i]!);
     }
-    // Preserve priority order while removing duplicates.
     return [...new Set(ordered)];
   },
 
@@ -63,7 +61,6 @@ export const ThreadingPolicy = {
       }
     }
 
-    // No known ancestor: this message roots its own thread.
     return { threadId: ThreadId.fromRoot(input.ownMessageId), via: "new_thread" };
   },
 } as const;

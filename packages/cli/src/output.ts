@@ -51,7 +51,6 @@ export function messageTable(messages: readonly MessageSummaryDto[]): string {
     .join("");
 }
 
-/** One message as one line, for `tail`. Same columns as `ls`, no header. */
 export function messageLine(message: MessageDto | MessageSummaryDto): string {
   const flag = message.provenance.trusted ? " " : "?";
   return `${flag} ${message.id}  ${pad(message.from ?? message.fromHeader, 28)}  ${message.subject}\n`;

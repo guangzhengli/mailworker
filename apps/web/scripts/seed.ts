@@ -32,9 +32,7 @@ function adminKeyFromDevVars(): string {
       readFileSync(new URL("../.dev.vars", import.meta.url), "utf8"),
     );
     if (match) return match[1]!.trim();
-  } catch {
-    // Falls through to the error below, which says what to do about it.
-  }
+  } catch {}
   throw new Error(
     "No token. Set MAILWORKER_TOKEN, or put MAILWORKER_ADMIN_KEY in apps/web/.dev.vars.",
   );
@@ -68,10 +66,6 @@ async function api(
   return response;
 }
 
-// ---------------------------------------------------------------------------
-// A message, as bytes
-// ---------------------------------------------------------------------------
-
 interface Fixture {
   readonly id: string;
   readonly from: string;
@@ -80,9 +74,7 @@ interface Fixture {
   readonly subject: string;
   readonly text: string;
   readonly html?: string;
-  /** Days before now. Spread out so the list has a believable shape. */
   readonly daysAgo: number;
-  /** Omit to leave the sender unauthenticated, which is its own thing to look at. */
   readonly authenticated?: boolean;
 }
 
@@ -153,10 +145,6 @@ function encodeSubject(value: string): string {
   if (/^[\x00-\x7F]*$/.test(value)) return value;
   return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
 }
-
-// ---------------------------------------------------------------------------
-// The look of real mail
-// ---------------------------------------------------------------------------
 
 /**
  * A 600px centred card on a grey page, built out of tables with presentational
@@ -325,8 +313,6 @@ ${button("Verify now", "https://acme-verify.example/login", "#b3261e")}`,
     text: "Thanks for the walkthrough yesterday.\n\nTwo things we still need before Friday:\n\n  1. The SSO metadata XML\n  2. A sandbox key for the staging environment\n\nNo rush on the second one.\n\n— Dana",
   },
 ];
-
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   console.log(`Seeding ${URL_BASE} (domain ${DOMAIN})\n`);
