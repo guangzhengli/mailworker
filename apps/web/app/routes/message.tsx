@@ -102,7 +102,7 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
           <Provenance trusted={message.trusted} injectionRisk={message.injectionRisk} />
         </KeyFact>
         {inboxAddress !== null && (
-          <KeyFact label={t("field.receivedAt")} className="sm:col-span-2">
+          <KeyFact label={t("field.receivingAddress")} className="sm:col-span-2">
             <Link
               to={`/inbox?inbox=${message.inboxId}`}
               className="font-mono text-[13px] text-secondary-text hover:text-primary hover:underline"

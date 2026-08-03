@@ -191,7 +191,7 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
               <TableRow>
                 <TableHead>{t("field.subject")}</TableHead>
                 <TableHead className="w-40">{t("field.result")}</TableHead>
-                <TableHead className="w-44">{t("field.sentBy")}</TableHead>
+                <TableHead className="w-44">{t("field.agent")}</TableHead>
                 <TableHead className="w-32 text-right">{t("field.created")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -216,12 +216,12 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
                     <StatusTag status={row.status} />
                   </TableCell>
                   <TableCell className="max-w-0 truncate">
-                    {row.agent === null ? (
-                      <span className="text-[13px] text-hint">
-                        {row.source === "console" ? t("sent.byConsole") : t("sent.byAgent")}
-                      </span>
-                    ) : (
+                    {row.agent !== null ? (
                       <Mono className="text-secondary-text">{row.agent}</Mono>
+                    ) : row.source === "console" ? (
+                      <Mono className="text-secondary-text">console</Mono>
+                    ) : (
+                      <span className="text-[13px] text-hint">{t("sent.byAgent")}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">

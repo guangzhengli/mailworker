@@ -230,14 +230,17 @@ function NewInbox({
               <Select
                 name="kind"
                 defaultValue="ephemeral"
-                items={{ ephemeral: "ephemeral", persistent: "persistent" }}
+                items={{
+                  ephemeral: t("inboxes.kindEphemeral"),
+                  persistent: t("inboxes.kindPersistent"),
+                }}
               >
                 <SelectTrigger id="kind" className="w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ephemeral">ephemeral</SelectItem>
-                  <SelectItem value="persistent">persistent</SelectItem>
+                  <SelectItem value="ephemeral">{t("inboxes.kindEphemeral")}</SelectItem>
+                  <SelectItem value="persistent">{t("inboxes.kindPersistent")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -112,7 +112,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <PageHeader title={t("overview.title")} />
+      <PageHeader title={t("overview.title")} description={t("overview.description")} />
 
       {loaderData.hasChecks && loaderData.failing > 0 && (
         <Callout

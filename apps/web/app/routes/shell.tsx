@@ -201,9 +201,17 @@ function EnvironmentSwitcher({ loaderData }: { loaderData: LoaderData }) {
 }
 
 function ModeTag({ mode }: { mode: string }) {
+  const { t } = useT();
+  const label =
+    mode === "live"
+      ? t("env.modeLive")
+      : mode === "sandbox"
+        ? t("env.modeSandbox")
+        : t("env.modeTest");
+
   return (
     <Tag tone={mode === "live" ? "success" : mode === "sandbox" ? "info" : "warning"}>
-      {mode}
+      {label}
     </Tag>
   );
 }

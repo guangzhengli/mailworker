@@ -187,7 +187,7 @@ export default function Inbox({ loaderData }: Route.ComponentProps) {
               <TableRow>
                 <TableHead>{t("field.subject")}</TableHead>
                 <TableHead className="w-56">{t("field.from")}</TableHead>
-                <TableHead className="w-56">{t("field.receivedAt")}</TableHead>
+                <TableHead className="w-56">{t("field.receivingAddress")}</TableHead>
                 <TableHead className="w-32 text-right">{t("field.received")}</TableHead>
               </TableRow>
             </TableHeader>

@@ -88,7 +88,7 @@ export async function action({ context, request, params }: Route.ActionArgs) {
 
 export default function DeliveryPage({ loaderData, params }: Route.ComponentProps) {
   const { delivery, events, agent, mayApprove, preview } = loaderData;
-  const { t, rich } = useT();
+  const { t } = useT();
   const nextStep = nextStepFor(delivery.status);
 
   return (
@@ -127,13 +127,13 @@ export default function DeliveryPage({ loaderData, params }: Route.ComponentProp
             <Mono>{delivery.recipients.join(", ")}</Mono>
           </span>
         </KeyFact>
-        <KeyFact label={t("field.sentBy")}>
-          {agent === null ? (
-            <span className="text-secondary-text">
-              {delivery.source === "console" ? t("sent.byConsole") : t("sent.byAgent")}
-            </span>
-          ) : (
+        <KeyFact label={t("field.agent")}>
+          {agent !== null ? (
             <Mono>{agent}</Mono>
+          ) : delivery.source === "console" ? (
+            <Mono>console</Mono>
+          ) : (
+            <span className="text-secondary-text">{t("sent.byAgent")}</span>
           )}
         </KeyFact>
         <KeyFact label={t("field.created")}>
@@ -174,7 +174,7 @@ export default function DeliveryPage({ loaderData, params }: Route.ComponentProp
       <SectionTitle>{t("delivery.timeline")}</SectionTitle>
       <ListCard>
         {events.length === 0 ? (
-          <Empty>{rich("delivery.noEvents", { queue: <Mono>mailworker-events</Mono> })}</Empty>
+          <Empty>{t("delivery.noEvents")}</Empty>
         ) : (
           <Timeline
             events={events.map((event) => ({

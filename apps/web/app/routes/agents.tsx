@@ -151,7 +151,7 @@ function MintedKeyDialog({ token, onClose }: { token: string; onClose: () => voi
 export default function Agents({ loaderData, actionData }: Route.ComponentProps) {
   const busy = useNavigation().state !== "idle";
   const plus = useRef<AnimatedIconHandle>(null);
-  const { t } = useT();
+  const { t, rich } = useT();
   const [dismissed, setDismissed] = useState<string | null>(null);
   const created = actionData?.created ?? null;
   const minted = actionData?.minted ?? null;
@@ -233,7 +233,7 @@ export default function Agents({ loaderData, actionData }: Route.ComponentProps)
               <CardContent className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-title">{agent.name}</span>
-                  {agent.managed && <Tag tone="info">managed</Tag>}
+                  {agent.managed && <Tag tone="info">{t("agents.managedTag")}</Tag>}
                   {agent.requireApproval && (
                     <Tag tone="warning">{t("agents.approvalRequired")}</Tag>
                   )}
@@ -256,7 +256,11 @@ export default function Agents({ loaderData, actionData }: Route.ComponentProps)
                   </span>
                 </div>
 
-                {agent.managed && <Note className="mt-0">{t("agents.managed")}</Note>}
+                {agent.managed && (
+                  <Note className="mt-0">
+                    {rich("agents.managed", { identity: <Mono>console</Mono> })}
+                  </Note>
+                )}
 
                 <div className="flex flex-col gap-2 border-t border-border pt-3">
                   {agent.keys.length === 0 ? (

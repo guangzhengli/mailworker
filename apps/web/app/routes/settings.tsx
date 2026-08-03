@@ -202,10 +202,11 @@ function LanguageChoice() {
 const MODES: ReadonlyArray<{
   value: AccountMode;
   label: Extract<MessageKey, `settings.mode${string}`>;
+  short: Extract<MessageKey, `settings.mode${string}Short`>;
 }> = [
-  { value: "live", label: "settings.modeLive" },
-  { value: "sandbox", label: "settings.modeSandbox" },
-  { value: "test", label: "settings.modeTest" },
+  { value: "live", label: "settings.modeLive", short: "settings.modeLiveShort" },
+  { value: "sandbox", label: "settings.modeSandbox", short: "settings.modeSandboxShort" },
+  { value: "test", label: "settings.modeTest", short: "settings.modeTestShort" },
 ];
 
 export default function Settings({ loaderData, actionData }: Route.ComponentProps) {
@@ -244,7 +245,10 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
                         : "warning"
                   }
                 >
-                  {environment.mode}
+                  {t(
+                    MODES.find((mode) => mode.value === environment.mode)?.short ??
+                      "settings.modeLiveShort",
+                  )}
                 </Tag>
               </Row>
             ))}
@@ -262,7 +266,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
                   <Select
                     name="mode"
                     defaultValue="sandbox"
-                    items={{ live: "live", sandbox: "sandbox", test: "test" }}
+                    items={Object.fromEntries(MODES.map((mode) => [mode.value, t(mode.short)]))}
                   >
                     <SelectTrigger id="mode" className="w-36">
                       <SelectValue />
@@ -270,7 +274,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
                     <SelectContent>
                       {MODES.map((mode) => (
                         <SelectItem key={mode.value} value={mode.value}>
-                          {mode.value}
+                          {t(mode.short)}
                         </SelectItem>
                       ))}
                     </SelectContent>
