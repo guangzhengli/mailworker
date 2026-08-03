@@ -1,6 +1,7 @@
 import { AGENT_HELP } from "@cli/agent-help";
 import { ApiError, type Client, createClient } from "@cli/client";
 import { ConfigError, resolveConfig } from "@cli/config";
+import { envCommand } from "@cli/environments";
 import { UsageError } from "@cli/errors";
 import { inboxCommand } from "@cli/inbox";
 import { identitiesCommand, keysCommand, webhooksCommand } from "@cli/keys";
@@ -24,6 +25,10 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
     .description("Programmatic inboxes that send and receive real email")
     .option("--url <url>", "the deployment to talk to (or MAILWORKER_URL)")
     .option("--token <token>", "API key (or MAILWORKER_TOKEN, which is safer)")
+    // Rarely needed: a key already belongs to one environment and its
+    // `mw_live_` / `mw_test_` prefix says which. This is for an admin
+    // credential driving a sibling environment (DESIGN ADR-9).
+    .option("--env <name>", "target another environment of this project (or MAILWORKER_ENV)")
     .enablePositionalOptions()
     .showHelpAfterError();
 
@@ -43,6 +48,7 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
   program.addCommand(statusCommand(client));
   program.addCommand(approveCommand(client));
   program.addCommand(doctorCommand(client));
+  program.addCommand(envCommand(client));
   program.addCommand(keysCommand(client));
   program.addCommand(identitiesCommand(client));
   program.addCommand(webhooksCommand(client));
@@ -61,6 +67,7 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
 export interface GlobalOptions {
   url?: string;
   token?: string;
+  env?: string;
 }
 
 /**
@@ -72,7 +79,14 @@ export interface GlobalOptions {
  * does the shell see" cannot disagree.
  */
 export async function run(argv: readonly string[]): Promise<number> {
-  const program = buildProgram((options) => createClient(resolveConfig(options)));
+  const program = buildProgram((options) =>
+    createClient(
+      resolveConfig({
+        ...options,
+        ...(options.env === undefined ? {} : { environment: options.env }),
+      }),
+    ),
+  );
 
   try {
     await program.parseAsync(argv, { from: "user" });

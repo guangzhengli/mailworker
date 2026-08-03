@@ -28,10 +28,20 @@ EXIT CODES  (branch on these, do not parse messages)
   5  rejected by policy — quota, allowlist, loop breaker or suppression
   6  quota or rate limit
 
+ENVIRONMENT
+  Your key belongs to exactly one environment and cannot reach another.
+  mw_live_… is production and reaches real people; mw_test_… is a development
+  or test environment. In a sandbox environment nothing you send leaves the
+  deployment — the send is recorded, every gate runs, and the message is
+  delivered back into a local inbox, so \`wait\` still finds it.
+
+  mailworker env ls
+
 RECEIVING
   mailworker inbox create [--prefix p] [--ttl 10m] [--persistent] [--domain d]
       Mints an address. Prints "<id>  <address>  <expiry>", or the DTO with --json.
       Cheap: one database insert, no Cloudflare API call. Make one per test.
+      --prefix p gives p-<random>@d; --name p gives p@d and fails if it is taken.
   mailworker inbox ls [--include-expired]
   mailworker inbox rm <id>
 

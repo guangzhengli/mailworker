@@ -37,7 +37,6 @@ export interface Client {
 
 export type Query = Record<string, string | number | boolean | undefined>;
 
-/** Everything we ever send: JSON we serialized, or raw MIME bytes. */
 type Body = string | Uint8Array;
 
 export function createClient(config: Config): Client {
@@ -59,6 +58,9 @@ export function createClient(config: Config): Client {
         method,
         headers: {
           Authorization: `Bearer ${config.token}`,
+          ...(config.environment === null
+            ? {}
+            : { "X-Mailworker-Environment": config.environment }),
           ...(contentType === undefined ? {} : { "Content-Type": contentType }),
         },
         ...(body === undefined ? {} : { body }),

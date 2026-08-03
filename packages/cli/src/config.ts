@@ -17,11 +17,18 @@ import { join } from "node:path";
 export interface Config {
   readonly url: string;
   readonly token: string;
+  /**
+   * Target a sibling environment. Usually unnecessary: a key already belongs to
+   * exactly one environment, and its `mw_live_` / `mw_test_` prefix says which.
+   * This is for an admin credential driving another one (DESIGN ADR-9).
+   */
+  readonly environment: string | null;
 }
 
 export interface ConfigOverrides {
   readonly url?: string;
   readonly token?: string;
+  readonly environment?: string;
 }
 
 const PROJECT_FILE = join(process.cwd(), ".mailworker", "config.json");
@@ -34,6 +41,8 @@ export function resolveConfig(overrides: ConfigOverrides = {}, env = process.env
 
   const url = overrides.url ?? env["MAILWORKER_URL"] ?? file.url;
   const token = overrides.token ?? env["MAILWORKER_TOKEN"] ?? file.token;
+  const environment =
+    overrides.environment ?? env["MAILWORKER_ENV"] ?? file.environment ?? null;
 
   if (url === undefined || url.length === 0) {
     throw new ConfigError(
@@ -46,7 +55,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}, env = process.env
     );
   }
 
-  return { url: url.replace(/\/+$/, ""), token };
+  return { url: url.replace(/\/+$/, ""), token, environment };
 }
 
 /**
