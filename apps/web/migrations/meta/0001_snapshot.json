@@ -299,8 +299,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "outbound_id": {
-          "name": "outbound_id",
+        "delivery_id": {
+          "name": "delivery_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -365,9 +365,9 @@
         }
       },
       "indexes": {
-        "idx_events_outbound": {
-          "name": "idx_events_outbound",
-          "columns": ["account_id", "outbound_id", "occurred_at"],
+        "idx_events_delivery": {
+          "name": "idx_events_delivery",
+          "columns": ["account_id", "delivery_id", "occurred_at"],
           "isUnique": false
         }
       },
@@ -422,6 +422,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'unverified'"
+        },
+        "dkim_selector": {
+          "name": "dkim_selector",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "catchall_mode": {
           "name": "catchall_mode",

@@ -130,7 +130,11 @@
   ],
 
   "vars": {
-    "MAILWORKER_ACCOUNT_ID": "default"
+    // The environment a request lands in when nothing names another, and the
+    // project whose environments an admin credential may switch between. An
+    // environment IS an account (DESIGN ADR-9), so this is the production one.
+    "MAILWORKER_ACCOUNT_ID": "default",
+    "MAILWORKER_PROJECT_ID": "default"
   }
 
   // Secrets, set by `mailworker deploy` rather than declared here:

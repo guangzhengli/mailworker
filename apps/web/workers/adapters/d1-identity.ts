@@ -1,4 +1,5 @@
 import type {
+  AccountId,
   AgentIdentity,
   ApiKey,
   ApiKeyRepository,
@@ -52,6 +53,7 @@ export class D1Identities implements IdentityRepository {
         identity.recipientAllowlist === null ? null : [...identity.recipientAllowlist],
       dailySendQuota: identity.dailySendQuota,
       requireApproval: identity.requireApproval,
+      managed: identity.managed,
       createdAt: toIsoText(identity.createdAt),
     });
   }
@@ -132,6 +134,30 @@ export class D1Domains implements DomainRepository {
       .orderBy(asc(domains.name));
     return rows.map(toRouting);
   }
+
+  async insert(ctx: Caller, routing: DomainRouting): Promise<void> {
+    await this.db.insert(domains).values({
+      id: crypto.randomUUID(),
+      accountId: ctx.accountId,
+      name: routing.domain.toLowerCase(),
+      inboundEnabled: true,
+      sendingStatus: routing.sendingStatus,
+      dkimSelector: routing.dkimSelector,
+      catchallMode: routing.catchAllMode,
+      catchallInbox: routing.catchAllInboxId,
+      autocreatePattern: routing.autocreatePattern,
+      createdAt: toIsoText(new Date()),
+    });
+  }
+
+  async resolveAccount(domain: string): Promise<AccountId | null> {
+    const [row] = await this.db
+      .select({ accountId: domains.accountId })
+      .from(domains)
+      .where(eq(domains.name, domain.toLowerCase()))
+      .limit(1);
+    return row === undefined ? null : (row.accountId as AccountId);
+  }
 }
 
 function toIdentity(row: AgentIdentityRow): AgentIdentity {
@@ -145,6 +171,7 @@ function toIdentity(row: AgentIdentityRow): AgentIdentity {
     recipientAllowlist: row.recipientAllowlist,
     dailySendQuota: row.dailySendQuota,
     requireApproval: row.requireApproval,
+    managed: row.managed,
     createdAt: toDate(row.createdAt),
   };
 }

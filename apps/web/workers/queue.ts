@@ -1,7 +1,14 @@
-import type { DeliveryEventType, DomainEvent, ProviderDeliveryEvent } from "@mailworker/core";
-import { Caller, EmailAddress } from "@mailworker/core";
+import type {
+  AccountId,
+  DeliveryEventType,
+  DomainEvent,
+  ProviderDeliveryEvent,
+} from "@mailworker/core";
+import { EmailAddress } from "@mailworker/core";
 import type { QueuedEvent } from "@web/workers/adapters";
+import { toQueuedDispatch } from "@web/workers/adapters";
 import { createContainer } from "@web/workers/container";
+import { systemCaller } from "@web/workers/environment";
 
 /**
  * The three queues, one consumer.
@@ -24,22 +31,39 @@ import { createContainer } from "@web/workers/container";
  * the queue name is the discriminator, and each branch is three lines.
  */
 export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
-  const { services, accountId } = createContainer(env);
-  const ctx = Caller.system(accountId, "system:queue");
+  const container = createContainer(env);
+  const { services } = container;
 
   for (const message of batch.messages) {
     try {
       if (batch.queue.endsWith("webhooks")) {
         const queued = message.body as QueuedEvent;
+        const ctx = await systemCaller(container, container.defaultAccountId, "system:queue");
         await services.delivery.fanOut(ctx, reviveEvent(queued.event), queued.id);
       } else if (batch.queue.endsWith("events")) {
         const event = toProviderEvent(message.body);
         // An unrecognised payload is acked, not retried. Cloudflare may add
         // event types, and a message we will never understand would otherwise
         // cycle through every retry and land in the DLQ on every deploy.
-        if (event !== null) await services.delivery.recordEvent(ctx, event);
+        if (event !== null) {
+          // The provider event names no environment, so the delivery it refers
+          // to is what decides which one it belongs to. An unmatched event is
+          // still recorded — under the default environment, where a human
+          // looking for it will think to check.
+          const accountId =
+            (await container.deliveries.resolveAccount(event.providerMessageId)) ??
+            container.defaultAccountId;
+          const ctx = await systemCaller(container, accountId, "system:queue");
+          await services.delivery.recordEvent(ctx, event);
+        }
       } else {
-        await services.delivery.dispatch(ctx, { deliveryId: String(message.body) });
+        const queued = toQueuedDispatch(message.body, container.defaultAccountId);
+        const ctx = await systemCaller(
+          container,
+          queued.accountId as AccountId,
+          "system:queue",
+        );
+        await services.delivery.dispatch(ctx, { deliveryId: queued.deliveryId });
       }
       message.ack();
     } catch (error) {

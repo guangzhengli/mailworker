@@ -1,9 +1,11 @@
 import {
+  createEnvironmentBody,
   createIdentityBody,
   createKeyBody,
   createWebhookBody,
   toAgentIdentityDto,
   toApiKeyDto,
+  toEnvironmentDto,
   toWebhookDto,
 } from "@mailworker/contract";
 import type { DomainEventType } from "@mailworker/core";
@@ -11,6 +13,30 @@ import { Ulid } from "@mailworker/core";
 import type { HttpEnv } from "@web/workers/http/env";
 import { compact, invalid } from "@web/workers/http/errors";
 import { Hono } from "hono";
+
+/**
+ * `/v1/environments` — the dev, test and production tenants of this project.
+ *
+ * `admin`-only, like every other control-plane route. An agent key is pinned to
+ * the environment it was minted in and could not act on another one anyway.
+ */
+export const environments = new Hono<HttpEnv>()
+
+  .post("/", async (c) => {
+    const parsed = createEnvironmentBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return invalid(c, parsed.error);
+
+    const account = await c.var.services.identity.createEnvironment(
+      c.var.caller,
+      compact(parsed.data),
+    );
+    return c.json(toEnvironmentDto(account), 201);
+  })
+
+  .get("/", async (c) => {
+    const all = await c.var.services.identity.listEnvironments(c.var.caller);
+    return c.json({ items: all.map(toEnvironmentDto) });
+  });
 
 /**
  * `/v1/identities` — who an agent is allowed to be.

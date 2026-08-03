@@ -1,6 +1,13 @@
 import { env } from "cloudflare:test";
 import type { Caller, Ulid } from "@mailworker/core";
-import { AccountId, EmailAddress, Message, RfcMessageId, ThreadId } from "@mailworker/core";
+import {
+  AccountId,
+  EmailAddress,
+  Message,
+  ProjectId,
+  RfcMessageId,
+  ThreadId,
+} from "@mailworker/core";
 import { createDb, D1Messages, schema } from "@web/workers/adapters";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +25,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 const ctx: Caller = {
   accountId: AccountId.parse("alice"),
+  projectId: ProjectId.DEFAULT,
+  mode: "live",
   identityId: null,
   scopes: ["admin"],
   subject: "test",

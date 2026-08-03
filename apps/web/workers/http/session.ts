@@ -1,4 +1,4 @@
-import type { Caller } from "@mailworker/core";
+import type { AccountId, Caller } from "@mailworker/core";
 import type { Container } from "@web/workers/container";
 import { callerForToken } from "@web/workers/http/auth";
 
@@ -25,10 +25,15 @@ import { callerForToken } from "@web/workers/http/auth";
  */
 
 const COOKIE_NAME = "mw_session";
+/**
+ * Which environment the dashboard is pointed at. Not sealed, because it holds no
+ * secret and forging it buys nothing: switching environments requires `admin`
+ * and a shared project, and `callerForToken` is what checks both.
+ */
+const ENV_COOKIE_NAME = "mw_env";
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 
 interface SealedSession {
-  /** The API key token, in the form `authenticate` would have received. */
   readonly token: string;
   /** Epoch milliseconds. Checked server-side; `Max-Age` only tidies up. */
   readonly exp: number;
@@ -54,12 +59,10 @@ async function sessionKey(env: Env): Promise<CryptoKey | null> {
   ]);
 }
 
-/** Whether this deployment can issue dashboard sessions at all. */
 export async function sessionsAvailable(env: Env): Promise<boolean> {
   return (await sessionKey(env)) !== null;
 }
 
-/** Seal a token into a cookie value, or return null if no secret is configured. */
 export async function seal(
   env: Env,
   token: string,
@@ -126,17 +129,44 @@ export async function callerForRequest(
   request: Request,
   now: Date,
 ): Promise<Caller | null> {
-  const value = readCookie(request.headers.get("Cookie"), COOKIE_NAME);
+  const cookies = request.headers.get("Cookie");
+  const value = readCookie(cookies, COOKIE_NAME);
   if (value === null) return null;
 
   const token = await open(env, value, now);
   if (token === null) return null;
 
+  const target = readCookie(cookies, ENV_COOKIE_NAME);
+
   try {
-    return await callerForToken(container, env, token, now);
+    return await callerForToken(
+      container,
+      env,
+      token,
+      now,
+      target === null ? undefined : (target as AccountId),
+    );
   } catch {
-    return null;
+    // A stale environment cookie — the environment was deleted, or this key is
+    // no longer admin — must not lock the dashboard out. Fall back to the
+    // credential's own environment.
+    if (target === null) return null;
+    try {
+      return await callerForToken(container, env, token, now);
+    } catch {
+      return null;
+    }
   }
+}
+
+export function setEnvironmentCookie(accountId: AccountId, url: URL): string {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `${ENV_COOKIE_NAME}=${accountId}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${Math.floor(DEFAULT_TTL_MS / 1000)}`;
+}
+
+export function clearEnvironmentCookie(url: URL): string {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `${ENV_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`;
 }
 
 /**

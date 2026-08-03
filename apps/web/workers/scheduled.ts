@@ -1,5 +1,6 @@
-import { Caller, DEFAULT_SWEEP_LIMIT } from "@mailworker/core";
+import { DEFAULT_SWEEP_LIMIT } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
+import { everyEnvironment, systemCaller } from "@web/workers/environment";
 
 /**
  * Cron. Currently one job: erase inboxes whose grace period has run out.
@@ -18,31 +19,39 @@ export async function scheduled(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<void> {
-  const { services, accountId } = createContainer(env);
-  // A distinct subject from `system:email` and `system:queue`: when a message is
-  // gone, the audit trail has to be able to say which of the three erased it.
-  const caller = Caller.system(accountId, "system:cron");
+  const container = createContainer(env);
 
-  // `waitUntil` rather than `await`: a sweep that outruns the invocation should
-  // be allowed to finish the inbox it is on, and the platform reports a rejected
-  // promise here as a failed cron rather than swallowing it.
-  ctx.waitUntil(
-    services.mailbox.sweepExpired(caller).then((result) => {
-      // One line per run, always — including the zero case. A sweep that has
-      // stopped running and a sweep with nothing to do produce identical
-      // storage graphs, and this is the only thing that tells them apart.
-      console.log(
-        JSON.stringify({
-          event: "retention.sweep",
-          cron: event.cron,
-          ...result,
-          // A full page means the sweep hit its cap and there is more waiting.
-          // The next cron picks it up rather than this run looping: draining an
-          // unbounded backlog in one invocation is how you hit the CPU limit and
-          // commit nothing.
-          backlogRemaining: result.examined >= DEFAULT_SWEEP_LIMIT,
-        }),
-      );
-    }),
-  );
+  // Every environment, not just the default one: a development environment
+  // accumulates ephemeral inboxes faster than production does, and a sweep that
+  // silently skipped it would grow the bill in the place nobody looks at.
+  ctx.waitUntil(sweepAll(container, event.cron));
+}
+
+async function sweepAll(
+  container: ReturnType<typeof createContainer>,
+  cron: string,
+): Promise<void> {
+  for (const accountId of await everyEnvironment(container)) {
+    // A distinct subject from `system:email` and `system:queue`: when a message
+    // is gone, the audit trail has to say which of the three erased it.
+    const caller = await systemCaller(container, accountId, "system:cron");
+    const result = await container.services.mailbox.sweepExpired(caller);
+
+    // One line per environment per run, always — including the zero case. A
+    // sweep that has stopped running and a sweep with nothing to do produce
+    // identical storage graphs, and this is the only thing that tells them apart.
+    console.log(
+      JSON.stringify({
+        event: "retention.sweep",
+        cron,
+        accountId,
+        ...result,
+        // A full page means the sweep hit its cap and there is more waiting. The
+        // next cron picks it up rather than this run looping: draining an
+        // unbounded backlog in one invocation is how you hit the CPU limit and
+        // commit nothing.
+        backlogRemaining: result.examined >= DEFAULT_SWEEP_LIMIT,
+      }),
+    );
+  }
 }

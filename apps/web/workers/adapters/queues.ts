@@ -1,23 +1,47 @@
 import type { Caller, DispatchQueue, DomainEvent, EventBus, Ulid } from "@mailworker/core";
 
 /**
- * The dispatch queue over Cloudflare Queues.
+ * What rides on the dispatch queue: which environment, and which delivery.
  *
- * The id only, not the payload. The payload is already in R2 and the decision
+ * The id only, never the payload. The payload is already in R2 and the decision
  * is already a row, so putting them on the queue too would mean a retry could
  * send something other than what was approved — and would put recipient
  * addresses and message bodies in a second place with its own retention.
  *
+ * The account id is on the message because the consumer has no other way to know
+ * it: a delivery id is only unique within its environment, and looking one up
+ * under the wrong `Caller` finds nothing.
+ */
+export interface QueuedDispatch {
+  readonly accountId: string;
+  readonly deliveryId: string;
+}
+
+/**
  * Retries and the dead-letter queue are Cloudflare's, configured in
- * wrangler.jsonc rather than written here: backoff is exactly the sort of thing
- * that looks like thirty lines and turns into a thundering herd.
+ * wrangler.jsonc rather than written here.
  */
 export class QueueDispatch implements DispatchQueue {
-  constructor(private readonly queue: Queue<string>) {}
+  constructor(private readonly queue: Queue<QueuedDispatch>) {}
 
-  async enqueue(_ctx: Caller, deliveryId: Ulid): Promise<void> {
-    await this.queue.send(deliveryId);
+  async enqueue(ctx: Caller, deliveryId: Ulid): Promise<void> {
+    await this.queue.send({ accountId: ctx.accountId, deliveryId });
   }
+}
+
+/**
+ * Older messages carried a bare delivery id. Reading both shapes keeps a deploy
+ * from stranding whatever was already on the queue.
+ */
+export function toQueuedDispatch(body: unknown, fallbackAccountId: string): QueuedDispatch {
+  if (typeof body === "object" && body !== null && "deliveryId" in body) {
+    const queued = body as QueuedDispatch;
+    return {
+      accountId: queued.accountId ?? fallbackAccountId,
+      deliveryId: String(queued.deliveryId),
+    };
+  }
+  return { accountId: fallbackAccountId, deliveryId: String(body) };
 }
 
 /**

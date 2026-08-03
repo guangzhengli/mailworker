@@ -1,9 +1,10 @@
 import type { DiagnosticsDto } from "@mailworker/contract";
+import type { AccountId } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
 import { authenticate } from "@web/workers/http/auth";
 import type { HttpEnv } from "@web/workers/http/env";
 import { failure, onError } from "@web/workers/http/errors";
-import { identities, keys, webhooks } from "@web/workers/http/identity";
+import { environments, identities, keys, webhooks } from "@web/workers/http/identity";
 import { inboxes } from "@web/workers/http/inboxes";
 import { ingest, messages, threads } from "@web/workers/http/messages";
 import { send, suppressions } from "@web/workers/http/send";
@@ -45,16 +46,22 @@ export const app = new Hono<HttpEnv>()
   })
 
   .use("/v1/*", async (c, next) => {
+    // The header only names a target; `authenticate` is what refuses it unless
+    // the credential is `admin` and the environment shares its project. An agent
+    // key stays pinned to the environment it was minted in (DESIGN ADR-9).
+    const target = c.req.header("X-Mailworker-Environment");
     const caller = await authenticate(
       c.var.container,
       c.env,
       c.req.header("Authorization"),
       new Date(),
+      target === undefined ? undefined : (target as AccountId),
     );
     c.set("caller", caller);
     await next();
   })
 
+  .route("/v1/environments", environments)
   .route("/v1/inboxes", inboxes)
   .route("/v1/messages", messages)
   .route("/v1/threads", threads)

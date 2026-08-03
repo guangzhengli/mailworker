@@ -53,11 +53,18 @@ beforeEach(async () => {
 });
 
 function ctx() {
-  const { services, accountId } = createContainer(env as unknown as Env);
-  return { services, caller: Caller.system(accountId, "system:test") };
+  const container = createContainer(env as unknown as Env);
+  return {
+    services: container.services,
+    caller: Caller.system({
+      accountId: container.defaultAccountId,
+      projectId: container.projectId,
+      mode: "live",
+      subject: "system:test",
+    }),
+  };
 }
 
-/** An inbox that expired `agoMs` ago, holding one real message with a real blob. */
 async function expiredInboxWithMail(prefix: string, agoMs: number) {
   const { services, caller } = ctx();
   const inbox = await services.mailbox.createInbox(caller, {

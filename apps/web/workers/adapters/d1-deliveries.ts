@@ -1,4 +1,5 @@
 import type {
+  AccountId,
   Caller,
   Delivery,
   DeliveryEvent,
@@ -12,7 +13,7 @@ import type { Db } from "@web/workers/adapters/d1";
 import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
 import type { DeliveryEventRow, DeliveryRow } from "@web/workers/adapters/schema";
 import { deliveries, deliveryEvents } from "@web/workers/adapters/schema";
-import { and, asc, count, desc, eq, gte, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne } from "drizzle-orm";
 
 export class D1Deliveries implements DeliveryRepository {
   constructor(private readonly db: Db) {}
@@ -50,6 +51,15 @@ export class D1Deliveries implements DeliveryRepository {
     );
   }
 
+  async resolveAccount(providerId: string): Promise<AccountId | null> {
+    const [row] = await this.db
+      .select({ accountId: deliveries.accountId })
+      .from(deliveries)
+      .where(eq(deliveries.providerMsgId, providerId))
+      .limit(1);
+    return row === undefined ? null : (row.accountId as AccountId);
+  }
+
   async list(ctx: Caller, query: ListDeliveriesQuery): Promise<Page<Delivery>> {
     const limit = pageLimit(query);
     const rows = await this.db
@@ -59,9 +69,13 @@ export class D1Deliveries implements DeliveryRepository {
         and(
           eq(deliveries.accountId, ctx.accountId),
           query.status === undefined ? undefined : eq(deliveries.status, query.status),
+          query.statusIn === undefined
+            ? undefined
+            : inArray(deliveries.status, [...query.statusIn]),
           query.identityId === undefined
             ? undefined
             : eq(deliveries.identityId, query.identityId),
+          query.source === undefined ? undefined : eq(deliveries.source, query.source),
           afterCursor(deliveries.id, query),
         ),
       )
@@ -145,6 +159,7 @@ function toRow(ctx: Caller, delivery: Delivery): typeof deliveries.$inferInsert 
     // is distinguishable from one whose metadata was cleared, and so the column
     // costs nothing on the overwhelming majority of sends that have none.
     metadata: Object.keys(delivery.metadata).length === 0 ? null : { ...delivery.metadata },
+    source: delivery.source,
     status: delivery.status,
     attempts: delivery.attempts,
     recipients: [...delivery.recipients],
@@ -169,6 +184,7 @@ export function toDelivery(row: DeliveryRow): Delivery {
     messageId: row.messageId as Ulid | null,
     idempotencyKey: row.idempotencyKey,
     metadata: row.metadata ?? {},
+    source: row.source as Delivery["source"],
     status: row.status as Delivery["status"],
     attempts: row.attempts,
     recipients: row.recipients as EmailAddress[],

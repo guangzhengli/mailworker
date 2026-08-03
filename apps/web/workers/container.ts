@@ -1,10 +1,18 @@
-import type { ApiKeyRepository, CoreDeps, Services } from "@mailworker/core";
-import { AccountId, createServices } from "@mailworker/core";
+import type {
+  AccountRepository,
+  ApiKeyRepository,
+  CoreDeps,
+  DeliveryRepository,
+  DomainRepository,
+  Services,
+} from "@mailworker/core";
+import { AccountId, createServices, ProjectId } from "@mailworker/core";
 import { PostalMimeParser, Rfc5322Builder } from "@mailworker/mime";
-import type { QueuedEvent } from "@web/workers/adapters";
+import type { QueuedDispatch, QueuedEvent } from "@web/workers/adapters";
 import {
   CloudflareTransport,
   createDb,
+  D1Accounts,
   D1ApiKeys,
   D1Deliveries,
   D1Domains,
@@ -14,9 +22,12 @@ import {
   D1Suppressions,
   D1Webhooks,
   DohResolver,
+  LateBoundLoopback,
   LoggingEventBus,
+  ModeAwareTransport,
   QueueDispatch,
   R2Blobs,
+  SandboxTransport,
   SigningWebhookSender,
   SystemClock,
   UlidGenerator,
@@ -44,32 +55,36 @@ import { DurableWaiter } from "@web/workers/waiter";
 export interface Container {
   readonly services: Services;
   /**
-   * Not part of `CoreDeps`: authentication happens before there is a `Caller`
-   * to pass, so it cannot go through a service that requires one. The HTTP
-   * layer uses this to turn a bearer token into a `Caller`, and M3's
-   * identity-service takes over key management itself.
+   * Not part of `CoreDeps`: authentication happens before there is a `Caller` to
+   * pass, so it cannot go through a service that requires one.
    */
   readonly apiKeys: ApiKeyRepository;
-  /**
-   * The account this deployment serves. Single-tenant today (DESIGN §6): it
-   * comes from a var so that the multi-tenant migration changes where a
-   * `Caller` is built and nothing else.
-   */
-  readonly accountId: AccountId;
+  readonly accounts: AccountRepository;
+  /** Also outside `CoreDeps`: inbound mail resolves its environment by hostname. */
+  readonly domains: DomainRepository;
+  readonly deliveries: DeliveryRepository;
+  /** The environment a request lands in when nothing names another. */
+  readonly defaultAccountId: AccountId;
+  readonly projectId: ProjectId;
 }
 
 export function createContainer(env: Env): Container {
   const db = createDb(env.DB);
   const messages = new D1Messages(db);
   const apiKeys = new D1ApiKeys(db);
+  const accounts = new D1Accounts(db);
 
   // `wrangler types` marks every declared binding as present, which is true of
   // a deployment and false of the test environment, where neither is bound.
   // Widening here rather than casting at the use site keeps the optionality
   // stated once, in the place that knows why.
   const sendEmail: SendEmail | undefined = env.SEND_EMAIL;
-  const dispatch: Queue<string> | undefined = env.DISPATCH_QUEUE;
+  const dispatch: Queue<QueuedDispatch> | undefined = env.DISPATCH_QUEUE;
   const webhookQueue: Queue<QueuedEvent> | undefined = env.WEBHOOK_QUEUE;
+
+  const domainRepo = new D1Domains(db);
+  const deliveryRepo = new D1Deliveries(db);
+  const loopback = new LateBoundLoopback();
 
   const deps: CoreDeps = {
     clock: new SystemClock(),
@@ -78,11 +93,12 @@ export function createContainer(env: Env): Container {
 
     inboxes: new D1Inboxes(db),
     messages,
-    deliveries: new D1Deliveries(db),
+    deliveries: deliveryRepo,
     identities: new D1Identities(db),
-    domains: new D1Domains(db),
+    domains: domainRepo,
     webhooks: new D1Webhooks(db),
     apiKeys,
+    accounts,
     suppressions: new D1Suppressions(db),
     blobs: new R2Blobs(env.BLOBS),
 
@@ -93,22 +109,42 @@ export function createContainer(env: Env): Container {
     mimeParser: new PostalMimeParser(),
     mimeBuilder: new Rfc5322Builder(),
 
+    loopback,
+
     // Both optional, and for the same reason: Email Routing is free while
     // Email Sending needs Workers Paid, so "can receive, cannot send" is a real
     // deployment rather than a broken one. Each missing binding degrades one
     // capability with an explanation instead of failing the whole Worker at
     // startup, where nobody would see it.
-    transport:
+    //
+    // A sandbox environment needs neither: it reaches `SandboxTransport`, which
+    // is why development works on a Free plan with no verified domain.
+    transport: new ModeAwareTransport(
       sendEmail === undefined
         ? new UnconfiguredTransport()
         : new CloudflareTransport(sendEmail),
+      new SandboxTransport(),
+    ),
     dispatchQueue:
       dispatch === undefined ? new UnavailableDispatchQueue() : new QueueDispatch(dispatch),
   };
 
+  const services = createServices(deps);
+  loopback.bind(async (ctx, message) => {
+    await services.ingestion.ingest(ctx, {
+      recipient: message.recipient,
+      envelopeFrom: message.envelopeFrom,
+      raw: message.raw,
+    });
+  });
+
   return {
-    services: createServices(deps),
+    services,
     apiKeys,
-    accountId: AccountId.parse(env.MAILWORKER_ACCOUNT_ID),
+    accounts,
+    domains: domainRepo,
+    deliveries: deliveryRepo,
+    defaultAccountId: AccountId.parse(env.MAILWORKER_ACCOUNT_ID),
+    projectId: ProjectId.parse(env.MAILWORKER_PROJECT_ID ?? "default"),
   };
 }

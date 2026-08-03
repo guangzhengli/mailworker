@@ -1,5 +1,5 @@
-import { Caller } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
+import { systemCaller } from "@web/workers/environment";
 
 /**
  * Inbound mail, straight off Cloudflare Email Routing.
@@ -13,8 +13,19 @@ import { createContainer } from "@web/workers/container";
  * message lives in `ingestion.ingest`, where it can be tested without workerd.
  */
 export async function email(message: ForwardableEmailMessage, env: Env): Promise<void> {
-  const { services, accountId } = createContainer(env);
-  const ctx = Caller.system(accountId, "system:email");
+  const container = createContainer(env);
+
+  // The recipient's domain is what decides the environment: `dev.mail.example.com`
+  // lands in development, `mail.example.com` in production. An unknown hostname
+  // falls back to the default environment, where routing will reject it.
+  const domain = message.to.split("@")[1]?.toLowerCase() ?? null;
+  const accountId =
+    (domain === undefined || domain === null
+      ? null
+      : await container.domains.resolveAccount(domain)) ?? container.defaultAccountId;
+
+  const { services } = container;
+  const ctx = await systemCaller(container, accountId, "system:email");
 
   const raw = new Uint8Array(await new Response(message.raw).arrayBuffer());
 

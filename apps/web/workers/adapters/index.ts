@@ -14,6 +14,7 @@
 
 export type { Db } from "@web/workers/adapters/d1";
 export { createDb, toDate, toIsoText } from "@web/workers/adapters/d1";
+export { D1Accounts } from "@web/workers/adapters/d1-accounts";
 export { D1Deliveries } from "@web/workers/adapters/d1-deliveries";
 export {
   D1ApiKeys,
@@ -25,13 +26,20 @@ export { D1Messages } from "@web/workers/adapters/d1-messages";
 export { D1Suppressions } from "@web/workers/adapters/d1-suppressions";
 export { D1Webhooks } from "@web/workers/adapters/d1-webhooks";
 export { DohResolver } from "@web/workers/adapters/dns";
-export type { QueuedEvent } from "@web/workers/adapters/queues";
+export type { QueuedDispatch, QueuedEvent } from "@web/workers/adapters/queues";
 export {
   LoggingEventBus,
   QueueDispatch,
+  toQueuedDispatch,
   UnavailableDispatchQueue,
 } from "@web/workers/adapters/queues";
 export { R2Blobs } from "@web/workers/adapters/r2-blobs";
+export {
+  LateBoundLoopback,
+  ModeAwareTransport,
+  NoLoopback,
+  SandboxTransport,
+} from "@web/workers/adapters/sandbox";
 export * as schema from "@web/workers/adapters/schema";
 export { SystemClock, UlidGenerator, WebCryptoSecrets } from "@web/workers/adapters/system";
 export {

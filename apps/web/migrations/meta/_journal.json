@@ -22,6 +22,13 @@
       "when": 1785080149176,
       "tag": "0002_delivery_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785740315263,
+      "tag": "0003_environments",
+      "breakpoints": true
     }
   ]
 }
