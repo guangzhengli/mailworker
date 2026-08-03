@@ -15,7 +15,7 @@ coverage/
 worker-configuration.d.ts
 
 # local-only project notes, not for push
-DESIGN.md
+.private/
 
 # personal agent config. Carries this deployment's real account id, zone and
 # hostnames. The portable, account-neutral copy of these skills is `.agents/`.
