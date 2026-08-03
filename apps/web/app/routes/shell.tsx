@@ -1,118 +1,109 @@
 import { page } from "@web/app/auth";
 import {
   type AnimatedIconHandle,
-  BanIcon,
+  ApprovalsIcon,
   FingerprintIcon,
-  KeySquareIcon,
+  OverviewIcon as HomeIcon,
   LogoutIcon,
   MailboxIcon,
   MenuIcon,
   SendIcon,
   SettingsGearIcon,
-  StethoscopeIcon,
 } from "@web/app/components/icons";
 import { Button } from "@web/app/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@web/app/components/ui/dropdown-menu";
 import { Separator } from "@web/app/components/ui/separator";
 import { TooltipProvider } from "@web/app/components/ui/tooltip";
 import { type MessageKey, useT } from "@web/app/i18n";
 import { cn } from "@web/app/lib/utils";
+import { Tag } from "@web/app/ui";
+import { CheckIcon, ChevronsUpDownIcon, TriangleAlertIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Form, NavLink, Outlet, useLocation } from "react-router";
 import type { Route } from "./+types/shell";
 
 /**
- * The layout every real page sits inside — and, more importantly, the single
- * place authentication is checked for all of them.
- *
- * React Router runs a layout's loader before its children's, so a child page
- * cannot render without this having passed. That is why the guard lives here
- * rather than being repeated per route: the version that is repeated is the
- * version where the eleventh page forgets.
+ * The layout every real page sits inside, and the single place authentication is
+ * checked for all of them. React Router runs a layout's loader before its
+ * children's, so a child page cannot render without this having passed.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
-  return await page(context, request, async ({ caller }) => {
-    /**
-     * The account id and nothing else. This payload rides along with every
-     * navigation under the shell, and the subject and scopes it used to carry
-     * were read by one block in the footer — which now lives on `/settings`,
-     * where it is fetched by the page that shows it.
-     */
-    return { accountId: caller.accountId };
+  return await page(context, request, async ({ caller, services }) => {
+    // A credential bound to one environment cannot list the others, and asking
+    // would be a 403 on every page load rather than a missing dropdown.
+    const environments = caller.scopes.includes("admin")
+      ? await services.identity.listEnvironments(caller)
+      : [];
+
+    const awaiting = await services.delivery.list(caller, {
+      status: "pending_approval",
+      limit: 1,
+    });
+
+    return {
+      accountId: caller.accountId,
+      mode: caller.mode,
+      environments: environments.map((environment) => ({
+        id: environment.id,
+        env: environment.env,
+        name: environment.name,
+        mode: environment.mode,
+      })),
+      hasAwaiting: awaiting.items.length > 0,
+    };
   });
 }
+
+type LoaderData = Route.ComponentProps["loaderData"];
 
 type IconComponent = React.ComponentType<
   { size?: number; className?: string } & React.RefAttributes<AnimatedIconHandle>
 >;
 
 /**
- * The nav, with message keys rather than labels.
- *
- * A module constant cannot call a hook, and translating at the point of render
- * is what keeps this a static table — the alternative is building the array
- * inside the component on every render, for six rows that never change.
- *
  * `NavKey` rather than the whole `MessageKey` union, because `t()` derives its
  * required variables from the key: given every key in the catalogue it cannot
- * prove this one needs none, and demands an interpolation argument. Narrowing to
- * the `nav.` keys — none of which take variables — is both what makes the call
- * typecheck and a truer statement of what belongs in this table.
+ * prove this one needs none, and demands an interpolation argument.
  */
 type NavKey = Extract<MessageKey, `nav.${string}`>;
 
-type Section = {
-  to: string;
-  label: NavKey;
-  end: boolean;
-  Icon: IconComponent;
-};
+interface Section {
+  readonly to: string;
+  readonly label: NavKey;
+  readonly end: boolean;
+  readonly Icon: IconComponent;
+  readonly badge?: boolean;
+}
 
 const SECTIONS: ReadonlyArray<Section> = [
-  { to: "/", label: "nav.inboxes", end: true, Icon: MailboxIcon },
-  { to: "/deliveries", label: "nav.deliveries", end: false, Icon: SendIcon },
-  { to: "/suppressions", label: "nav.suppressions", end: false, Icon: BanIcon },
-  { to: "/identities", label: "nav.identities", end: false, Icon: FingerprintIcon },
-  { to: "/keys", label: "nav.keys", end: false, Icon: KeySquareIcon },
-  { to: "/diagnostics", label: "nav.diagnostics", end: false, Icon: StethoscopeIcon },
+  { to: "/", label: "nav.overview", end: true, Icon: HomeIcon },
+  { to: "/approvals", label: "nav.approvals", end: false, Icon: ApprovalsIcon, badge: true },
+  { to: "/sent", label: "nav.sent", end: false, Icon: SendIcon },
+  { to: "/inbox", label: "nav.inbox", end: false, Icon: MailboxIcon },
+  { to: "/agents", label: "nav.agents", end: false, Icon: FingerprintIcon },
+  { to: "/settings", label: "nav.settings", end: false, Icon: SettingsGearIcon },
 ];
-
-/**
- * Settings is a nav row like the six above, but not one of them: they are views
- * of the account and it is a view of the reader — theme, language, and who this
- * session is. So it renders at the foot of the rail, next to sign out, which is
- * where every other application has taught people to look for it.
- */
-const SETTINGS: Section = {
-  to: "/settings",
-  label: "nav.settings",
-  end: false,
-  Icon: SettingsGearIcon,
-};
-
-/** For the mobile header's title, which needs every destination, not just the six. */
-const DESTINATIONS: ReadonlyArray<Section> = [...SECTIONS, SETTINGS];
 
 /**
  * A nav row whose icon animates from the row's hover, not the icon's own.
  *
  * The registry icons animate on their own `mouseenter`, which on a 200px-wide
  * nav item means the animation only fires in the 18px the glyph occupies — the
- * rest of the row is a dead zone that looks broken. Passing a ref switches them
- * to controlled mode, and the row drives them instead.
+ * rest of the row is a dead zone that looks broken.
  */
 function NavItem({
   to,
   end,
   label,
   Icon,
+  badge,
   onNavigate,
-}: {
-  to: string;
-  end: boolean;
-  label: NavKey;
-  Icon: IconComponent;
-  onNavigate?: (() => void) | undefined;
-}) {
+}: Section & { onNavigate?: (() => void) | undefined }) {
   const icon = useRef<AnimatedIconHandle>(null);
   const { t } = useT();
 
@@ -133,8 +124,113 @@ function NavItem({
       }
     >
       <Icon ref={icon} size={18} className="shrink-0" />
-      <span className="truncate">{t(label)}</span>
+      <span className="flex-1 truncate">{t(label)}</span>
+      {badge === true && <span className="size-2 shrink-0 rounded-full bg-warning" />}
     </NavLink>
+  );
+}
+
+/**
+ * The environment switcher.
+ *
+ * A form POST rather than a link, because switching writes a cookie the server
+ * reads when it builds the `Caller` — and because it is a state change, which is
+ * not what a GET is for. A credential bound to one environment sees the label
+ * without the chevron: there is nothing to switch to, and a dropdown that opens
+ * onto a single disabled row is worse than no dropdown.
+ */
+function EnvironmentSwitcher({ loaderData }: { loaderData: LoaderData }) {
+  const { t } = useT();
+  const current =
+    loaderData.environments.find((environment) => environment.id === loaderData.accountId) ??
+    null;
+  const label = current?.name ?? loaderData.accountId;
+
+  if (loaderData.environments.length < 2) {
+    return (
+      <div className="flex h-8 items-center gap-2 rounded-control border border-border bg-input/30 px-3 text-sm text-secondary-text">
+        <span className="truncate">{label}</span>
+        <ModeTag mode={loaderData.mode} />
+      </div>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-between rounded-control"
+            aria-label={t("env.switch")}
+          />
+        }
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{label}</span>
+          <ModeTag mode={loaderData.mode} />
+        </span>
+        <ChevronsUpDownIcon className="size-4 shrink-0 text-hint" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-56">
+        {loaderData.environments.map((environment) => (
+          <Form method="post" action="/environment" key={environment.id}>
+            <input type="hidden" name="accountId" value={environment.id} />
+            <DropdownMenuItem
+              render={
+                <button type="submit" className="w-full">
+                  <span className="flex w-full items-center gap-2">
+                    <CheckIcon
+                      className={cn(
+                        "size-4 shrink-0",
+                        environment.id === loaderData.accountId ? "opacity-100" : "opacity-0",
+                      )}
+                    />
+                    <span className="flex-1 truncate text-left">{environment.name}</span>
+                    <ModeTag mode={environment.mode} />
+                  </span>
+                </button>
+              }
+            />
+          </Form>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ModeTag({ mode }: { mode: string }) {
+  return (
+    <Tag tone={mode === "live" ? "success" : mode === "sandbox" ? "info" : "warning"}>
+      {mode}
+    </Tag>
+  );
+}
+
+/**
+ * The mode banner, and the reason it is passive rather than a confirmation.
+ *
+ * Anything that asks a person to notice which environment they are in will be
+ * ignored on the day it matters. This sits above the content on every page of
+ * every non-live environment, costs one line, and cannot be dismissed.
+ */
+function ModeBanner({ mode }: { mode: LoaderData["mode"] }) {
+  const { t } = useT();
+  if (mode === "live") return null;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 px-4 py-1.5 text-center text-[13px] font-medium",
+        mode === "sandbox"
+          ? "border-b border-info-border bg-info-bg text-info"
+          : "border-b border-warning-border bg-warning-bg text-warning",
+      )}
+    >
+      <TriangleAlertIcon className="size-3.5 shrink-0" />
+      <span>{mode === "sandbox" ? t("env.bannerSandbox") : t("env.bannerTest")}</span>
+    </div>
   );
 }
 
@@ -142,7 +238,7 @@ function SidebarBody({
   loaderData,
   onNavigate,
 }: {
-  loaderData: Route.ComponentProps["loaderData"];
+  loaderData: LoaderData;
   onNavigate?: (() => void) | undefined;
 }) {
   const signOut = useRef<AnimatedIconHandle>(null);
@@ -150,29 +246,25 @@ function SidebarBody({
 
   return (
     <div className="flex h-full flex-col gap-1 p-3">
-      <div className="px-3 py-3">
+      <div className="px-3 pt-3 pb-1">
         <div className="font-semibold tracking-tight text-title">Mailworker</div>
-        <div className="truncate font-mono text-[11px] text-hint">{loaderData.accountId}</div>
+      </div>
+      <div className="pb-2">
+        <EnvironmentSwitcher loaderData={loaderData} />
       </div>
 
       <nav className="flex flex-col gap-0.5">
         {SECTIONS.map((section) => (
-          <NavItem key={section.to} {...section} onNavigate={onNavigate} />
+          <NavItem
+            key={section.to}
+            {...section}
+            badge={section.badge === true && loaderData.hasAwaiting}
+            onNavigate={onNavigate}
+          />
         ))}
       </nav>
 
       <div className="flex-1" />
-
-      {/* Settings above the rule, sign out below it: one is a place you go, the
-          other ends the session, and a stray click should not be able to mistake
-          them for members of the same list.
-
-          Not a second `nav`: one unlabelled navigation landmark per page is a
-          reader's shortcut, and two of them is a choice they have to make with
-          no way to tell which is which. */}
-      <div className="flex flex-col gap-0.5">
-        <NavItem {...SETTINGS} onNavigate={onNavigate} />
-      </div>
 
       <Separator className="my-2" />
 
@@ -201,7 +293,7 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
   const menu = useRef<AnimatedIconHandle>(null);
   const { t } = useT();
 
-  const section = DESTINATIONS.find((s) =>
+  const section = SECTIONS.find((s) =>
     s.end ? location.pathname === s.to : location.pathname.startsWith(s.to),
   );
   const current = section === undefined ? "Mailworker" : t(section.label);
@@ -209,14 +301,13 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
   return (
     <TooltipProvider>
       <div className="min-h-dvh md:grid md:grid-cols-[15rem_minmax(0,1fr)]">
-        {/* Desktop rail. Hidden rather than unmounted below md so the drawer
-            owns the small-screen case entirely — two nav trees visible at once
-            is how duplicate ids and double-fired handlers happen. */}
+        {/* Desktop rail. Hidden rather than unmounted below md so the drawer owns
+            the small-screen case entirely — two nav trees visible at once is how
+            duplicate ids and double-fired handlers happen. */}
         <aside className="sticky top-0 hidden h-dvh border-r border-sidebar-border bg-sidebar md:block">
           <SidebarBody loaderData={loaderData} />
         </aside>
 
-        {/* Mobile top bar. */}
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-sidebar-border bg-sidebar/80 px-3 py-2 backdrop-blur-md md:hidden">
           <Button
             variant="ghost"
@@ -233,18 +324,11 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
         </header>
 
         {/*
-         * A plain overlay rather than a Dialog.
-         *
-         * Base UI's Dialog is modal: it traps focus and marks the rest of the
-         * page inert, which is right for a confirmation and wrong for
-         * navigation — every link inside it points at content the trap is
-         * currently hiding. Escape and click-outside are the two behaviours
-         * that actually matter here, and both are ten lines.
-         *
-         * The scrim below is a bare `button` rather than the styled one: it is a
-         * hit area, not a control. Every class `Button` brings — height,
-         * padding, radius, hover — would have to be overridden to make it fill
-         * the screen, and none of it is a style worth keeping consistent.
+         * A plain overlay rather than a Dialog: Base UI's Dialog is modal, which
+         * traps focus and marks the rest of the page inert — right for a
+         * confirmation and wrong for navigation, where every link inside points
+         * at content the trap is hiding. Escape and click-outside are the two
+         * behaviours that matter, and both are ten lines.
          */}
         {drawerOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
@@ -268,11 +352,14 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
           </div>
         )}
 
-        <main className="min-w-0 px-5 py-6 md:px-8 md:py-8">
-          <div className="mx-auto max-w-6xl">
-            <Outlet />
-          </div>
-        </main>
+        <div className="min-w-0">
+          <ModeBanner mode={loaderData.mode} />
+          <main className="px-5 py-6 md:px-8 md:py-8">
+            <div className="mx-auto max-w-6xl">
+              <Outlet />
+            </div>
+          </main>
+        </div>
       </div>
     </TooltipProvider>
   );

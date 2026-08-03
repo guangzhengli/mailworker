@@ -64,7 +64,7 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
         <PageHeader title={t("diagnostics.title")} />
         <Card>
           <CardContent className="text-sm text-secondary-text">
-            {rich("diagnostics.adminOnly", { admin: <Mono>admin</Mono> })}
+            {t("diagnostics.adminOnly")}
           </CardContent>
         </Card>
       </>
@@ -124,9 +124,6 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
         <div className="flex flex-col gap-4">
           {domains.map((diagnosis) => (
             <Card key={diagnosis.domain} className="gap-0 overflow-hidden py-0">
-              {/* `--card-spacing` narrowed to 3 rather than padding set by hand:
-                  it is the variable `CardHeader` already pads from, and 3 is what
-                  lines the domain up with the first column of the table below. */}
               <CardHeader className="flex flex-wrap items-center gap-3 border-b pt-3 [--card-spacing:--spacing(3)]">
                 <CardTitle className="font-mono text-[15px] text-title">
                   {diagnosis.domain}

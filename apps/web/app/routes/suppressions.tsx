@@ -22,7 +22,7 @@ import {
   TableRow,
 } from "@web/app/components/ui/table";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
-import { Empty, Mono, Note, PageHeader, Tag, When } from "@web/app/ui";
+import { Empty, PageHeader, Tag, When } from "@web/app/ui";
 import { useRef } from "react";
 import { Form } from "react-router";
 import type { Route } from "./+types/suppressions";
@@ -84,16 +84,14 @@ const REASON_TONES = {
 export default function Suppressions({ loaderData }: Route.ComponentProps) {
   const { entries, maySuppress, mayRemove } = loaderData;
   const ban = useRef<AnimatedIconHandle>(null);
-  const { t, rich } = useT();
+  const { t } = useT();
 
   return (
     <>
       <PageHeader title={t("suppressions.title")} description={t("suppressions.description")} />
 
-      <Note>{rich("suppressions.note", { policy: <Mono>SendPolicy</Mono> })}</Note>
-
       {maySuppress && (
-        <Card className="mt-5 mb-5">
+        <Card className="mb-5">
           <CardContent>
             <Form method="post" className="flex flex-wrap items-end gap-3">
               <div className="flex min-w-56 flex-1 flex-col gap-2">
@@ -183,8 +181,6 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
           </Table>
         )}
       </Card>
-
-      <Note>{rich("suppressions.removeNote", { admin: <Mono>admin</Mono> })}</Note>
     </>
   );
 }

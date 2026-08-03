@@ -1,8 +1,12 @@
 import { Ulid } from "@mailworker/core";
 import { page } from "@web/app/auth";
 import { Button } from "@web/app/components/ui/button";
-import { Card } from "@web/app/components/ui/card";
-import { Input } from "@web/app/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@web/app/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -15,169 +19,249 @@ import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { cn } from "@web/app/lib/utils";
 import { useLiveMail } from "@web/app/live";
 import {
+  Addresses,
   Empty,
+  ListCard,
   Live,
   Mono,
   PageHeader,
   Pager,
+  PrimaryCell,
   Provenance,
   Relative,
-  Tag,
-  When,
+  SearchForm,
+  Toolbar,
 } from "@web/app/ui";
-import { ArrowLeftIcon, SearchIcon } from "lucide-react";
-import { Form, Link } from "react-router";
+import { ChevronsUpDownIcon, InboxIcon } from "lucide-react";
+import { Link } from "react-router";
 import type { Route } from "./+types/inbox";
 
-export async function loader({ context, request, params }: Route.LoaderArgs) {
+export const meta: Route.MetaFunction = ({ matches }) => [
+  { title: translate(localeFromMatches(matches), "inbox.pageTitle") },
+];
+
+/**
+ * Everything that arrived, across every address.
+ *
+ * The dashboard used to make the inbox *address* the way in to reading mail, so
+ * "did the verification code land" could not be answered without first knowing
+ * which of a dozen addresses it was sent to. An address is configuration; the
+ * mail is the content. This is the content page, and `/inboxes` is now where
+ * addresses are managed (DESIGN ADR-10).
+ */
+export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
-    const id = Ulid.parse(params.id);
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
     const q = url.searchParams.get("q")?.trim() ?? "";
+    const inbox = url.searchParams.get("inbox");
 
     /**
-     * Two round trips rather than one join: the inbox is the page's identity and
-     * the messages are its content, and the services that own them are separate
-     * on purpose. D1 is local to the Worker, so the second call is microseconds.
+     * `direction: "inbound"` is load-bearing here in a way it never was on the
+     * per-inbox page: the messages table also holds the archived copy of every
+     * outbound send, and an unfiltered listing would show each of them twice —
+     * once here and once under Sent.
      */
-    const inbox = await services.mailbox.getInbox(caller, id);
-    const page = await services.mailbox.listMessages(caller, {
-      inboxId: id,
+    const listed = await services.mailbox.listMessages(caller, {
+      direction: "inbound",
+      ...(inbox === null ? {} : { inboxId: Ulid.parse(inbox) }),
       ...(q === "" ? {} : { q }),
       ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
     });
 
-    return { inbox, messages: page.items, cursor: page.cursor, q };
+    /**
+     * Expired addresses included, because their mail is still here and a row
+     * whose "received at" column is blank reads as a bug.
+     */
+    const inboxes = await services.mailbox.listInboxes(caller, { includeExpired: true });
+    const addressOf = new Map(inboxes.items.map((row) => [row.id, row.address]));
+
+    return {
+      messages: listed.items.map((message) => ({
+        id: message.id,
+        subject: message.subject,
+        preview: message.preview,
+        fromHeader: message.fromHeader,
+        seen: message.seen,
+        trusted: message.trusted,
+        injectionRisk: message.injectionRisk,
+        receivedAt: message.receivedAt,
+        inboxId: message.inboxId,
+        address: addressOf.get(message.inboxId) ?? null,
+      })),
+      cursor: listed.cursor,
+      q,
+      inbox,
+      inboxes: inboxes.items.map((row) => ({ id: row.id, address: row.address })),
+    };
   });
 }
 
-export const meta: Route.MetaFunction = ({ matches, loaderData }) => [
-  {
-    title: translate(localeFromMatches(matches), "inbox.pageTitle", {
-      address: loaderData.inbox.address,
-    }),
-  },
-];
-
-export default function InboxPage({ loaderData, params }: Route.ComponentProps) {
-  const { inbox, messages, cursor, q } = loaderData;
-  // Scoped to this inbox, so a busy account's other mail does not reload this
-  // page. The filter is applied server-side; see `app/live.ts`.
-  const live = useLiveMail(params.id);
+export default function Inbox({ loaderData }: Route.ComponentProps) {
+  const { messages, cursor, q, inbox, inboxes } = loaderData;
+  // Scoped to one address when the filter is on, so a busy account's other mail
+  // does not reload this page. The filter is applied server-side; see `app/live.ts`.
+  const live = useLiveMail(inbox ?? undefined);
   const { t, rich } = useT();
+
+  const to = (changes: Record<string, string | null>) => {
+    const params = new URLSearchParams();
+    const merged: Record<string, string | null> = { q, inbox, ...changes };
+    for (const [key, value] of Object.entries(merged)) {
+      if (value !== null && value !== "") params.set(key, value);
+    }
+    const query = params.toString();
+    return query === "" ? "/inbox" : `/inbox?${query}`;
+  };
+
+  const activeInbox = inboxes.find((row) => row.id === inbox) ?? null;
 
   return (
     <>
-      <PageHeader
-        title={<span className="font-mono text-lg">{inbox.address}</span>}
-        description={
-          <span className="flex flex-wrap items-center gap-2">
-            <Tag tone={inbox.kind === "persistent" ? "info" : "neutral"}>{inbox.kind}</Tag>
-            {inbox.expiresAt === null ? (
-              t("inbox.neverExpires")
-            ) : (
-              <span>
-                {rich("inbox.expires", { when: <Relative value={inbox.expiresAt} /> })}
-              </span>
-            )}
-          </span>
-        }
-      >
+      <PageHeader title={t("inbox.title")} description={t("inbox.description")}>
         <Live status={live} />
-        <Button render={<Link to="/" />} variant="outline" size="sm">
-          <ArrowLeftIcon />
-          {t("inbox.all")}
+        <Button render={<Link to="/inboxes" />} variant="outline" size="sm">
+          {t("inbox.manageAddresses")}
         </Button>
       </PageHeader>
 
-      <Form method="get" className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-56 flex-1 sm:max-w-sm">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-hint" />
-          <Input
-            name="q"
-            defaultValue={q}
-            placeholder={t("inbox.searchPlaceholder")}
-            aria-label={t("inbox.searchLabel")}
-            className="pl-9"
-          />
-        </div>
-        <Button type="submit" variant="outline" size="sm">
-          {t("inbox.search")}
-        </Button>
-        {q !== "" && (
-          <Button render={<Link to={`/inboxes/${params.id}`} />} variant="ghost" size="sm">
-            {t("inbox.clear")}
-          </Button>
-        )}
-      </Form>
+      <Toolbar>
+        <SearchForm
+          action="/inbox"
+          value={q}
+          placeholder={t("inbox.searchPlaceholder")}
+          label={t("inbox.searchLabel")}
+          keep={{ inbox }}
+        />
 
-      <Card className="overflow-hidden py-0">
+        {inboxes.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline" size="sm">
+                  <span className="max-w-48 truncate">
+                    {activeInbox === null ? t("inbox.allAddresses") : activeInbox.address}
+                  </span>
+                  <ChevronsUpDownIcon className="text-hint" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+              <DropdownMenuItem render={<Link to={to({ inbox: null, cursor: null })} />}>
+                {t("inbox.allAddresses")}
+              </DropdownMenuItem>
+              {inboxes.map((row) => (
+                <DropdownMenuItem
+                  key={row.id}
+                  render={<Link to={to({ inbox: row.id, cursor: null })} />}
+                >
+                  <span className="font-mono text-[13px]">{row.address}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </Toolbar>
+
+      <ListCard>
         {messages.length === 0 ? (
-          <Empty>
-            {q === ""
-              ? rich("inbox.empty", { address: <Mono>{inbox.address}</Mono> })
-              : rich("inbox.noMatch", { query: <Mono>{q}</Mono> })}
+          <Empty
+            icon={<InboxIcon />}
+            action={
+              q === "" && inbox === null ? (
+                <Button render={<Link to="/inboxes" />} size="sm" variant="outline">
+                  {t("inbox.manageAddresses")}
+                </Button>
+              ) : (
+                <Button render={<Link to="/inbox" />} size="sm" variant="ghost">
+                  {t("sent.clearFilters")}
+                </Button>
+              )
+            }
+          >
+            {q === "" ? t("inbox.empty") : rich("inbox.noMatch", { query: <Mono>{q}</Mono> })}
           </Empty>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>{t("field.from")}</TableHead>
                 <TableHead>{t("field.subject")}</TableHead>
-                <TableHead>{t("field.provenance")}</TableHead>
-                <TableHead>{t("field.received")}</TableHead>
+                <TableHead className="w-56">{t("field.from")}</TableHead>
+                <TableHead className="w-56">{t("field.receivedAt")}</TableHead>
+                <TableHead className="w-32 text-right">{t("field.received")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {messages.map((message) => (
                 <TableRow key={message.id}>
-                  <TableCell className="max-w-56 truncate">
-                    {/* Unread is carried by weight on the sender and subject
-                        only. Bolding the whole row, timestamps included, is
-                        what turns a list into a wall. */}
-                    <span className={cn(message.seen ? "text-body" : "font-medium text-title")}>
-                      {message.fromHeader}
-                    </span>
+                  <TableCell className="max-w-0">
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      {/* Unread as a mark rather than only as weight: bold alone
+                          is invisible in a list where half the subjects are long
+                          enough to truncate anyway. */}
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "mt-1.5 size-1.5 shrink-0 rounded-full",
+                          message.seen ? "bg-transparent" : "bg-primary",
+                        )}
+                        title={message.seen ? undefined : t("inbox.unread")}
+                      />
+                      <PrimaryCell
+                        to={`/messages/${message.id}`}
+                        strong={!message.seen}
+                        title={
+                          message.subject === "" ? (
+                            <span className="text-hint italic">{t("common.noSubject")}</span>
+                          ) : (
+                            message.subject
+                          )
+                        }
+                        secondary={message.preview}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell className="max-w-0">
-                    <Link to={`/messages/${message.id}`} className="group block min-w-0">
-                      <div
-                        className={cn(
-                          "truncate group-hover:text-primary group-hover:underline",
-                          message.seen ? "text-body" : "font-medium text-title",
-                        )}
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <Addresses
+                        header={message.fromHeader}
+                        className={message.seen ? "text-body" : "font-medium text-title"}
+                      />
+                      {/* Only the exceptions are drawn. A verified sender is the
+                          normal case, and painting a green tag on every row spends
+                          the reader's attention on the rows that need none — the
+                          unverified and the injection-shaped ones then stop
+                          standing out, which is the entire point of the flag. */}
+                      <Provenance
+                        trusted={message.trusted}
+                        injectionRisk={message.injectionRisk}
+                        quiet
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-0 truncate">
+                    {message.address === null ? (
+                      <span className="text-hint">{t("common.dash")}</span>
+                    ) : (
+                      <Link
+                        to={to({ inbox: message.inboxId, cursor: null })}
+                        className="font-mono text-[13px] text-secondary-text hover:text-primary hover:underline"
                       >
-                        {message.subject === "" ? (
-                          <span className="text-hint italic">{t("common.noSubject")}</span>
-                        ) : (
-                          message.subject
-                        )}
-                      </div>
-                      <div className="truncate text-[13px] text-hint">{message.preview}</div>
-                    </Link>
+                        {message.address}
+                      </Link>
+                    )}
                   </TableCell>
-                  <TableCell>
-                    <Provenance
-                      trusted={message.trusted}
-                      injectionRisk={message.injectionRisk}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <When value={message.receivedAt} />
+                  <TableCell className="text-right">
+                    <Relative value={message.receivedAt} />
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-      </Card>
+      </ListCard>
 
-      {cursor !== null && (
-        <Pager
-          to={`/inboxes/${params.id}?cursor=${cursor}${q === "" ? "" : `&q=${encodeURIComponent(q)}`}`}
-        />
-      )}
+      {cursor !== null && <Pager to={to({ cursor })} />}
     </>
   );
 }

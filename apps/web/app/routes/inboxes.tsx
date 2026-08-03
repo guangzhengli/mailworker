@@ -1,4 +1,4 @@
-import { Ulid } from "@mailworker/core";
+import { isDomainError, Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
 import { type AnimatedIconHandle, DeleteIcon, PlusIcon } from "@web/app/components/icons";
 import {
@@ -13,7 +13,17 @@ import {
   AlertDialogTrigger,
 } from "@web/app/components/ui/alert-dialog";
 import { Button } from "@web/app/components/ui/button";
-import { Card, CardContent } from "@web/app/components/ui/card";
+import { Checkbox } from "@web/app/components/ui/checkbox";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@web/app/components/ui/dialog";
 import { Input } from "@web/app/components/ui/input";
 import { Label } from "@web/app/components/ui/label";
 import {
@@ -32,8 +42,20 @@ import {
   TableRow,
 } from "@web/app/components/ui/table";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
-import { Empty, Mono, PageHeader, Pager, Relative, Tag, TextLink, When } from "@web/app/ui";
-import { useEffect, useRef } from "react";
+import {
+  Empty,
+  ListCard,
+  Mono,
+  PageHeader,
+  Pager,
+  Relative,
+  Tag,
+  TextLink,
+  Toolbar,
+  When,
+} from "@web/app/ui";
+import { MailboxIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Form, Link, useNavigation } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/inboxes";
@@ -57,6 +79,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       cursor: page.cursor,
       includeExpired: url.searchParams.get("expired") === "1",
       mayCreate: can(caller, "inbox:write"),
+      domains: await services.mailbox.listDomains(caller),
     };
   });
 }
@@ -67,23 +90,183 @@ export async function action({ context, request }: Route.ActionArgs) {
 
     if (form.get("intent") === "delete") {
       await services.mailbox.deleteInbox(caller, Ulid.parse(String(form.get("id"))));
-      return { created: null };
+      return { created: null, taken: null };
     }
 
     const ttlMinutes = Number(form.get("ttlMinutes") ?? 0);
     const persistent = form.get("kind") === "persistent";
-    const prefix = String(form.get("prefix") ?? "").trim();
+    const domain = String(form.get("domain") ?? "").trim();
+    const name = String(form.get("localPart") ?? "")
+      .trim()
+      .toLowerCase();
 
-    const inbox = await services.mailbox.createInbox(caller, {
-      kind: persistent ? "persistent" : "ephemeral",
-      ...(prefix === "" ? {} : { prefix }),
-      ...(persistent || !Number.isFinite(ttlMinutes) || ttlMinutes <= 0
-        ? {}
-        : { ttlMs: ttlMinutes * 60_000 }),
-    });
+    const naming =
+      name === "" ? {} : form.get("random") === null ? { localPart: name } : { prefix: name };
 
-    return { created: inbox.address };
+    try {
+      const inbox = await services.mailbox.createInbox(caller, {
+        kind: persistent ? "persistent" : "ephemeral",
+        ...naming,
+        ...(domain === "" ? {} : { domain }),
+        ...(persistent || !Number.isFinite(ttlMinutes) || ttlMinutes <= 0
+          ? {}
+          : { ttlMs: ttlMinutes * 60_000 }),
+      });
+
+      return { created: inbox.address, taken: null };
+    } catch (error) {
+      // Reported beside the field rather than on the error boundary, which would
+      // replace the page and lose what was typed.
+      if (isDomainError(error) && error.code === "address_taken") {
+        return { created: null, taken: String(error.details["address"] ?? name) };
+      }
+      throw error;
+    }
   });
+}
+
+/**
+ * Creating an address, in a dialog.
+ *
+ * It used to be a seven-control form pinned above the table, on a page whose
+ * usual reason for being open is to look something up. A form that is only
+ * needed occasionally but is always on screen pushes the content down the page
+ * every single visit, which is the trade the wrong way round.
+ */
+function NewInbox({
+  domains,
+  taken,
+  busy,
+}: {
+  domains: readonly string[];
+  taken: string | null;
+  busy: boolean;
+}) {
+  const plus = useRef<AnimatedIconHandle>(null);
+  const [open, setOpen] = useState(false);
+  const { t } = useT();
+
+  // Reopened by the failed submission itself, so the address that was rejected
+  // is still in the field with the error beside it.
+  useEffect(() => {
+    if (taken !== null) setOpen(true);
+  }, [taken]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button
+            size="sm"
+            onMouseEnter={() => plus.current?.startAnimation()}
+            onMouseLeave={() => plus.current?.stopAnimation()}
+          />
+        }
+      >
+        <PlusIcon ref={plus} size={16} />
+        {t("inboxes.create")}
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("inboxes.create")}</DialogTitle>
+          <DialogDescription>{t("inboxes.createHint")}</DialogDescription>
+        </DialogHeader>
+
+        <Form method="post" className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="localPart">{t("inboxes.nameLabel")}</Label>
+            <div className="flex items-center gap-1.5">
+              <Input
+                id="localPart"
+                name="localPart"
+                placeholder={t("inboxes.namePlaceholder")}
+                className="font-mono"
+                aria-describedby={taken === null ? undefined : "localPart-error"}
+              />
+              {domains.length > 1 ? (
+                <Select
+                  name="domain"
+                  defaultValue={domains[0]}
+                  items={Object.fromEntries(domains.map((domain) => [domain, `@${domain}`]))}
+                >
+                  <SelectTrigger id="domain" className="w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {domains.map((domain) => (
+                      <SelectItem key={domain} value={domain}>
+                        @{domain}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Mono className="shrink-0 text-hint">@{domains[0] ?? ""}</Mono>
+              )}
+            </div>
+            {taken !== null && (
+              <p id="localPart-error" role="alert" className="text-danger text-xs">
+                {t("inboxes.taken", { address: taken })}
+              </p>
+            )}
+            <div className="mt-1 flex items-center gap-2">
+              <Checkbox id="random" name="random" />
+              <Label htmlFor="random" className="font-normal text-hint">
+                {t("inboxes.randomSuffix")}
+              </Label>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="kind">{t("field.kind")}</Label>
+              {/*
+               * `items` as well as the two `SelectItem`s: the popup is not
+               * mounted on the server, and without the map the trigger renders
+               * the raw value until it opens. The two kinds are the wire
+               * vocabulary, so label and value coincide here — but stating the
+               * map is what keeps the first paint right.
+               */}
+              <Select
+                name="kind"
+                defaultValue="ephemeral"
+                items={{ ephemeral: "ephemeral", persistent: "persistent" }}
+              >
+                <SelectTrigger id="kind" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ephemeral">ephemeral</SelectItem>
+                  <SelectItem value="persistent">persistent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="ttlMinutes">{t("inboxes.ttlLabel")}</Label>
+              <Input
+                id="ttlMinutes"
+                name="ttlMinutes"
+                type="number"
+                min={1}
+                defaultValue={60}
+                className="w-28 tabular-nums"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" />}>
+              {t("common.cancel")}
+            </DialogClose>
+            <Button type="submit" disabled={busy}>
+              {t("inboxes.create")}
+            </Button>
+          </DialogFooter>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /**
@@ -143,7 +326,7 @@ function DeleteInbox({ id, address, busy }: { id: string; address: string; busy:
 export default function Inboxes({ loaderData, actionData }: Route.ComponentProps) {
   const busy = useNavigation().state !== "idle";
   const created = actionData?.created ?? null;
-  const plus = useRef<AnimatedIconHandle>(null);
+  const taken = actionData?.taken ?? null;
   const { t, rich } = useT();
 
   /**
@@ -158,77 +341,24 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
   return (
     <>
       <PageHeader title={t("inboxes.title")} description={t("inboxes.description")}>
+        {loaderData.mayCreate && (
+          <NewInbox domains={loaderData.domains} taken={taken} busy={busy} />
+        )}
+      </PageHeader>
+
+      <Toolbar>
         <Button
-          render={<Link to={loaderData.includeExpired ? "/" : "/?expired=1"} />}
+          render={<Link to={loaderData.includeExpired ? "/inboxes" : "/inboxes?expired=1"} />}
           variant="ghost"
           size="sm"
         >
           {loaderData.includeExpired ? t("inboxes.hideExpired") : t("inboxes.showExpired")}
         </Button>
-      </PageHeader>
+      </Toolbar>
 
-      {loaderData.mayCreate && (
-        <Card className="mb-5">
-          <CardContent>
-            <Form method="post" className="flex flex-wrap items-end gap-3">
-              <div className="flex min-w-48 flex-1 flex-col gap-2">
-                <Label htmlFor="prefix">{t("inboxes.prefixLabel")}</Label>
-                <Input id="prefix" name="prefix" placeholder="inbox" className="font-mono" />
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="kind">{t("field.kind")}</Label>
-                {/*
-                 * `items` as well as the two `SelectItem`s: the popup is not
-                 * mounted on the server, and without the map the trigger renders
-                 * the raw value until it opens. The two kinds are the wire
-                 * vocabulary, so label and value coincide here — but stating the
-                 * map is what keeps the first paint right.
-                 */}
-                <Select
-                  name="kind"
-                  defaultValue="ephemeral"
-                  items={{ ephemeral: "ephemeral", persistent: "persistent" }}
-                >
-                  <SelectTrigger id="kind" className="w-36">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ephemeral">ephemeral</SelectItem>
-                    <SelectItem value="persistent">persistent</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="ttlMinutes">{t("inboxes.ttlLabel")}</Label>
-                <Input
-                  id="ttlMinutes"
-                  name="ttlMinutes"
-                  type="number"
-                  min={1}
-                  defaultValue={60}
-                  className="w-28 tabular-nums"
-                />
-              </div>
-
-              <Button
-                type="submit"
-                disabled={busy}
-                onMouseEnter={() => plus.current?.startAnimation()}
-                onMouseLeave={() => plus.current?.stopAnimation()}
-              >
-                <PlusIcon ref={plus} size={16} />
-                {t("inboxes.create")}
-              </Button>
-            </Form>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="overflow-hidden py-0">
+      <ListCard>
         {loaderData.inboxes.length === 0 ? (
-          <Empty>
+          <Empty icon={<MailboxIcon />}>
             {rich("inboxes.empty", { command: <Mono>mailworker inbox create</Mono> })}
           </Empty>
         ) : (
@@ -236,18 +366,21 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
             <TableHeader>
               <TableRow>
                 <TableHead>{t("field.address")}</TableHead>
-                <TableHead>{t("field.kind")}</TableHead>
-                <TableHead>{t("field.expires")}</TableHead>
-                <TableHead>{t("field.created")}</TableHead>
+                <TableHead className="w-32">{t("field.kind")}</TableHead>
+                <TableHead className="w-40">{t("field.expires")}</TableHead>
+                <TableHead className="w-44">{t("field.created")}</TableHead>
                 <TableHead className="w-px" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loaderData.inboxes.map((inbox) => (
                 <TableRow key={inbox.id}>
+                  {/* The address links to its mail, not to a page about itself.
+                      An address has no detail worth a page — what someone wants
+                      after finding the row is to read what came to it. */}
                   <TableCell className="max-w-0 truncate">
                     <TextLink
-                      render={<Link to={`/inboxes/${inbox.id}`} />}
+                      render={<Link to={`/inbox?inbox=${inbox.id}`} />}
                       variant="quiet"
                       className="font-mono text-[13px]"
                     >
@@ -256,7 +389,9 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
                   </TableCell>
                   <TableCell>
                     <Tag tone={inbox.kind === "persistent" ? "info" : "neutral"}>
-                      {inbox.kind}
+                      {inbox.kind === "persistent"
+                        ? t("inboxes.kindPersistent")
+                        : t("inboxes.kindEphemeral")}
                     </Tag>
                   </TableCell>
                   <TableCell>
@@ -275,11 +410,11 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
             </TableBody>
           </Table>
         )}
-      </Card>
+      </ListCard>
 
       {loaderData.cursor !== null && (
         <Pager
-          to={`/?cursor=${loaderData.cursor}${loaderData.includeExpired ? "&expired=1" : ""}`}
+          to={`/inboxes?cursor=${loaderData.cursor}${loaderData.includeExpired ? "&expired=1" : ""}`}
         />
       )}
     </>
