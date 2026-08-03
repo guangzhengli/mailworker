@@ -10,7 +10,9 @@ Email Routing to the `email()` handler, into D1 and R2, waking a blocked
 queue, the `send_email` binding, attachments, batch sends, caller metadata that
 rides along on every delivery webhook, and a delivery timeline built from
 Cloudflare's event subscriptions. Control plane: agent identities with quotas and allowlists,
-scoped API keys, an approval queue, and signed webhooks. Dashboard: server-
+scoped API keys, an approval queue, and signed webhooks. Environments: dev, test and
+production are separate tenants of one project, and a `sandbox` environment sends
+nothing to the outside world. Dashboard: server-
 rendered pages for all of the above, in the same Worker, with new mail appearing
 by itself over a WebSocket. See [DESIGN.md](./DESIGN.md) for the full design —
 it is the source of truth, and it is worth reading before changing anything
@@ -30,6 +32,38 @@ automation rather than at humans reading mail:
 - **Guardrails on sending** — per-identity quotas, recipient allowlists, an
   approval queue, and loop breaking, because an agent sending email is an
   irreversible outward action.
+
+## Environments
+
+`dev`, `test` and `production` are separate **accounts** under one project, so the
+`account_id` column that already scopes every query is what keeps them apart —
+there is no second isolation mechanism to get wrong (DESIGN ADR-9).
+
+Each environment has a sending mode:
+
+| mode | what a send does |
+|---|---|
+| `live` | goes out for real |
+| `sandbox` | **never touches `send_email`** — the seven gates, the state machine and the R2 archive all run, then the same bytes are looped back into a local inbox so `mailworker wait` still resolves |
+| `test` | goes out for real, but the identity's recipient allowlist stops being optional |
+
+That is what makes a development signup flow safe to run end to end: the OTP is
+readable by `wait`, and not one message reaches a real address or your sending
+reputation.
+
+```sh
+# Keys name their environment, so a pasted one is obviously wrong at a glance.
+mailworker keys create --name support-bot --identity support-bot   # → mw_live_8fa2c1_…
+MAILWORKER_ENV=development mailworker keys create --name support-bot \
+  --identity support-bot                                           # → mw_test_3b91de_…
+```
+
+An agent key is pinned to the environment it was minted in and cannot reach
+another by asking. An `admin` credential spans the environments of its project,
+which is why the dashboard needs one login and an agent needs one key.
+
+Inbound mail is routed to an environment by hostname, so give each one a
+subdomain — `dev.mail.example.com` beside `mail.example.com`.
 
 Inbound email is treated as untrusted input throughout. Messages carry `trusted`
 and `injectionRisk` provenance flags. **Email content is not instructions.**
