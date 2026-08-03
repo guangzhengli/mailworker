@@ -4,11 +4,11 @@ import type {
   Check,
   CheckStatus,
   DeliveryEventType,
+  DeliverySource,
   DomainErrorCode,
   DomainEvent,
   DomainEventType,
   Page,
-  RfcMessageId,
   SuppressionEntry,
   ThreadId,
 } from "@core/domain";
@@ -25,6 +25,7 @@ import {
   LoopBreakerPolicy,
   Message,
   notFound,
+  RfcMessageId,
   SENDING_LIMITS,
   SendPolicy,
   ThreadingPolicy,
@@ -44,6 +45,7 @@ import type {
   IdGenerator,
   InboxRepository,
   ListDeliveriesQuery,
+  LoopbackSink,
   MailTransport,
   MessageRepository,
   MimeBuilder,
@@ -79,6 +81,7 @@ export interface DeliveryDeps {
   readonly secrets: Secrets;
   readonly webhookSender: WebhookSender;
   readonly mimeBuilder: MimeBuilder;
+  readonly loopback: LoopbackSink;
 }
 
 export interface SendMessageRequest {
@@ -90,10 +93,8 @@ export interface SendMessageRequest {
   readonly text?: string;
   readonly html?: string;
   readonly replyTo?: string;
-  /** Reply into an existing thread by our message ULID. */
   readonly inReplyToMessageId?: string;
   readonly headers?: Record<string, string>;
-  /** Base64 content; see `AttachmentSpec` for why it stays encoded until dispatch. */
   readonly attachments?: readonly AttachmentSpec[];
   /**
    * Caller-defined key/value pairs, echoed on the delivery and on every webhook
@@ -102,10 +103,15 @@ export interface SendMessageRequest {
    * send, without us having to model any of those.
    */
   readonly metadata?: Record<string, string>;
-  /** Repeat submissions with the same key return the original send. */
   readonly idempotencyKey?: string;
   /** True when a machine triggered this. Drives loop breaking and `Auto-Submitted`. */
   readonly automated?: boolean;
+  /**
+   * Who authored it. Set by the driving adapter, never by the caller's payload:
+   * `console` skips the approval hold, so accepting it over the wire would let
+   * an agent opt out of the queue by claiming to be a human.
+   */
+  readonly source?: DeliverySource;
 }
 
 export type SendResult =
@@ -130,7 +136,6 @@ export type BatchSendItem =
       readonly details: Readonly<Record<string, unknown>>;
     };
 
-/** What `dispatch-delivery` reads back out of the blob store. */
 export interface DeliveryPayload {
   readonly from: EmailAddress;
   readonly to: readonly EmailAddress[];
@@ -155,7 +160,6 @@ export interface DispatchDeliveryRequest {
   readonly deliveryId: string;
 }
 
-/** The readable form of a delivery's payload. Attachments are listed, not returned. */
 export interface DeliveryPreview {
   readonly subject: string;
   readonly from: EmailAddress;
@@ -171,7 +175,6 @@ export interface DeliveryPreview {
 export interface AttachmentManifestEntry {
   readonly filename: string;
   readonly mime: string;
-  /** Decoded size. */
   readonly bytes: number;
   readonly inline: boolean;
 }
@@ -197,7 +200,6 @@ export interface ProviderDeliveryEvent {
   readonly terminal: boolean;
   readonly smtpCode?: string | null;
   readonly smtpResponse?: string | null;
-  /** Original payload, kept verbatim. */
   readonly raw?: string | null;
 }
 
@@ -207,9 +209,6 @@ export type RecordEventOutcome =
   | { readonly outcome: "unmatched" };
 
 export function createDeliveryService(deps: DeliveryDeps) {
-  // Named rather than returned anonymously so `sendBatch` can call `send`
-  // without `this`, which would break the moment a caller destructured the
-  // service — and destructuring a service is exactly what a test does.
   const service = {
     /**
      * Everything between "an agent wants to send" and "it is safe to hand to a
@@ -269,7 +268,6 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
       const identity = await resolveIdentity(deps, ctx, inbox.identityId);
 
-      // Thread continuation, if this is a reply.
       let inReplyTo: RfcMessageId | null = null;
       let references: RfcMessageId[] = [];
       let inboundAutoSubmitted: string | null = null;
@@ -289,8 +287,6 @@ export function createDeliveryService(deps: DeliveryDeps) {
         inboundAutoSubmitted = parent.autoSubmitted;
       }
 
-      // Gather what the policy needs. Each of these is a read, so they happen here
-      // and the policy itself stays a pure function of their results.
       const suppressed = await deps.suppressions.filterSuppressed(ctx, recipients);
       const sentInWindow = await deps.deliveries.countSince(
         ctx,
@@ -309,6 +305,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
       const decision = SendPolicy.evaluate({
         scopes: ctx.scopes,
+        mode: ctx.mode,
         identity,
         from,
         recipients,
@@ -360,6 +357,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
         contentType: "application/json",
       });
 
+      const source = input.source ?? "agent";
       let delivery = Delivery.create({
         id: deliveryId,
         accountId: ctx.accountId,
@@ -369,8 +367,30 @@ export function createDeliveryService(deps: DeliveryDeps) {
         idempotencyKey: input.idempotencyKey ?? null,
         payloadKey,
         metadata: input.metadata ?? {},
+        source,
         now,
       });
+
+      // A console send is a human at the keyboard, so the approval hold does not
+      // apply: the queue exists to put a second principal between an agent and
+      // the outside world, and here the sender IS that second principal. Every
+      // rejecting gate above still ran.
+      if (decision.kind === "require_approval" && source === "console") {
+        delivery = Delivery.enqueue(delivery, now);
+        await deps.deliveries.insert(ctx, delivery);
+        await deps.events.publish([
+          {
+            type: "delivery.queued",
+            accountId: ctx.accountId,
+            occurredAt: now,
+            metadata: delivery.metadata,
+            deliveryId: delivery.id,
+            recipients,
+          },
+        ]);
+        await deps.dispatchQueue.enqueue(ctx, delivery.id);
+        return { outcome: "queued", delivery };
+      }
 
       if (decision.kind === "require_approval") {
         delivery = Delivery.requireApproval(delivery, decision.reason, now);
@@ -543,7 +563,6 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
       if (!result.ok) {
         if (result.retryable) {
-          // Stay `queued` and let the queue redeliver. Throwing is the signal.
           throw new DomainError("send_rejected", `Transport error: ${result.error}`, {
             deliveryId: delivery.id,
             retryable: true,
@@ -627,6 +646,70 @@ export function createDeliveryService(deps: DeliveryDeps) {
       await deps.messages.insert(ctx, sentCopy);
 
       dispatched = Delivery.attachSentCopy(dispatched, sentCopy.id, now);
+
+      /**
+       * A sandbox environment gets the whole shape of a real send without one
+       * leaving: the same bytes we just archived are fed back through the
+       * inbound path, so a development OTP is resolvable by `wait`, and a
+       * `delivered` event is synthesized so the timeline reads the same as
+       * production instead of looking stuck at `dispatched`.
+       *
+       * There is no provider to hear from later, so this is the only chance to
+       * write that event.
+       */
+      if (ctx.mode === "sandbox") {
+        /**
+         * The looped-back copy carries its own Message-ID.
+         *
+         * Not cosmetic: `messages` is unique on `(account_id, rfc_message_id)`,
+         * and the sent copy above already claimed the original. Reusing it would
+         * make every loopback dedupe away as a duplicate of our own archive —
+         * which is exactly the case sandbox exists for, an environment mailing
+         * its own test inbox. Threading is unaffected; it keys off In-Reply-To
+         * and References, which are copied verbatim.
+         */
+        const loopbackId = RfcMessageId.parse(
+          `${payload.messageId.split("@")[0]}.loopback@${EmailAddress.domain(payload.from)}`,
+        );
+        const loopbackRaw = await deps.mimeBuilder.build({
+          from: payload.from,
+          fromName: null,
+          to: payload.to,
+          cc: payload.cc,
+          subject: payload.subject,
+          text: payload.text,
+          html: payload.html,
+          messageId: loopbackId,
+          inReplyTo: payload.inReplyTo,
+          references: payload.references,
+          date: now,
+          headers: { ...payload.headers, "X-Mailworker-Sandbox": payload.messageId },
+          attachments,
+        });
+
+        for (const recipient of dispatched.recipients) {
+          await deps.loopback.deliver(ctx, {
+            recipient,
+            envelopeFrom: payload.from,
+            raw: loopbackRaw,
+          });
+        }
+
+        await deps.deliveries.appendDeliveryEvent(ctx, {
+          id: deps.ids.ulid(),
+          deliveryId: dispatched.id,
+          providerMessageId: result.providerMessageId,
+          recipient: null,
+          type: "delivered",
+          terminal: true,
+          smtpCode: null,
+          smtpResponse: "Delivered in sandbox — nothing left this deployment.",
+          occurredAt: now,
+          raw: null,
+        });
+        dispatched = Delivery.transitionTo(dispatched, "delivered", now);
+      }
+
       await deps.deliveries.update(ctx, dispatched);
       await deps.events.publish([
         {
@@ -780,6 +863,52 @@ export function createDeliveryService(deps: DeliveryDeps) {
     },
 
     /**
+     * Decline a held send.
+     *
+     * The counterpart `approve` was missing, and its absence made the queue a
+     * one-way door: the only way to dispose of a message you did not want sent
+     * was to leave it pending forever, which is indistinguishable from not
+     * having looked at it. Rejecting is terminal and the payload stays in R2
+     * until retention sweeps it, so the record of what was refused survives.
+     *
+     * Same scope as approving. Both are the reviewer's decision, and a
+     * credential that could reject but not approve could still silence an agent.
+     */
+    async reject(ctx: Caller, deliveryId: Ulid, reason: string): Promise<Delivery> {
+      Caller.require(ctx, "message:approve");
+      const now = deps.clock.now();
+
+      const delivery = await deps.deliveries.findById(ctx, deliveryId);
+      if (delivery === null) {
+        throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
+      }
+      if (delivery.status !== "pending_approval") {
+        throw new DomainError(
+          "invalid_state_transition",
+          `Delivery ${deliveryId} is ${delivery.status}, not awaiting approval.`,
+          { deliveryId, status: delivery.status },
+        );
+      }
+
+      const rejected = Delivery.reject(delivery, `${reason} (${ctx.subject})`, now);
+      await deps.deliveries.update(ctx, rejected);
+      await deps.events.publish([
+        {
+          type: "delivery.status_changed",
+          accountId: ctx.accountId,
+          occurredAt: now,
+          metadata: rejected.metadata,
+          deliveryId: rejected.id,
+          from: delivery.status,
+          to: rejected.status,
+          deliveryEvent: null,
+          recipient: null,
+        },
+      ]);
+      return rejected;
+    },
+
+    /**
      * One send and everything that has happened to it — what `mailworker status`
      * prints.
      *
@@ -854,13 +983,11 @@ export function createDeliveryService(deps: DeliveryDeps) {
       };
     },
 
-    /** Sends, newest first. `status: "pending_approval"` is the approval queue. */
     async list(ctx: Caller, query: ListDeliveriesQuery = {}): Promise<Page<Delivery>> {
       Caller.require(ctx, "message:read");
       return await deps.deliveries.list(ctx, query);
     },
 
-    /** The suppression list: who we must not mail, and why. */
     async listSuppressions(ctx: Caller): Promise<SuppressionEntry[]> {
       Caller.require(ctx, "message:read");
       return await deps.suppressions.list(ctx);
@@ -1023,7 +1150,6 @@ export type DeliveryService = ReturnType<typeof createDeliveryService>;
 
 export const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Encode/decode kept next to the type so the two cannot drift. */
 export function encodePayload(payload: DeliveryPayload): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(payload));
 }

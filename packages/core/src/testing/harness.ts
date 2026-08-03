@@ -1,11 +1,12 @@
 import type { CoreDeps, Services } from "@core/application";
 import { createServices } from "@core/application";
 import type { Caller, DomainRouting, Scope } from "@core/domain";
-import { AccountId, Inbox } from "@core/domain";
+import { AccountId, Inbox, ProjectId } from "@core/domain";
 import {
   DeterministicIds,
   FakeClock,
   FakeSecrets,
+  InMemoryAccounts,
   InMemoryApiKeys,
   InMemoryBlobs,
   InMemoryDeliveries,
@@ -19,6 +20,7 @@ import {
   MemoryTransport,
   MemoryWaiter,
   RecordingEventBus,
+  RecordingLoopback,
   RecordingWebhookSender,
   SimpleMimeBuilder,
   SimpleMimeParser,
@@ -29,7 +31,6 @@ export const TEST_DOMAIN = "mail.example.com";
 
 export interface Harness {
   readonly deps: CoreDeps;
-  /** The three services, wired to the in-memory adapters. */
   readonly services: Services;
   /** Default caller: full scopes, no bound identity. */
   readonly ctx: Caller;
@@ -45,6 +46,9 @@ export interface Harness {
   readonly suppressions: InMemorySuppressions;
   readonly transport: MemoryTransport;
   readonly dispatchQueue: MemoryDispatchQueue;
+  readonly accounts: InMemoryAccounts;
+  /** Records what a sandbox environment looped back; see `RecordingLoopback`. */
+  readonly loopback: RecordingLoopback;
   readonly dns: StaticDns;
   readonly webhooks: InMemoryWebhooks;
   readonly webhookSender: RecordingWebhookSender;
@@ -53,11 +57,8 @@ export interface Harness {
   /** Records the specs it was handed; see `SimpleMimeBuilder`. */
   readonly mimeBuilder: SimpleMimeBuilder;
 
-  /** A context with a narrower scope set, for testing the gates. */
   withScopes(scopes: readonly Scope[]): Caller;
-  /** A context bound to an agent identity. */
   asIdentity(identityId: string, scopes?: readonly Scope[]): Caller;
-  /** Insert an inbox directly, bypassing the use case. */
   seedInbox(address: string, overrides?: Partial<SeedInboxOptions>): Promise<Inbox>;
 }
 
@@ -107,6 +108,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const events = new RecordingEventBus();
   const waiter = new MemoryWaiter();
   const mimeBuilder = new SimpleMimeBuilder();
+  const accounts = new InMemoryAccounts();
+  const loopback = new RecordingLoopback();
 
   const deps: CoreDeps = {
     clock,
@@ -129,10 +132,14 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     waiter,
     mimeParser: new SimpleMimeParser(),
     mimeBuilder,
+    accounts,
+    loopback,
   };
 
   const baseCtx: Caller = {
     accountId: AccountId.DEFAULT,
+    projectId: ProjectId.DEFAULT,
+    mode: "live",
     identityId: null,
     scopes: ["admin"],
     subject: "test",
@@ -154,6 +161,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     suppressions,
     transport,
     dispatchQueue,
+    accounts,
+    loopback,
     dns,
     webhooks,
     webhookSender,

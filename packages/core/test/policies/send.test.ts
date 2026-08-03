@@ -26,6 +26,7 @@ function identity(
 function evaluate(overrides: Partial<Parameters<typeof SendPolicy.evaluate>[0]> = {}) {
   return SendPolicy.evaluate({
     scopes: FULL_SCOPES,
+    mode: "live",
     identity: identity(),
     from: addr("agent@mail.example.com"),
     recipients: [addr("user@corp.com")],

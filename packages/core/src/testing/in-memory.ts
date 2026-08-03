@@ -9,6 +9,8 @@
  * test moves it, and `wait` never actually waits.
  */
 import type {
+  Account,
+  AccountId,
   AgentIdentity,
   ApiKey,
   Caller,
@@ -18,6 +20,7 @@ import type {
   Inbox,
   MessageSummary,
   Page,
+  ProjectId,
   SuppressionEntry,
   ThreadId,
   Ulid,
@@ -33,6 +36,7 @@ import {
   WaitCriteria,
 } from "@core/domain";
 import type {
+  AccountRepository,
   ApiKeyRepository,
   BlobMeta,
   BlobStore,
@@ -52,6 +56,8 @@ import type {
   ListDeliveriesQuery,
   ListInboxesQuery,
   ListMessagesQuery,
+  LoopbackMessage,
+  LoopbackSink,
   MailTransport,
   MessageRepository,
   MimeBuilder,
@@ -65,10 +71,6 @@ import type {
   WebhookRequest,
   WebhookSender,
 } from "@core/domain/ports";
-
-// ---------------------------------------------------------------------------
-// System
-// ---------------------------------------------------------------------------
 
 export class FakeClock implements Clock {
   constructor(private current: Date = new Date("2026-07-01T12:00:00.000Z")) {}
@@ -139,10 +141,6 @@ export class FakeSecrets implements Secrets {
     return hash === `fake:${plaintext}`;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Repositories
-// ---------------------------------------------------------------------------
 
 /** Every store keys by account first, mirroring the `account_id`-leading indexes. */
 function scoped<T>(map: Map<string, T[]>, ctx: Caller): T[] {
@@ -338,6 +336,15 @@ export class InMemoryDeliveries implements DeliveryRepository {
   readonly rows = new Map<string, Delivery[]>();
   readonly events = new Map<string, DeliveryEvent[]>();
 
+  async resolveAccount(providerId: string): Promise<AccountId | null> {
+    for (const [accountId, rows] of this.rows) {
+      if (rows.some((row) => row.providerMessageId === providerId)) {
+        return accountId as AccountId;
+      }
+    }
+    return null;
+  }
+
   async insert(ctx: Caller, delivery: Delivery): Promise<void> {
     scoped(this.rows, ctx).push(delivery);
   }
@@ -431,6 +438,8 @@ export class InMemoryApiKeys implements ApiKeyRepository {
 }
 
 export class InMemoryDomains implements DomainRepository {
+  readonly owners = new Map<string, AccountId>();
+
   constructor(public routings: DomainRouting[] = []) {}
 
   async findRouting(_ctx: Caller, domain: string): Promise<DomainRouting | null> {
@@ -440,11 +449,41 @@ export class InMemoryDomains implements DomainRepository {
   async list(_ctx: Caller): Promise<DomainRouting[]> {
     return [...this.routings];
   }
+
+  async resolveAccount(domain: string): Promise<AccountId | null> {
+    return this.owners.get(domain.toLowerCase()) ?? null;
+  }
+
+  async insert(ctx: Caller, routing: DomainRouting): Promise<void> {
+    this.routings.push(routing);
+    this.owners.set(routing.domain.toLowerCase(), ctx.accountId);
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Storage, transport, messaging
-// ---------------------------------------------------------------------------
+/** Records what a sandbox send looped back, so a test can assert it never left. */
+export class RecordingLoopback implements LoopbackSink {
+  readonly delivered: { ctx: Caller; message: LoopbackMessage }[] = [];
+
+  async deliver(ctx: Caller, message: LoopbackMessage): Promise<void> {
+    this.delivered.push({ ctx, message });
+  }
+}
+
+export class InMemoryAccounts implements AccountRepository {
+  readonly rows = new Map<string, Account>();
+
+  async findById(id: AccountId): Promise<Account | null> {
+    return this.rows.get(id) ?? null;
+  }
+
+  async listByProject(projectId: ProjectId): Promise<Account[]> {
+    return [...this.rows.values()].filter((row) => row.projectId === projectId);
+  }
+
+  async insert(account: Account): Promise<void> {
+    this.rows.set(account.id, account);
+  }
+}
 
 export class InMemoryBlobs implements BlobStore {
   readonly objects = new Map<string, { body: Uint8Array; meta: BlobMeta | undefined }>();
@@ -517,7 +556,6 @@ export class InMemorySuppressions implements SuppressionList {
  */
 export class MemoryTransport implements MailTransport {
   readonly sent: DispatchRequest[] = [];
-  /** Set to make the next dispatch fail. */
   nextResult: DispatchResult | null = null;
   private counter = 0;
 

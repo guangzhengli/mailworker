@@ -42,22 +42,19 @@ export interface CreateApiKeyInput {
 export const API_KEY_PREFIX = "mw";
 
 /**
- * The token format: `mw_live_<public>_<secret>`.
+ * The token format: `mw_live_<public>_<secret>` or `mw_test_<public>_<secret>`.
  *
  * The public head is stored in the clear and indexed, so authenticating is one
- * lookup by a short string rather than a hash comparison against every key in
- * the table. It is also what makes a leaked token greppable — `mw_live_8fa2c1`
- * in a log or a repository identifies exactly which key to revoke, without the
- * log holding anything that could be used to authenticate.
- *
- * Split rather than parsed into an object with methods: everything downstream
- * wants the two halves, and there is nothing else to know about a token.
+ * lookup rather than a hash comparison against every key — and a token leaked
+ * into a log identifies which key to revoke without holding anything that could
+ * authenticate. The `live`/`test` half makes pasting the wrong environment's key
+ * visible at a glance.
  */
 export const ApiKeyToken = {
-  PATTERN: /^(mw_live_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
+  PATTERN: /^(mw_(?:live|test)_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
 
-  format(publicId: string, secret: string): string {
-    return `mw_live_${publicId}_${secret}`;
+  format(keyPrefix: "mw_live" | "mw_test", publicId: string, secret: string): string {
+    return `${keyPrefix}_${publicId}_${secret}`;
   },
 
   /** Null when the string is not shaped like a token at all. */

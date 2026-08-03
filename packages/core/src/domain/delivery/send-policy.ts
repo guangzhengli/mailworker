@@ -2,6 +2,8 @@ import type { LoopVerdict } from "@core/domain/delivery/loop-breaker-policy";
 import type { EmailAddress } from "@core/domain/email-address";
 import type { DomainErrorCode } from "@core/domain/errors";
 import { DomainError } from "@core/domain/errors";
+import type { AccountMode } from "@core/domain/identity/account";
+import { Account } from "@core/domain/identity/account";
 import { AgentIdentity } from "@core/domain/identity/agent-identity";
 import { Scope } from "@core/domain/identity/scope";
 
@@ -17,6 +19,8 @@ export type SendDecision =
 
 export interface SendPolicyInput {
   readonly scopes: readonly Scope[];
+  /** The environment's send semantics. `test` makes the allowlist mandatory. */
+  readonly mode: AccountMode;
   /**
    * Null when the credential is not bound to an agent identity. Gate 2 then
    * allows the send only for `admin`, which cannot be bound by construction —
@@ -48,15 +52,12 @@ export interface SendPolicyInput {
  */
 export const SendPolicy = {
   evaluate(input: SendPolicyInput): SendDecision {
-    // Gate 1 — scope.
     if (!Scope.satisfies(input.scopes, "message:send")) {
       return reject("forbidden", "This credential lacks the message:send scope.", {
         required: "message:send",
       });
     }
 
-    // Gate 2 — is there anything to meter at all?
-    //
     // Gates 3, 4 and 6 are all properties OF an identity, so an unbound
     // credential does not merely have generous limits, it skips those gates
     // entirely: any From address, any recipient, unlimited volume. `--identity`
@@ -80,7 +81,6 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 3 — is this identity allowed to be this sender?
     if (input.identity !== null && !AgentIdentity.canSendAs(input.identity, input.from)) {
       return reject(
         "send_rejected",
@@ -89,9 +89,20 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 4 — recipient allowlist.
     const identity = input.identity;
     if (identity !== null) {
+      // In a `test` environment the allowlist stops being optional. The whole
+      // point of that mode is that it sends for real, which makes an identity
+      // with no allowlist a development agent that can mail a customer.
+      if (Account.requiresAllowlist(input.mode) && identity.recipientAllowlist === null) {
+        return reject(
+          "send_rejected",
+          `Identity "${identity.name}" has no recipient allowlist, and a test ` +
+            "environment sends for real. Give it one, or move it to a sandbox environment.",
+          { mode: input.mode, identity: identity.name },
+        );
+      }
+
       const blocked = input.recipients.filter(
         (recipient) => !AgentIdentity.canSendTo(identity, recipient),
       );
@@ -104,8 +115,8 @@ export const SendPolicy = {
       }
     }
 
-    // Gate 5 — suppression list. Sending here would bounce or draw a complaint,
-    // and both damage the account's sending reputation.
+    // Sending here would bounce or draw a complaint, and both damage the
+    // account's sending reputation.
     if (input.suppressedRecipients.length > 0) {
       return reject(
         "suppressed_recipient",
@@ -114,7 +125,6 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 6 — quota.
     const quota = input.identity?.dailySendQuota ?? null;
     if (quota !== null && input.sentInWindow >= quota) {
       return reject(
@@ -124,7 +134,6 @@ export const SendPolicy = {
       );
     }
 
-    // Gate 7 — loop breaker.
     if (input.loop.looping) {
       return reject("loop_detected", input.loop.detail ?? "Send would form a mail loop.", {
         reason: input.loop.reason,
@@ -141,7 +150,6 @@ export const SendPolicy = {
     return { kind: "allow" };
   },
 
-  /** Turn a rejection into the error the API and CLI surface. */
   toError(decision: Extract<SendDecision, { kind: "reject" }>): DomainError {
     return new DomainError(decision.code, decision.reason, { ...decision.details });
   },

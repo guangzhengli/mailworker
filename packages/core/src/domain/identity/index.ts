@@ -6,6 +6,7 @@
  * `AgentIdentity` is the leash (send-as pattern, recipient allowlist, quota,
  * approval), and a `Caller` is one request's worth of all three.
  */
+export * from "@core/domain/identity/account";
 export * from "@core/domain/identity/account-id";
 export * from "@core/domain/identity/agent-identity";
 export * from "@core/domain/identity/api-key";

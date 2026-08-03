@@ -1,19 +1,21 @@
 import { DomainError } from "@core/domain/errors";
+import type { AccountMode, ProjectId } from "@core/domain/identity/account";
 import type { AccountId } from "@core/domain/identity/account-id";
 import { Scope } from "@core/domain/identity/scope";
 import type { Ulid } from "@core/domain/ulid";
 
 /**
- * Who is making this request. Built once per request by an `Authenticator` and
- * threaded explicitly through every port call.
+ * Who is making this request, and against which environment.
  *
- * Explicit threading is the point. It would be less typing to stash this in an
- * async-local or a module singleton, and that is exactly how systems end up with
- * a query that forgot to filter by tenant. Making it a parameter means the
- * compiler asks the question at every call site.
+ * Threaded explicitly through every port call rather than stashed in an
+ * async-local: making it a parameter is what stops a query forgetting to filter
+ * by tenant, and an environment IS a tenant here.
  */
 export interface Caller {
   readonly accountId: AccountId;
+  readonly projectId: ProjectId;
+  /** The environment's send semantics. Read by SendPolicy and the transport. */
+  readonly mode: AccountMode;
   /** The agent identity this credential acts as, if any. */
   readonly identityId: Ulid | null;
   readonly scopes: readonly Scope[];
@@ -21,23 +23,28 @@ export interface Caller {
   readonly subject: string;
 }
 
+export interface SystemCallerInput {
+  readonly accountId: AccountId;
+  readonly projectId: ProjectId;
+  readonly mode: AccountMode;
+  readonly subject: `system:${string}`;
+}
+
 export const Caller = {
   /**
-   * The deployment acting on its own behalf, for work that no credential asked
-   * for: inbound mail arriving from Email Routing, a queue consumer draining a
-   * batch, a cron sweeping expired inboxes.
-   *
-   * These are the only callers that may be minted without authenticating, so
-   * the constructor is deliberately narrow and the `subject` is required —
-   * `system:email` and `system:queue` have to be told apart in an audit trail,
-   * and a shared "system" label would make that impossible after the fact.
-   *
-   * It carries `admin`, because there is nobody to ask for a narrower grant and
-   * the alternative — exempting these paths from scope checks entirely — would
-   * put a second authorization rule in the codebase.
+   * The deployment acting on its own behalf: inbound mail, a queue consumer, a
+   * cron sweep. It carries `admin` because there is nobody to ask for a narrower
+   * grant, and the `subject` is required so the audit trail can tell these apart.
    */
-  system(accountId: AccountId, subject: `system:${string}`): Caller {
-    return { accountId, identityId: null, scopes: ["admin"], subject };
+  system(input: SystemCallerInput): Caller {
+    return {
+      accountId: input.accountId,
+      projectId: input.projectId,
+      mode: input.mode,
+      identityId: null,
+      scopes: ["admin"],
+      subject: input.subject,
+    };
   },
 
   has(ctx: Caller, scope: Scope): boolean {
@@ -51,5 +58,10 @@ export const Caller = {
         subject: ctx.subject,
       });
     }
+  },
+
+  /** Same credential, pointed at a sibling environment. Admin only — see `callerForToken`. */
+  inEnvironment(ctx: Caller, accountId: AccountId, mode: AccountMode): Caller {
+    return { ...ctx, accountId, mode };
   },
 } as const;

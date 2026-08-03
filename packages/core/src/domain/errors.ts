@@ -4,12 +4,10 @@
  * parsing prose. Never change a code once released; add a new one instead.
  */
 export type DomainErrorCode =
-  // validation
   | "invalid_email_address"
   | "invalid_ulid"
   | "invalid_message_id"
   | "invalid_argument"
-  // mailbox
   | "inbox_not_found"
   | "inbox_expired"
   | "address_taken"
@@ -18,7 +16,7 @@ export type DomainErrorCode =
   | "identity_not_found"
   | "api_key_not_found"
   | "webhook_not_found"
-  // delivery
+  | "environment_not_found"
   | "invalid_state_transition"
   | "send_rejected"
   | "quota_exceeded"
@@ -26,10 +24,8 @@ export type DomainErrorCode =
   | "suppressed_recipient"
   | "approval_required"
   | "message_too_large"
-  // access
   | "unauthorized"
   | "forbidden"
-  // waiting
   | "wait_timeout";
 
 export class DomainError extends Error {

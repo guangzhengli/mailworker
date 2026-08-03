@@ -56,6 +56,26 @@ export interface WebhookRequest {
   readonly timestamp: Date;
 }
 
+/**
+ * Where a send goes in a `sandbox` environment instead of the network.
+ *
+ * A port rather than a call into the ingestion service, because the two are
+ * different layers and wiring them directly would make the application depend on
+ * itself. The composition root binds this to the same ingest path inbound mail
+ * takes, which is what makes a development OTP resolvable by `wait` without a
+ * single message leaving the building.
+ */
+export interface LoopbackSink {
+  deliver(ctx: Caller, message: LoopbackMessage): Promise<void>;
+}
+
+export interface LoopbackMessage {
+  readonly recipient: EmailAddress;
+  readonly envelopeFrom: EmailAddress;
+  /** The same bytes archived as the sent copy, so the two cannot disagree. */
+  readonly raw: Uint8Array;
+}
+
 export interface DispatchRequest {
   readonly from: EmailAddress;
   readonly fromName: string | null;

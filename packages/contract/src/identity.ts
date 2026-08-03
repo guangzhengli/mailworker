@@ -1,6 +1,44 @@
 import { scope, toIso } from "@contract/primitives";
-import type { AgentIdentity, ApiKey, WebhookSubscription } from "@mailworker/core";
+import type { Account, AgentIdentity, ApiKey, WebhookSubscription } from "@mailworker/core";
 import { z } from "zod";
+
+/**
+ * `POST /v1/environments` — a dev, test or production tenant of this project.
+ *
+ * An environment IS an account, so creating one creates the tenant every other
+ * row is scoped by. `mode` is the part that matters: `sandbox` never reaches the
+ * network (DESIGN ADR-9).
+ */
+export const createEnvironmentBody = z.strictObject({
+  env: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "lowercase alphanumeric with - or _"),
+  name: z.string().optional(),
+  mode: z.enum(["live", "sandbox", "test"]),
+  /** The hostname it receives on. One environment per hostname. */
+  domain: z.string().optional(),
+});
+
+export const environmentDto = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  env: z.string(),
+  name: z.string(),
+  mode: z.enum(["live", "sandbox", "test"]),
+  createdAt: z.string(),
+});
+
+export type CreateEnvironmentBody = z.infer<typeof createEnvironmentBody>;
+export type EnvironmentDto = z.infer<typeof environmentDto>;
+
+export function toEnvironmentDto(account: Account): EnvironmentDto {
+  return {
+    id: account.id,
+    projectId: account.projectId,
+    env: account.env,
+    name: account.name,
+    mode: account.mode,
+    createdAt: toIso(account.createdAt),
+  };
+}
 
 /**
  * `POST /v1/identities` — declaring an agent and the rope it gets.

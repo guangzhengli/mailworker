@@ -6,6 +6,7 @@ import {
   EmailAddress,
   Inbox,
   Message,
+  ProjectId,
   RfcMessageId,
   ThreadId,
 } from "@core/domain";
@@ -49,15 +50,23 @@ export interface ConformanceSubject {
 export const CONFORMANCE_DOMAIN = "mail.example.com";
 const NOW = new Date("2026-07-01T12:00:00.000Z");
 
-/** Two tenants, so every read can be checked for leaking across the boundary. */
+/**
+ * Two tenants, so every read can be checked for leaking across the boundary.
+ * They share a project, which is exactly the environment case: sibling
+ * environments must not see each other's rows either.
+ */
 const ALICE: Caller = {
   accountId: AccountId.parse("alice"),
+  projectId: ProjectId.DEFAULT,
+  mode: "live",
   identityId: null,
   scopes: ["admin"],
   subject: "test:alice",
 };
 const BOB: Caller = {
   accountId: AccountId.parse("bob"),
+  projectId: ProjectId.DEFAULT,
+  mode: "sandbox",
   identityId: null,
   scopes: ["admin"],
   subject: "test:bob",
@@ -123,10 +132,6 @@ export function runRepositoryConformance(
       }),
       ...overrides,
     });
-
-    // ---------------------------------------------------------------------
-    // Inboxes
-    // ---------------------------------------------------------------------
 
     describe("inboxes", () => {
       it("round-trips every field", async () => {
@@ -258,10 +263,6 @@ export function runRepositoryConformance(
         expect(after).toEqual(inbox);
       });
     });
-
-    // ---------------------------------------------------------------------
-    // Messages
-    // ---------------------------------------------------------------------
 
     describe("messages", () => {
       it("round-trips every field, attachments included", async () => {
@@ -476,7 +477,6 @@ export function runRepositoryConformance(
           ALICE,
           aMessage({ direction: "inbound", from, to: [bob], receivedAt: NOW }),
         );
-        // Outside the window.
         await s.messages.insert(
           ALICE,
           aMessage({
@@ -559,10 +559,6 @@ export function runRepositoryConformance(
         expect(await s.messages.findById(ALICE, message.id)).not.toBeNull();
       });
     });
-
-    // ---------------------------------------------------------------------
-    // Outbound and delivery events
-    // ---------------------------------------------------------------------
 
     describe("deliveries", () => {
       it("round-trips every field and persists a transition", async () => {
@@ -697,10 +693,6 @@ export function runRepositoryConformance(
         expect(await s.deliveries.countSince(BOB, null, new Date(0))).toBe(0);
       });
     });
-
-    // ---------------------------------------------------------------------
-    // Identities, keys, suppressions, blobs
-    // ---------------------------------------------------------------------
 
     describe("identities", () => {
       const anIdentity = (name: string, overrides: Partial<AgentIdentity> = {}) => ({

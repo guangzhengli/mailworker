@@ -1,8 +1,11 @@
 import type {
+  Account,
+  AccountId,
   AgentIdentity,
   ApiKey,
   Caller,
   Delivery,
+  DeliverySource,
   DeliveryStatus,
   Direction,
   DomainRouting,
@@ -12,11 +15,23 @@ import type {
   MessageSummary,
   Page,
   PageRequest,
+  ProjectId,
   RfcMessageId,
   ThreadId,
   Ulid,
   WebhookSubscription,
 } from "@core/domain";
+
+/**
+ * Environments, which are accounts. Every lookup here happens before or beside a
+ * `Caller` rather than under one, because resolving which environment a request
+ * targets is what produces the `Caller` in the first place.
+ */
+export interface AccountRepository {
+  findById(id: AccountId): Promise<Account | null>;
+  listByProject(projectId: ProjectId): Promise<Account[]>;
+  insert(account: Account): Promise<void>;
+}
 
 export interface InboxRepository {
   findById(ctx: Caller, id: Ulid): Promise<Inbox | null>;
@@ -97,6 +112,15 @@ export interface DeliveryRepository {
   findByIdempotencyKey(ctx: Caller, key: string): Promise<Delivery | null>;
   /** Correlates an inbound provider delivery event back to its send. */
   findByProviderMessageId(ctx: Caller, providerId: string): Promise<Delivery | null>;
+  /**
+   * Which environment a provider delivery event belongs to.
+   *
+   * Unscoped, and one of only three queries entitled to be: a provider event
+   * arrives from Cloudflare carrying its own message id and nothing that names
+   * an environment, so this is what produces the `Caller` the rest of the
+   * handling runs under. Safe because a provider message id is globally unique.
+   */
+  resolveAccount(providerId: string): Promise<AccountId | null>;
   list(ctx: Caller, query: ListDeliveriesQuery): Promise<Page<Delivery>>;
   countSince(ctx: Caller, identityId: Ulid | null, since: Date): Promise<number>;
   appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<void>;
@@ -105,7 +129,9 @@ export interface DeliveryRepository {
 
 export interface ListDeliveriesQuery extends PageRequest {
   readonly status?: DeliveryStatus;
+  readonly statusIn?: readonly DeliveryStatus[];
   readonly identityId?: Ulid;
+  readonly source?: DeliverySource;
 }
 
 /** Append-only delivery event row. The timeline `mailworker status` prints. */
@@ -157,4 +183,21 @@ export interface DomainRepository {
   /** Routing config for a hostname, or null if this deployment does not own it. */
   findRouting(ctx: Caller, domain: string): Promise<DomainRouting | null>;
   list(ctx: Caller): Promise<DomainRouting[]>;
+  /**
+   * Which environment receives mail for a hostname.
+   *
+   * Unscoped for the same reason as `DeliveryRepository.resolveAccount`:
+   * inbound mail arrives naming an address and nothing else, so the domain is
+   * what decides which environment it lands in. This is why environments want
+   * separate hostnames — `dev.mail.example.com` beside `mail.example.com`.
+   */
+  resolveAccount(domain: string): Promise<AccountId | null>;
+  /**
+   * Register a hostname for this environment.
+   *
+   * A hostname belongs to exactly one environment, because `resolveAccount` is
+   * how inbound mail picks one and there is nothing to disambiguate with. The
+   * caller checks that before inserting.
+   */
+  insert(ctx: Caller, routing: DomainRouting): Promise<void>;
 }

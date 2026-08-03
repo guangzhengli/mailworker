@@ -1,5 +1,6 @@
-import type { Scope, Ulid } from "@core/domain";
+import type { AccountId, AccountMode, Scope, Ulid } from "@core/domain";
 import {
+  Account,
   AgentIdentity,
   ApiKey,
   ApiKeyToken,
@@ -9,8 +10,10 @@ import {
   notFound,
 } from "@core/domain";
 import type {
+  AccountRepository,
   ApiKeyRepository,
   Clock,
+  DomainRepository,
   IdentityRepository,
   IdGenerator,
   Secrets,
@@ -31,22 +34,33 @@ export interface IdentityDeps {
   readonly secrets: Secrets;
   readonly identities: IdentityRepository;
   readonly apiKeys: ApiKeyRepository;
+  readonly accounts: AccountRepository;
+  readonly domains: DomainRepository;
+}
+
+export interface CreateEnvironmentRequest {
+  readonly env: string;
+  readonly name?: string;
+  readonly mode: AccountMode;
+  /**
+   * The hostname this environment receives on. Without one it can hold no
+   * inboxes at all, because an address needs a domain this environment owns.
+   */
+  readonly domain?: string;
 }
 
 export interface CreateIdentityRequest {
   readonly name: string;
-  /** Address glob this identity may put in `From`. Null or absent means any owned address. */
   readonly sendAs?: string | null;
-  /** Address globs it may send TO. `[]` means "nobody", which is not the same as absent. */
   readonly recipientAllowlist?: readonly string[] | null;
   readonly dailySendQuota?: number | null;
   readonly requireApproval?: boolean;
+  readonly managed?: boolean;
 }
 
 export interface CreateKeyRequest {
   readonly name: string;
   readonly scopes: readonly Scope[];
-  /** Bind the key to an identity, so `SendPolicy` has something to meter. */
   readonly identityName?: string;
   readonly expiresAt?: Date | null;
 }
@@ -61,15 +75,82 @@ export interface CreateKeyRequest {
  */
 export interface MintedKey {
   readonly key: ApiKey;
-  /** Shown once. There is no way to recover it, by construction.  */
   readonly token: string;
 }
 
 const PUBLIC_ID_BYTES = 3;
 const SECRET_BYTES = 24;
 
+export const CONSOLE_IDENTITY = "console";
+
 export function createIdentityService(deps: IdentityDeps) {
   return {
+    async listEnvironments(ctx: Caller): Promise<Account[]> {
+      return await deps.accounts.listByProject(ctx.projectId);
+    },
+
+    /**
+     * Add an environment to this project.
+     *
+     * `admin` only, and the account id is derived rather than chosen: it is the
+     * tenant key every row in the new environment will carry, so letting a
+     * caller pick it is letting them collide with an existing one.
+     */
+    async createEnvironment(ctx: Caller, input: CreateEnvironmentRequest): Promise<Account> {
+      Caller.require(ctx, "admin");
+
+      const existing = await deps.accounts.listByProject(ctx.projectId);
+      if (existing.some((account) => account.env === input.env)) {
+        throw new DomainError("invalid_argument", `An environment named ${input.env} exists.`, {
+          env: input.env,
+        });
+      }
+
+      const account = Account.create({
+        id: `${ctx.projectId}-${input.env}` as AccountId,
+        projectId: ctx.projectId,
+        env: input.env,
+        name: input.name ?? input.env,
+        mode: input.mode,
+        now: deps.clock.now(),
+      });
+
+      // A hostname belongs to exactly one environment: inbound mail names an
+      // address and nothing else, so `resolveAccount` has nothing to
+      // disambiguate with and would pick one of two arbitrarily. Refusing here
+      // is what makes "give each environment a subdomain" a rule rather than
+      // advice.
+      if (input.domain !== undefined) {
+        const owner = await deps.domains.resolveAccount(input.domain);
+        if (owner !== null) {
+          throw new DomainError(
+            "invalid_argument",
+            `${input.domain} already receives mail for environment ${owner}. ` +
+              "Give each environment its own hostname, e.g. dev.mail.example.com.",
+            { domain: input.domain, owner },
+          );
+        }
+      }
+
+      await deps.accounts.insert(account);
+
+      if (input.domain !== undefined) {
+        await deps.domains.insert(
+          { ...ctx, accountId: account.id, mode: account.mode },
+          {
+            domain: input.domain.toLowerCase(),
+            catchAllMode: "reject",
+            catchAllInboxId: null,
+            autocreatePattern: null,
+            sendingStatus: account.mode === "sandbox" ? "verified" : "unverified",
+            dkimSelector: null,
+          },
+        );
+      }
+
+      return account;
+    },
+
     /**
      * Declare an agent and its limits.
      *
@@ -101,6 +182,7 @@ export function createIdentityService(deps: IdentityDeps) {
         ...(input.requireApproval === undefined
           ? {}
           : { requireApproval: input.requireApproval }),
+        ...(input.managed === undefined ? {} : { managed: input.managed }),
       });
 
       await deps.identities.insert(ctx, identity);
@@ -110,6 +192,42 @@ export function createIdentityService(deps: IdentityDeps) {
     async listIdentities(ctx: Caller): Promise<AgentIdentity[]> {
       Caller.require(ctx, "admin");
       return await deps.identities.list(ctx);
+    },
+
+    /**
+     * The identity a human's dashboard sends are metered against.
+     *
+     * Without it a console send rides the session's own credential, which for a
+     * human is usually `admin` — and gate 2 exempts `admin` from the sender
+     * rule, the recipient allowlist and the quota entirely. That would make the
+     * dashboard the one unmetered way out of the building, which is exactly the
+     * shape `SendPolicy` exists to prevent.
+     *
+     * Provisioned on first use rather than by a migration, so a deployment that
+     * never sends from the dashboard never grows the row. `managed` marks it as
+     * ours: the Agents page shows it apart from the identities an operator
+     * declared, because deleting it would only cause it to come back.
+     */
+    async ensureConsoleIdentity(ctx: Caller): Promise<AgentIdentity> {
+      Caller.require(ctx, "admin");
+
+      const existing = await deps.identities.findByName(ctx, CONSOLE_IDENTITY);
+      if (existing !== null) return existing;
+
+      const identity = AgentIdentity.create({
+        id: deps.ids.ulid(),
+        accountId: ctx.accountId,
+        name: CONSOLE_IDENTITY,
+        // No allowlist and no quota: a human replying to support mail must be
+        // able to reach whoever wrote in. The metering that matters here is
+        // attribution — every console delivery names this identity, so "who
+        // sent this" stays answerable.
+        now: deps.clock.now(),
+        managed: true,
+      });
+
+      await deps.identities.insert(ctx, identity);
+      return identity;
     },
 
     /**
@@ -154,13 +272,16 @@ export function createIdentityService(deps: IdentityDeps) {
         identityId = identity.id;
       }
 
+      // The prefix names the environment, so pasting a development key into a
+      // production shell is visible rather than merely rejected.
+      const keyPrefix = Account.keyPrefix(ctx.mode);
       const publicId = deps.secrets.generate(PUBLIC_ID_BYTES);
       const secret = deps.secrets.generate(SECRET_BYTES);
       const key = ApiKey.create({
         id: deps.ids.ulid(),
         accountId: ctx.accountId,
         name: input.name,
-        prefix: `mw_live_${publicId}`,
+        prefix: `${keyPrefix}_${publicId}`,
         hash: await deps.secrets.hash(secret),
         scopes: input.scopes,
         now: deps.clock.now(),
@@ -169,7 +290,7 @@ export function createIdentityService(deps: IdentityDeps) {
       });
 
       await deps.apiKeys.insert(ctx, key);
-      return { key, token: ApiKeyToken.format(publicId, secret) };
+      return { key, token: ApiKeyToken.format(keyPrefix, publicId, secret) };
     },
 
     async listKeys(ctx: Caller): Promise<ApiKey[]> {
