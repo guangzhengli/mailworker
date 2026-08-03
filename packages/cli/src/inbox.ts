@@ -5,6 +5,7 @@ import { Command } from "commander";
 
 interface CreateOptions extends OutputOptions {
   ttl?: string;
+  name?: string;
   prefix?: string;
   domain?: string;
   address?: string;
@@ -32,6 +33,7 @@ export function inboxCommand(client: () => Client): Command {
     .command("create")
     .description("Mint a receiving address")
     .option("--address <address>", "use this exact address instead of generating one")
+    .option("--name <name>", "use <name>@<domain> verbatim — no random suffix")
     .option("--prefix <prefix>", "generate <prefix>-<random>@<domain>")
     .option("--domain <domain>", "required only when the deployment serves several")
     .option("--ttl <duration>", "how long it lives, e.g. 10m, 2h (default 1h)")
@@ -41,6 +43,7 @@ export function inboxCommand(client: () => Client): Command {
     .action(async (options: CreateOptions) => {
       const created = await client().post<InboxDto>("/v1/inboxes", {
         ...(options.address === undefined ? {} : { address: options.address }),
+        ...(options.name === undefined ? {} : { localPart: options.name }),
         ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
         ...(options.domain === undefined ? {} : { domain: options.domain }),
         ...(options.ttl === undefined ? {} : { ttl: options.ttl }),

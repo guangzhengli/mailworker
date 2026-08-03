@@ -33,13 +33,6 @@ import type {
   Secrets,
   Waiter,
 } from "@core/domain/ports";
-/**
- * mailbox — everything a caller does with inboxes and stored messages.
- *
- * One service per bounded context, so "what can this domain do" is answerable
- * by reading one file rather than by listing a directory of loose functions.
- */
-
 export interface MailboxDeps {
   readonly clock: Clock;
   readonly ids: IdGenerator;
@@ -63,13 +56,10 @@ export interface ListInboxesRequest extends Omit<ListInboxesQuery, "activeAt"> {
 }
 
 export interface CreateInboxRequest {
-  /** Full address. Mutually exclusive with `prefix`. */
   readonly address?: string;
-  /** Generate `<prefix>-<random>@<domain>`. Defaults to `inbox`. */
+  readonly localPart?: string;
   readonly prefix?: string;
-  /** Required only when the deployment serves more than one domain. */
   readonly domain?: string;
-  /** Omit for `persistent`; defaults to 1 hour for `ephemeral`. */
   readonly ttlMs?: number;
   readonly kind?: InboxKind;
   readonly displayName?: string;
@@ -82,7 +72,6 @@ const RANDOM_SUFFIX_BYTES = 6;
 
 export interface WaitForMessageRequest extends WaitCriteria {
   readonly timeoutMs?: number;
-  /** Pull the useful bit out of the body instead of returning the whole message. */
   readonly extract?: ExtractKind;
 }
 
@@ -90,7 +79,6 @@ export type WaitOutcome =
   | {
       readonly outcome: "matched";
       readonly message: Message;
-      /** Present when `extract` was requested; null when nothing matched. */
       readonly extracted: string | null;
     }
   | { readonly outcome: "timeout"; readonly waitedMs: number };
@@ -98,17 +86,14 @@ export type WaitOutcome =
 export const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 export const MAX_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Inboxes erased per sweep. See `sweepExpired` for why this is bounded at all. */
 export const DEFAULT_SWEEP_LIMIT = 200;
 
 export interface SweepExpiredOptions {
-  /** How long an expired inbox stays readable. Defaults to 24h. */
   readonly gracePeriodMs?: number;
   readonly limit?: number;
 }
 
 export interface SweepExpiredResult {
-  /** Inboxes the query returned — the backlog is larger when this equals `limit`. */
   readonly examined: number;
   readonly purged: number;
   readonly messagesDeleted: number;
@@ -129,15 +114,22 @@ export function createMailboxService(deps: MailboxDeps) {
       Caller.require(ctx, "inbox:write");
       const now = deps.clock.now();
 
-      if (input.address !== undefined && input.prefix !== undefined) {
-        throw invalidArgument("Pass either `address` or `prefix`, not both.");
+      const named = (["address", "localPart", "prefix"] as const).filter(
+        (key) => input[key] !== undefined,
+      );
+      if (named.length > 1) {
+        throw invalidArgument(
+          `Pass one of \`address\`, \`localPart\` or \`prefix\`, not ${named.join(" and ")}.`,
+        );
       }
 
       let address = input.address;
       if (address === undefined) {
         const domain = await resolveDomain(deps, ctx, input.domain);
-        const suffix = deps.secrets.generate(RANDOM_SUFFIX_BYTES);
-        address = `${input.prefix ?? "inbox"}-${suffix}@${domain}`;
+        address =
+          input.localPart === undefined
+            ? `${input.prefix ?? "inbox"}-${deps.secrets.generate(RANDOM_SUFFIX_BYTES)}@${domain}`
+            : `${input.localPart}@${domain}`;
       }
 
       const kind: InboxKind = input.kind ?? "ephemeral";
@@ -173,7 +165,7 @@ export function createMailboxService(deps: MailboxDeps) {
 
       const clash = await deps.inboxes.findByAddress(ctx, inbox.address);
       if (clash !== null) {
-        throw new DomainError("address_taken", `Inbox ${inbox.address} already exists.`, {
+        throw new DomainError("address_taken", `${inbox.address} is taken.`, {
           address: inbox.address,
         });
       }
@@ -191,6 +183,12 @@ export function createMailboxService(deps: MailboxDeps) {
       ]);
 
       return inbox;
+    },
+
+    /** The hostnames an inbox can be created on. */
+    async listDomains(ctx: Caller): Promise<string[]> {
+      Caller.require(ctx, "inbox:read");
+      return (await deps.domains.list(ctx)).map((routing) => routing.domain);
     },
 
     /**
@@ -236,9 +234,7 @@ export function createMailboxService(deps: MailboxDeps) {
      * cannot be fetched, forever. Deleting the messages before the inbox keeps
      * the same property one level up.
      *
-     * The inbox row itself is soft-deleted. Its address stays reserved, so a
-     * later `createInbox` cannot mint the same address and inherit a stranger's
-     * mail from a sender who had not yet noticed.
+     * The row goes with it, so the address is free to be created again.
      */
     async deleteInbox(ctx: Caller, id: Ulid): Promise<void> {
       Caller.require(ctx, "inbox:write");
@@ -252,7 +248,6 @@ export function createMailboxService(deps: MailboxDeps) {
       await deps.inboxes.deleteById(ctx, id);
     },
 
-    /** Stored messages, filtered and keyset-paginated. Summaries, not bodies. */
     async listMessages(
       ctx: Caller,
       query: ListMessagesQuery = {},
@@ -296,7 +291,6 @@ export function createMailboxService(deps: MailboxDeps) {
       return raw;
     },
 
-    /** One attachment's bytes, with the metadata needed to serve them. */
     async getAttachment(
       ctx: Caller,
       messageId: Ulid,
@@ -522,8 +516,6 @@ async function resolveDomain(
 
 function extractFrom(message: Message, kind: ExtractKind | undefined): string | null {
   if (kind === undefined || kind === "none") return null;
-  // Prefer the text body; fall back to HTML so a text-free message still yields
-  // a code. Tag stripping is crude on purpose — we only need the digits.
   const body = message.bodyText ?? (message.bodyHtml ?? "").replace(/<[^>]+>/g, " ");
   const haystack = `${message.subject}\n${body}`;
   return kind === "otp" ? Extractors.otp(haystack) : Extractors.firstLink(haystack);

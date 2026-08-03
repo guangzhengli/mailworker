@@ -9,6 +9,16 @@ import {
 import type { CreateInboxRequest, Inbox } from "@mailworker/core";
 import { z } from "zod";
 
+/** `+` is excluded on purpose: it separates the tag, so it cannot be part of a name. */
+const localPart = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(
+    /^[a-z0-9][a-z0-9._-]*$/,
+    "Must be lowercase alphanumeric, optionally with dashes, dots or underscores.",
+  );
+
 /**
  * `POST /v1/inboxes`.
  *
@@ -17,22 +27,19 @@ import { z } from "zod";
  * public contract readable to whoever is typing curl and keeps the use case
  * signature honest about units.
  *
- * Note what this does NOT check: that `address` and `prefix` are mutually
- * exclusive, or that the address is one we serve. Those are rules, and rules
- * live in the domain — this layer only decides what JSON we are willing to
+ * Note what this does NOT check: that `address`, `localPart` and `prefix` are
+ * mutually exclusive, or that the address is one we serve. Those are rules, and
+ * rules live in the domain — this layer only decides what JSON we are willing to
  * unpack. One definition of each question, in the layer that owns it.
  */
 export const createInboxBody = z
   .strictObject({
-    /** Full address. Mutually exclusive with `prefix`. */
+    /** Full address. Mutually exclusive with `localPart` and `prefix`. */
     address: z.string().optional(),
+    /** Use `<localPart>@<domain>` verbatim — no random suffix. */
+    localPart: localPart.optional(),
     /** Generate `<prefix>-<random>@<domain>`. */
-    prefix: z
-      .string()
-      .min(1)
-      .max(32)
-      .regex(/^[a-z0-9][a-z0-9-]*$/, "A prefix must be lowercase alphanumeric with dashes.")
-      .optional(),
+    prefix: localPart.optional(),
     /** Required only when this deployment serves more than one domain. */
     domain: z.string().optional(),
     kind: z.enum(["ephemeral", "persistent"]).optional(),
@@ -44,6 +51,7 @@ export const createInboxBody = z
   .transform(
     (input): CreateInboxRequest => ({
       ...(input.address === undefined ? {} : { address: input.address }),
+      ...(input.localPart === undefined ? {} : { localPart: input.localPart }),
       ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
       ...(input.domain === undefined ? {} : { domain: input.domain }),
       ...(input.kind === undefined ? {} : { kind: input.kind }),

@@ -32,6 +32,35 @@ describe("EmailAddress", () => {
     const parsed = EmailAddress.listFromHeader('"Doe, John" <j@x.com>, a@b.com');
     expect(parsed).toEqual(["j@x.com", "a@b.com"]);
   });
+
+  it("keeps the display name separate from the address it decorates", () => {
+    expect(EmailAddress.parseHeaderList('"Doe, John" <j@x.com>, a@b.com')).toEqual([
+      { name: "Doe, John", address: "j@x.com", raw: '"Doe, John" <j@x.com>' },
+      { name: null, address: "a@b.com", raw: "a@b.com" },
+    ]);
+  });
+
+  it("unquotes and unescapes a display name", () => {
+    expect(EmailAddress.parseHeaderList('"He said \\"hi\\"" <a@b.com>')[0]?.name).toBe(
+      'He said "hi"',
+    );
+    expect(EmailAddress.parseHeaderList("Acme Security <a@b.com>")[0]?.name).toBe(
+      "Acme Security",
+    );
+    expect(EmailAddress.parseHeaderList('"" <a@b.com>')[0]?.name).toBeNull();
+  });
+
+  it("keeps an entry it cannot parse rather than dropping it", () => {
+    // `listFromHeader` filters this away, which would silently show a shorter
+    // recipient list than the one that arrived.
+    const parsed = EmailAddress.parseHeaderList("undisclosed-recipients:;, a@b.com");
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]).toEqual({ name: null, address: null, raw: "undisclosed-recipients:;" });
+  });
+
+  it("returns nothing for an empty header", () => {
+    expect(EmailAddress.parseHeaderList("   ")).toEqual([]);
+  });
 });
 
 describe("MailboxAddress", () => {

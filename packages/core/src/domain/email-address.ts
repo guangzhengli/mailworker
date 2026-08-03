@@ -19,6 +19,23 @@ import { DomainError } from "@core/domain/errors";
  */
 export type EmailAddress = string & { readonly __brand: "EmailAddress" };
 
+/**
+ * One entry of an address header, decomposed.
+ *
+ * The display name is carried separately rather than folded into a single
+ * string because it is unauthenticated: nothing in SPF, DKIM or DMARC covers
+ * it, so a caller that renders it has to be able to tell it apart from the
+ * address that those checks *do* cover.
+ */
+export interface HeaderAddress {
+  /** The display name, unquoted, or null when the entry had none. */
+  readonly name: string | null;
+  /** The bare address, or null when the entry could not be parsed. */
+  readonly address: EmailAddress | null;
+  /** The entry as it appeared, for when `address` is null. */
+  readonly raw: string;
+}
+
 // Deliberately not RFC 5322 complete (that grammar admits quoted strings and
 // comments no real MTA emits). This accepts the dot-atom form everyone uses and
 // rejects the shapes that would corrupt routing: no spaces, exactly one @,
@@ -83,6 +100,24 @@ export const EmailAddress = {
       .filter((a): a is EmailAddress => a !== null);
   },
 
+  /**
+   * Every entry of a header value, kept whole rather than reduced to addresses.
+   *
+   * `listFromHeader` throws away two things a reader needs: the display name,
+   * and the entries that did not parse. A viewer that silently drops an
+   * unparseable recipient is showing a smaller To: line than the one that
+   * actually arrived, which is the kind of quiet omission this tool exists to
+   * not do — so every entry comes back, with `raw` as the fallback.
+   */
+  parseHeaderList(header: string): HeaderAddress[] {
+    if (header.trim() === "") return [];
+    return splitHeaderList(header).map((raw) => ({
+      name: displayNameFrom(raw),
+      address: EmailAddress.fromHeader(raw),
+      raw,
+    }));
+  },
+
   domain(address: EmailAddress): string {
     return address.slice(address.lastIndexOf("@") + 1);
   },
@@ -125,6 +160,23 @@ function globMatches(glob: string, value: string): boolean {
     .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
   return new RegExp(`^${source}$`, "i").test(value);
+}
+
+/**
+ * The display name of a single entry, or null.
+ *
+ * Only the `Name <addr>` form has one — a bare `addr` does not. Quotes come off
+ * and backslash escapes are resolved, so `"Doe, John"` reads as `Doe, John`.
+ * Encoded words are already decoded by the time a header reaches us; the parser
+ * stores the decoded display form (see `mime/src/parse.ts`).
+ */
+function displayNameFrom(entry: string): string | null {
+  const angled = /^([\s\S]*)<[^<>]+>$/.exec(entry.trim());
+  if (angled === null) return null;
+  const name = angled[1]!.trim();
+  const unquoted = /^"([\s\S]*)"$/.exec(name)?.[1] ?? name;
+  const unescaped = unquoted.replace(/\\([\s\S])/g, "$1").trim();
+  return unescaped === "" ? null : unescaped;
 }
 
 /**
