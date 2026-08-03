@@ -9,7 +9,7 @@ import { Command } from "commander";
  * An environment is an account, so switching is a tenancy change rather than a
  * flag: nothing in one is visible from another. `--mode sandbox` is the one
  * worth reaching for by default — it runs every gate and writes every row, and
- * then does not touch the network (DESIGN ADR-9).
+ * then does not touch the network.
  */
 export function envCommand(client: () => Client): Command {
   const env = new Command("env").description("List and create environments");

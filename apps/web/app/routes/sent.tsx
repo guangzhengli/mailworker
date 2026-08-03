@@ -124,7 +124,7 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
       <Toolbar>
         {/* Four buckets, not ten wire statuses. The status is still on every row —
             it is what you grep for — but choosing what to look at should not
-            require knowing the state machine (DESIGN ADR-10). */}
+            require knowing the state machine. */}
         <FilterTabs>
           <FilterTab to={to({ bucket: null, cursor: null })} active={bucket === null}>
             {t("sent.bucket.all")}

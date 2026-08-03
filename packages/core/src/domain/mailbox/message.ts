@@ -26,7 +26,7 @@ export interface AttachmentMeta {
  * threading has to resolve across both directions anyway.
  */
 export interface Message {
-  /** ULID — primary key AND pagination cursor. Ordered by arrival (ADR-2). */
+  /** ULID — primary key AND pagination cursor. Ordered by arrival. */
   readonly id: Ulid;
   readonly accountId: AccountId;
   readonly inboxId: Ulid;

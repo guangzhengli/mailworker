@@ -6,7 +6,7 @@ import { renderDashboard } from "@web/workers/render";
 import { scheduled } from "@web/workers/scheduled";
 
 /**
- * One Worker, four ways in (ADR-6).
+ * One Worker, four ways in.
  *
  * `fetch` serves the `/v1` API and the dashboard, `email` receives inbound mail
  * from Email Routing, `queue` dispatches sends and folds in delivery events,

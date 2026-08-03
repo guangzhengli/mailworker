@@ -34,7 +34,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  * than to the session. A dashboard session is usually an admin key, and gate 2
  * exempts `admin` from the sender rule, the recipient allowlist and the quota —
  * so sending as the session would have made this the one unmetered way out of
- * the building (DESIGN ADR-11).
+ * the building.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {

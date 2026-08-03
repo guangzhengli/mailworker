@@ -32,7 +32,7 @@ export function toDate(value: string | null): Date | null {
 }
 
 /**
- * The cursor half of keyset pagination (ADR-2).
+ * The cursor half of keyset pagination.
  *
  * No OFFSET anywhere: an offset shifts under you when rows are inserted or
  * deleted mid-scan, and inserting is what a mailbox does all day. A ULID cursor

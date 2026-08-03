@@ -20,9 +20,6 @@ Each `SKILL.md` is the entry point and stays short; the detail is split across
 `references/`, loaded only when the phase needs it. Read the SKILL.md first —
 the reference files assume its rules are already in force.
 
-Repo-wide conventions that are not deployment-specific live in
-[`../AGENTS.md`](../AGENTS.md).
-
 ## `<PLACEHOLDER>` values
 
 The deployment skills describe operations against **your** Cloudflare account,
@@ -46,7 +43,7 @@ personal, and `.agents/` is the copy everyone else uses. If you change a
 deployment skill here, the maintainer's copy needs the same change.
 
 Also gitignored, and off-limits to commit: `.env`, `.mailworker/` (contains the
-admin credential) and `DESIGN.md`.
+admin credential) and `.private/` (local-only project notes).
 
 One value is committed as a placeholder **on purpose**:
 `apps/web/wrangler.jsonc` ships `"database_id": "PLACEHOLDER_RUN_MAILWORKER_DEPLOY"`.

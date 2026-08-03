@@ -5,7 +5,7 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // One Worker is the whole deployment (ADR-6): SSR, the /v1 API, the inbound
+  // One Worker is the whole deployment: SSR, the /v1 API, the inbound
   // email() handler and the queue consumers. One `wrangler deploy`, one URL,
   // one origin for the CLI, the SDK and the dashboard alike.
   "observability": { "enabled": true },
@@ -27,7 +27,7 @@
 
   "r2_buckets": [
     {
-      // Raw MIME, attachments and pending outbound payloads (ADR-3). Keeping
+      // Raw MIME, attachments and pending outbound payloads. Keeping
       // every original message is what makes `get --raw` into `inject` a closed
       // testing loop and lets a parser change be replayed over real mail.
       "binding": "BLOBS",
@@ -132,7 +132,7 @@
   "vars": {
     // The environment a request lands in when nothing names another, and the
     // project whose environments an admin credential may switch between. An
-    // environment IS an account (DESIGN ADR-9), so this is the production one.
+    // environment IS an account, so this is the production one.
     "MAILWORKER_ACCOUNT_ID": "default",
     "MAILWORKER_PROJECT_ID": "default"
   }

@@ -4,7 +4,7 @@ import type { AccountId } from "@core/domain/identity/account-id";
 /**
  * A project groups the environments that belong to one deployment. Environments
  * are accounts, so every existing `account_id` filter is already the isolation
- * boundary between them (DESIGN ADR-9).
+ * boundary between them.
  */
 export type ProjectId = string & { readonly __brand: "ProjectId" };
 

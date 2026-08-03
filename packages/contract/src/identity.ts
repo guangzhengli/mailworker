@@ -7,7 +7,7 @@ import { z } from "zod";
  *
  * An environment IS an account, so creating one creates the tenant every other
  * row is scoped by. `mode` is the part that matters: `sandbox` never reaches the
- * network (DESIGN ADR-9).
+ * network.
  */
 export const createEnvironmentBody = z.strictObject({
   env: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "lowercase alphanumeric with - or _"),

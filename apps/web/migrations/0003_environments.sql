@@ -1,4 +1,4 @@
--- Environments are accounts (DESIGN ADR-9). The existing single account becomes
+-- Environments are accounts. The existing single account becomes
 -- the `production` environment of the `default` project, which is why both new
 -- NOT NULL columns carry a default: SQLite cannot add a NOT NULL column to a
 -- table that already has rows without one.

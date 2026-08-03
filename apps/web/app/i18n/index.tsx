@@ -17,9 +17,9 @@ import { createContext, Fragment, use, useMemo } from "react";
  * Here the locale arrives as root loader data and flows down through context, so
  * there is nothing global to race. What the libraries would otherwise buy —
  * plurals, dates, relative times, number formats — workerd already ships as full
- * ICU (verified: `Intl.RelativeTimeFormat("zh-CN")` gives 5分钟前), and ADR-8
- * measured `react-i18next` at roughly 2 MB transitively, above the `mimetext`
- * budget the same ADR already declined.
+ * ICU (verified: `Intl.RelativeTimeFormat("zh-CN")` gives 5分钟前), while
+ * `react-i18next` measures roughly 2 MB transitively — above the same dependency
+ * budget that already declined `mimetext`.
  */
 
 export const LOCALES = ["en", "zh"] as const;

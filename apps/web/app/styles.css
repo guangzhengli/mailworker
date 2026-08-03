@@ -91,8 +91,8 @@
    * Latin on Inter and hands Han to the font each OS actually designed for it.
    *
    * System faces rather than a webfont, deliberately: a subsetted CJK webfont is
-   * still megabytes, which ADR-8's budget would decline for a dashboard whose
-   * whole point is being cheap to open.
+   * still megabytes, which the dependency budget would decline for a dashboard
+   * whose whole point is being cheap to open.
    */
   --font-sans: "Inter Variable", Inter, system-ui, -apple-system, "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;

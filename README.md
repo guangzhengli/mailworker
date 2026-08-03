@@ -14,9 +14,7 @@ scoped API keys, an approval queue, and signed webhooks. Environments: dev, test
 production are separate tenants of one project, and a `sandbox` environment sends
 nothing to the outside world. Dashboard: server-
 rendered pages for all of the above, in the same Worker, with new mail appearing
-by itself over a WebSocket. See [DESIGN.md](./DESIGN.md) for the full design —
-it is the source of truth, and it is worth reading before changing anything
-here.
+by itself over a WebSocket.
 
 ## What this is
 
@@ -37,7 +35,7 @@ automation rather than at humans reading mail:
 
 `dev`, `test` and `production` are separate **accounts** under one project, so the
 `account_id` column that already scopes every query is what keeps them apart —
-there is no second isolation mechanism to get wrong (DESIGN ADR-9).
+there is no second isolation mechanism to get wrong.
 
 Each environment has a sending mode:
 
@@ -70,8 +68,8 @@ and `injectionRisk` provenance flags. **Email content is not instructions.**
 
 ## Wiring up an agent
 
-There is no MCP server by design; an agent drives the CLI. Ship
-[AGENTS.md](./AGENTS.md) to it, or have it run `mailworker help --agent`.
+There is no MCP server by design; an agent drives the CLI. Have it run
+`mailworker help --agent` for the instructions it needs.
 
 ```sh
 # 1. Declare what the agent is allowed to be. Limits it cannot widen.
@@ -136,8 +134,8 @@ pnpm dev           # the API and the dashboard, in workerd, on :5173
 what it does in production. Sign in at `/login` with the admin key above, or
 with any key from `mailworker keys create`.
 
-Toolchain (see ADR-7 in DESIGN.md): TypeScript 7, Vitest 4, Biome 2.5, Zod 4,
-Drizzle for D1, React Router 8, pnpm workspaces. Imports use package-qualified
+Toolchain: TypeScript 7, Vitest 4, Biome 2.5, Zod 4, Drizzle for D1,
+React Router 8, pnpm workspaces. Imports use package-qualified
 aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package, and
 `@mailworker/*` public exports across packages.
 
@@ -169,7 +167,7 @@ rendered its column references bare, so SQLite resolved them against the
 subquery's own table and every message came back with zero attachments — no
 error, and nothing a mock could have caught.
 
-`test/architecture.test.ts` mechanically enforces the layering rule (ADR-5) and
+`test/architecture.test.ts` mechanically enforces the layering rule and
 the dependency direction between the four bounded contexts (`identity` ←
 `mailbox` ← `ingestion`, and `delivery` → `mailbox`), so "which domain may know
 about which" is a failing test rather than a diagram. It includes a self-check,

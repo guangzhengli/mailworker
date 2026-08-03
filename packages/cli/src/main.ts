@@ -27,7 +27,7 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
     .option("--token <token>", "API key (or MAILWORKER_TOKEN, which is safer)")
     // Rarely needed: a key already belongs to one environment and its
     // `mw_live_` / `mw_test_` prefix says which. This is for an admin
-    // credential driving a sibling environment (DESIGN ADR-9).
+    // credential driving a sibling environment.
     .option("--env <name>", "target another environment of this project (or MAILWORKER_ENV)")
     .enablePositionalOptions()
     .showHelpAfterError();

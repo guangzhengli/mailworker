@@ -4,7 +4,7 @@
  * These live in the domain rather than in the transport adapter because the send
  * path enforces them BEFORE a network call: refusing locally keeps a doomed
  * attempt off the account's sending reputation, and Cloudflare does not charge
- * quota for API-level rejections (DESIGN.md §2.2). An adapter that also checks
+ * quota for API-level rejections. An adapter that also checks
  * them is checking the same numbers, not owning them.
  *
  * Verified 2026-07.

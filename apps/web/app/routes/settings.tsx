@@ -320,7 +320,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
       <Group>
         {/* Addresses live here rather than in the nav for the same reason
             suppressions do: creating one is setup, and reading what arrives at
-            it — which is the daily task — is a different page (ADR-10). */}
+            it — which is the daily task — is a different page. */}
         <Row label={t("settings.addresses")} description={t("settings.addressesDescription")}>
           <Button render={<Link to="/inboxes" />} variant="outline" size="sm">
             {t("settings.open")}

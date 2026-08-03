@@ -48,7 +48,7 @@ export const app = new Hono<HttpEnv>()
   .use("/v1/*", async (c, next) => {
     // The header only names a target; `authenticate` is what refuses it unless
     // the credential is `admin` and the environment shares its project. An agent
-    // key stays pinned to the environment it was minted in (DESIGN ADR-9).
+    // key stays pinned to the environment it was minted in.
     const target = c.req.header("X-Mailworker-Environment");
     const caller = await authenticate(
       c.var.container,

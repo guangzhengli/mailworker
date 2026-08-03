@@ -1,10 +1,10 @@
 import { index, layout, type RouteConfig, route } from "@react-router/dev/routes";
 
 /**
- * Organised by what someone came here to do, not by which table backs it
- * (DESIGN ADR-10). Suppressions and diagnostics are not destinations — one is
- * the consequence of a failed send, the other a setup check — so they sit under
- * settings and are linked from where they matter.
+ * Organised by what someone came here to do, not by which table backs it.
+ * Suppressions and diagnostics are not destinations — one is the consequence of
+ * a failed send, the other a setup check — so they sit under settings and are
+ * linked from where they matter.
  *
  * Declared rather than derived from the filesystem: the route table is the one
  * place to see the whole surface, and a convention that infers it from file
@@ -34,7 +34,7 @@ export default [
 
     /**
      * Mail that arrived, across every address — and, separately, the addresses
-     * themselves. Splitting them is ADR-10 applied one level down: an address is
+     * themselves. Splitting them applies the same rule one level down: an address is
      * configuration, and making it the way in to reading mail meant "did the
      * code arrive" could not be asked without first knowing where it was sent.
      */

@@ -7,8 +7,8 @@ from a cosmetic one, and what to keep when tearing down.
 |---|---|---|---|
 | Worker | `mailworker` | All four entrypoints: `/v1` API + SSR dashboard (`fetch`), inbound mail (`email`), dispatch + delivery events (`queue`), retention sweep (`scheduled`) | nothing — this is the deployment |
 | Static assets | `./build/client` | Dashboard client bundle, served off the edge so a page load does not cost a Worker request against a Worker that is also handling mail | broken dashboard, API unaffected |
-| D1 | `mailworker` | System of record: messages, inboxes, deliveries, identities, keys, domains (ADR-1) | nothing works |
-| R2 | `mailworker-blobs` | Raw MIME, attachments, pending outbound payloads (ADR-3). What makes `get --raw` → `inject` a closed loop | bodies unavailable, metadata still stored |
+| D1 | `mailworker` | System of record: messages, inboxes, deliveries, identities, keys, domains | nothing works |
+| R2 | `mailworker-blobs` | Raw MIME, attachments, pending outbound payloads. What makes `get --raw` → `inject` a closed loop | bodies unavailable, metadata still stored |
 | Queue | `mailworker-dispatch` | `send` ends at `queued` with the decision already durable; the consumer does the network call | sending stops |
 | Queue | `mailworker-dispatch-dlq` | Where a send that failed 3× goes for a human to look at | failed sends vanish |
 | Queue | `mailworker-webhooks` | Domain-event fan-out to subscribers. Separate from dispatch because a dead subscriber must not delay anyone's mail | webhooks stop |

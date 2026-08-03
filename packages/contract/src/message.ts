@@ -75,7 +75,7 @@ const messageBase = z.object({
   autoSubmitted: z.string().nullable(),
   size: z.number().int().nonnegative(),
   seen: z.boolean(),
-  /** The `Date` header. Display only — order by `id`, never by this (ADR-2). */
+  /** The `Date` header. Display only — order by `id`, never by this. */
   sentAt: z.string().nullable(),
   receivedAt: z.string(),
 });

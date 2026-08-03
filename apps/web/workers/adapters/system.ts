@@ -12,9 +12,9 @@ export class SystemClock implements Clock {
  * ULIDs from the `ulid` package's MONOTONIC factory, which is the whole reason
  * to take the dependency rather than write twelve lines.
  *
- * ADR-2 makes `messages.id` both the primary key and the keyset pagination
- * cursor, which only works if ids are strictly increasing. A plain
- * `timestamp + random` ULID is not: two messages minted in the same millisecond
+ * `messages.id` is both the primary key and the keyset pagination cursor, which
+ * only works if ids are strictly increasing. A plain `timestamp + random` ULID
+ * is not: two messages minted in the same millisecond
  * get independent random tails, so their relative order is a coin flip. That is
  * not a rare case here — a Queues batch, a burst of inbound mail, or `inject`
  * replaying a fixture directory all mint several ids per millisecond, and a

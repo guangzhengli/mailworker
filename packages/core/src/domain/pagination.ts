@@ -4,9 +4,9 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
 
 /**
- * Keyset pagination. The cursor is a ULID, which is monotonic by arrival
- * (see DESIGN.md ADR-2) — so it is a stable, never-reused position marker even
- * when rows are deleted or a backdated message arrives.
+ * Keyset pagination. The cursor is a ULID, which is monotonic by arrival — so it
+ * is a stable, never-reused position marker even when rows are deleted or a
+ * backdated message arrives.
  */
 export interface Page<T> {
   readonly items: readonly T[];

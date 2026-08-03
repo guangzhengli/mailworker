@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 
 describe("UlidGenerator", () => {
   it("mints ids that are strictly increasing inside one millisecond", () => {
-    // The property ADR-2 depends on. A plain timestamp+random ULID fails this
-    // roughly half the time per adjacent pair, which is how a keyset cursor
+    // The property keyset pagination depends on. A plain timestamp+random ULID
+    // fails this roughly half the time per adjacent pair, which is how a cursor
     // ends up skipping a message that arrived in the same millisecond.
     const ids = new UlidGenerator();
     const minted = Array.from({ length: 500 }, () => ids.ulid());

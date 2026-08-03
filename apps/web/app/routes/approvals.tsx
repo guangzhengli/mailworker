@@ -33,7 +33,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  * per row, which meant the only decision the dashboard exists to support was
  * made without the two things needed to make it: which gate held the message,
  * and what the message says. Both are on the card now, and there is a Reject —
- * a queue you can only say yes to is not a review (DESIGN ADR-10).
+ * a queue you can only say yes to is not a review.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {

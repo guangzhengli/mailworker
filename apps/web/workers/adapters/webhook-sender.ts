@@ -10,7 +10,7 @@ const TIMEOUT_MS = 10_000;
  * Implemented directly rather than with the `standardwebhooks` package, and the
  * reason is not the 28 KB: the library ships its own JavaScript SHA-256, and
  * a Worker already has HMAC in WebCrypto. Paying for a second implementation of
- * a primitive the platform provides is the sort of thing ADR-8 exists to catch.
+ * a primitive the platform provides is what the dependency budget exists to catch.
  *
  * The format is somebody else's on purpose. Svix, Resend, Clerk and Vercel all
  * send these three headers, so a receiver integrating with Mailworker probably

@@ -26,7 +26,7 @@ export interface Clock {
 
 /**
  * Id generation. ULIDs need a clock and randomness, which is why the domain only
- * validates them (ADR-2) and minting lives out here — the test generator is
+ * validates them and minting lives out here — the test generator is
  * deterministic, so assertions can name ids literally.
  *
  * Ids only. Minting a *credential* is a different concern with a different

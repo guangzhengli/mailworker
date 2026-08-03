@@ -104,7 +104,7 @@ clicking is left:
 
 - Not committing anything.
 - Not unlocking the apex MX.
-- Not touching `DESIGN.md`.
+- Not touching `.private/`.
 - Not enabling `catchall_mode=autocreate` — it stays `reject`.
 
 ## The gate

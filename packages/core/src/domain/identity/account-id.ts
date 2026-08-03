@@ -3,8 +3,8 @@ import { invalidArgument } from "@core/domain/errors";
 /**
  * Tenant root. Single-tenant deployments have exactly one: `default`.
  *
- * The discipline that makes the eventual multi-tenant migration cheap
- * (DESIGN.md §6): an AccountId is only ever read from a request-scoped
+ * The discipline that makes the eventual multi-tenant migration cheap: an
+ * AccountId is only ever read from a request-scoped
  * Caller. Never from env, never a module-level constant, never
  * defaulted inside a repository.
  */

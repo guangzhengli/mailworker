@@ -32,7 +32,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  * These were two pages, which meant the one task anybody performs here — give
  * this agent a credential — required going to one page, remembering a name, and
  * typing it into another. The identity is the business object; a key is a
- * credential it holds in one environment (DESIGN ADR-10).
+ * credential it holds in one environment.
  */
 const AGENT_SCOPES: readonly Scope[] = [
   "inbox:write",

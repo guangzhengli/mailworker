@@ -4,7 +4,7 @@ import type { BlobMeta, BlobStore, Caller } from "@mailworker/core";
 const MAX_DELETE_KEYS = 1000;
 
 /**
- * Every original message, verbatim (ADR-3).
+ * Every original message, verbatim.
  *
  * Keeping the raw MIME is not archival sentiment — it is what makes
  * `mailworker get --raw > fixture.eml` into `mailworker inject fixture.eml` a

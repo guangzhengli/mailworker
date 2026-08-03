@@ -47,7 +47,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  * "did the verification code land" could not be answered without first knowing
  * which of a dozen addresses it was sent to. An address is configuration; the
  * mail is the content. This is the content page, and `/inboxes` is now where
- * addresses are managed (DESIGN ADR-10).
+ * addresses are managed.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {

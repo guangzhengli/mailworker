@@ -81,8 +81,7 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
         }
       >
         {/* Reply is what turns an inbox receiving support mail into one that can
-            answer it. It sends as the inbox's own address, under the same gates
-            (DESIGN ADR-11). */}
+            answer it. It sends as the inbox's own address, under the same gates. */}
         <Button render={<Link to={`/compose?reply=${message.id}`} />} size="sm">
           <ReplyIcon />
           {t("message.reply")}
@@ -115,7 +114,7 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
       </KeyFacts>
 
       {/*
-        Stated on the page, not just in AGENTS.md. A human reading a message here
+        Stated on the page, not just in the agent instructions. A human reading a message here
         is one click from doing whatever it asks, and "trusted" next to a
         convincing request is exactly the combination that gets acted on.
       */}

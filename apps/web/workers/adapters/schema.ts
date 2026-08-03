@@ -14,7 +14,7 @@ import {
  * hand-edits those except the FTS5 migration, which drizzle cannot model.
  *
  * `account_id` is on every table and first in every composite index. An account
- * is an environment (DESIGN ADR-9), so that column is also what keeps a
+ * is an environment, so that column is also what keeps a
  * development send from ever seeing production data.
  */
 
@@ -132,7 +132,7 @@ export const messages = sqliteTable(
     /**
      * The `Date` header. DISPLAY ONLY — never sort by it. A message whose `Date`
      * is three years old arriving today would insert mid-sequence and invalidate
-     * every cached cursor. `id` is the arrival order (ADR-2).
+     * every cached cursor. `id` is the arrival order.
      */
     sentAt: timestamp("sent_at"),
     receivedAt: timestamp("received_at").notNull(),

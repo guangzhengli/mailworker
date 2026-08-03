@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * Enforces ADR-5 mechanically instead of by convention.
+ * Enforces the layering rule mechanically instead of by convention.
  *
  * A lint rule would work too, but this runs in the same command as everything
  * else and fails with the offending file named, which is what someone adding a
@@ -75,7 +75,7 @@ describe("layering", () => {
   });
 
   /**
-   * The bounded contexts of DESIGN.md §4.1, as a rule rather than a diagram.
+   * The bounded contexts, as a rule rather than a diagram.
    *
    * Declaring four contexts in prose and then dumping every type into one
    * directory is how "which domain does this belong to" becomes unanswerable.

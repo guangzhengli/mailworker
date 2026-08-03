@@ -20,8 +20,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *
  * It answers the five questions someone actually opens the dashboard with — is
  * setup done, is anything waiting on me, did today's mail go out, did anything
- * break, what just arrived — none of which any single table could answer before
- * (DESIGN ADR-10).
+ * break, what just arrived — none of which any single table could answer
+ * before.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {

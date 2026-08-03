@@ -55,7 +55,7 @@ them when you need detail this skill does not carry.
    `curl -K <config>` for REST. Never `cat .env`, never assign a token to a shell
    variable, never read wrangler's stored OAuth token. Full procedure in
    [references/credentials.md](references/credentials.md).
-4. **`DESIGN.md` is local-only and gitignored.** Read it freely, never stage,
+4. **`.private/` is local-only and gitignored.** Read it freely, never stage,
    commit or push it.
 5. **Every mutating step is followed by its verification command.** A step that
    cannot be verified is reported as unverified, not as done.

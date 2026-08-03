@@ -88,7 +88,7 @@ export const durationMs = z
   });
 
 /**
- * Keyset pagination (ADR-2). The cursor is the ULID of the last item seen, so it
+ * Keyset pagination. The cursor is the ULID of the last item seen, so it
  * stays a valid position even after rows around it are deleted.
  */
 export const pageQuery = z.object({

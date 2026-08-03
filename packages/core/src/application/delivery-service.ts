@@ -190,7 +190,7 @@ export type DispatchOutcome =
 
 /**
  * One event as Cloudflare publishes it to the subscribed queue. Shape follows
- * `cf.email.sending.message.*` (DESIGN.md §2.3), flattened by the adapter.
+ * `cf.email.sending.message.*`, flattened by the adapter.
  */
 export interface ProviderDeliveryEvent {
   readonly type: DeliveryEventType;

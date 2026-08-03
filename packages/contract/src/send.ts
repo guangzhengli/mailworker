@@ -80,7 +80,7 @@ export const metadataInput = z
 /**
  * `POST /v1/send`.
  *
- * The recipient caps are Cloudflare's (50 across to + cc + bcc, DESIGN.md §2.2)
+ * The recipient caps are Cloudflare's (50 across to + cc + bcc)
  * and the domain enforces the total; capping each list here just stops an
  * obviously oversized request before it reaches a policy gate.
  */
@@ -212,7 +212,7 @@ export function toDeliveryEventDto(event: DeliveryEvent): DeliveryEventDto {
  * `GET /v1/send/:id` — the record plus everything the provider has since said
  * about it, oldest first. This is the half of "did my email arrive" that the
  * send response itself cannot answer, because at send time nothing has happened
- * yet (DESIGN.md §2.2).
+ * yet.
  */
 export const deliveryTimelineDto = z.object({
   delivery: deliveryDto,

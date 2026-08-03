@@ -11,7 +11,7 @@ export type InboxKind = "ephemeral" | "persistent";
  *
  * Note what is NOT here: any Cloudflare Email Routing rule. Inboxes are resolved
  * inside the Worker against a single catch-all rule, because routing rules cap
- * at 200 per domain (DESIGN.md §2.1). Creating an inbox is a database write and
+ * at 200 per domain. Creating an inbox is a database write and
  * nothing else — which is also why creating ten thousand of them for a test run
  * is fine.
  */

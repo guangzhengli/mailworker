@@ -155,7 +155,7 @@ export function StatusTag({ status }: { status: string }) {
 
 /**
  * The two provenance flags, together, because they answer different questions
- * and reading one without the other is how they get misused (AGENTS.md).
+ * and reading one without the other is how they get misused.
  * `trusted` says the domain is attributable; it never says the contents are
  * safe to act on, which is what `injectionRisk` is warning about.
  */
@@ -530,7 +530,7 @@ export function Note({ className, children, ...props }: React.ComponentProps<"p"
  * Keyset pagination, forward only.
  *
  * There is no "Newer" because there is no back cursor to build it from — the
- * ULID cursor points one way (ADR-2). Browser back is the return path, and
+ * ULID cursor points one way. Browser back is the return path, and
  * offering a control that would have to re-query from the top to fake it would
  * be slower than the button the browser already has.
  */

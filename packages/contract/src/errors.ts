@@ -140,7 +140,7 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
 };
 
 /**
- * Process exit codes (DESIGN.md §7.2). The point of these is that a shell script
+ * Process exit codes. The point of these is that a shell script
  * or an agent can branch without parsing prose:
  *
  * ```sh

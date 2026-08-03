@@ -12,7 +12,7 @@ import type { ErrorCode } from "@mailworker/contract";
  * statuses, scope names, suppression reasons — stays visible and copyable on
  * detail pages, where someone is reading in order to grep a log. Making a person
  * learn the state machine before they can choose a tab is what this rebalance
- * corrects (DESIGN ADR-10).
+ * corrects.
  */
 export const en = {
   messages: {

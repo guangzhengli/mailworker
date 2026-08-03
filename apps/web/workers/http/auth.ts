@@ -9,7 +9,7 @@ const secrets = new WebCryptoSecrets();
  * Turn a bearer token into a `Caller`, or refuse.
  *
  * The one place in the system that builds a `Caller`; everything downstream
- * takes it as a parameter. Because an environment IS an account (DESIGN ADR-9),
+ * takes it as a parameter. Because an environment IS an account,
  * this is also the only place that decides which environment a request acts on
  * — a repository is never in a position to choose one.
  *

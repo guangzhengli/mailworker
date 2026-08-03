@@ -68,8 +68,8 @@ export interface ResolveAddressInput {
  * Turn a recipient address into an inbox.
  *
  * This is what lets us run on a SINGLE Cloudflare catch-all routing rule
- * instead of one rule per address — routing rules cap at 200 per domain
- * (DESIGN.md §2.1), so per-address rules put a hard ceiling on the product.
+ * instead of one rule per address — routing rules cap at 200 per domain, so
+ * per-address rules put a hard ceiling on the product.
  *
  * Note there is no separate subaddressing branch: `MailboxAddress.parse` already
  * stripped `+tag` into `matchKey`, so `agent-7+run42@x` and `agent-7@x` produce

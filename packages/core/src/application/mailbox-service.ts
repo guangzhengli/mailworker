@@ -106,7 +106,7 @@ export function createMailboxService(deps: MailboxDeps) {
      * Mint a receiving address.
      *
      * Worth noting what this does NOT do: it never calls the Cloudflare API. Inboxes
-     * live behind one catch-all routing rule (DESIGN.md §2.1), so creating one is a
+     * live behind one catch-all routing rule, so creating one is a
      * single database insert. That is what makes it reasonable for a test suite to
      * create a fresh inbox per case instead of sharing one and cleaning up after.
      */
