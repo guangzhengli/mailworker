@@ -299,6 +299,8 @@ export function toSendBatchItem(item: BatchSendItem): SendBatchItem {
 export const listDeliveriesQuery = z.object({
   status: deliveryStatus.optional(),
   identity: ulid.optional(),
+  /** Subject, body or sender of the archived copy, or a recipient address. */
+  q: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: ulid.optional(),
 });

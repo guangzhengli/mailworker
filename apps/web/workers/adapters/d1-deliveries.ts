@@ -11,9 +11,11 @@ import type {
 } from "@mailworker/core";
 import type { Db } from "@web/workers/adapters/d1";
 import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
+import { matchingMessageIds } from "@web/workers/adapters/d1-messages";
 import type { DeliveryEventRow, DeliveryRow } from "@web/workers/adapters/schema";
 import { deliveries, deliveryEvents } from "@web/workers/adapters/schema";
-import { and, asc, count, desc, eq, gte, inArray, isNull, ne } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 export class D1Deliveries implements DeliveryRepository {
   constructor(private readonly db: Db) {}
@@ -76,6 +78,7 @@ export class D1Deliveries implements DeliveryRepository {
             ? undefined
             : eq(deliveries.identityId, query.identityId),
           query.source === undefined ? undefined : eq(deliveries.source, query.source),
+          query.q === undefined ? undefined : searchFilter(query.q),
           afterCursor(deliveries.id, query),
         ),
       )
@@ -145,6 +148,22 @@ export class D1Deliveries implements DeliveryRepository {
     const [row] = await this.db.select().from(deliveries).where(where).limit(1);
     return row === undefined ? null : toDelivery(row);
   }
+}
+
+/**
+ * What the search box on the sent list matches: the archived copy's indexed
+ * text, or the recipients on the delivery row itself.
+ *
+ * `instr` on the JSON array rather than `LIKE '%q%'`, so a `%` or `_` in an
+ * address is a character and not a wildcard, and no escape clause is needed.
+ * Both sides are lowered because the column holds addresses exactly as they
+ * were given and nobody types a search with the original casing in mind.
+ */
+function searchFilter(q: string): SQL | undefined {
+  const matching = matchingMessageIds(q);
+  const recipients = sql`instr(lower(${deliveries.recipients}), lower(${q})) > 0`;
+  if (matching === null) return recipients;
+  return or(sql`${deliveries.messageId} IN ${matching}`, recipients);
 }
 
 function toRow(ctx: Caller, delivery: Delivery): typeof deliveries.$inferInsert {

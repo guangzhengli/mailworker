@@ -132,6 +132,16 @@ export interface ListDeliveriesQuery extends PageRequest {
   readonly statusIn?: readonly DeliveryStatus[];
   readonly identityId?: Ulid;
   readonly source?: DeliverySource;
+  /**
+   * Full-text over the archived sent copy — subject, body, sender — or a
+   * substring of the envelope recipients.
+   *
+   * The two halves cover different rows on purpose. A sent copy is only written
+   * when a delivery is dispatched, so a send still queued or awaiting approval
+   * has no indexed text at all; its recipients are on the delivery row from the
+   * moment it is created, and are the only thing there is to match on.
+   */
+  readonly q?: string;
 }
 
 /** Append-only delivery event row. The timeline `mailworker status` prints. */

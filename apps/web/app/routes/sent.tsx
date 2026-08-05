@@ -27,6 +27,7 @@ import {
   Pager,
   PrimaryCell,
   Relative,
+  SearchForm,
   StatusTag,
   Toolbar,
 } from "@web/app/ui";
@@ -45,10 +46,12 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const bucket = isBucket(raw) ? raw : null;
     const cursor = url.searchParams.get("cursor");
     const agent = url.searchParams.get("agent");
+    const q = url.searchParams.get("q")?.trim() ?? "";
 
     const listed = await services.delivery.list(caller, {
       ...(bucket === null ? {} : { statusIn: statusesIn(bucket) }),
       ...(agent === null ? {} : { identityId: Ulid.parse(agent) }),
+      ...(q === "" ? {} : { q }),
       ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
     });
 
@@ -91,18 +94,18 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       }),
     );
 
-    return { rows, cursor: listed.cursor, bucket, agent, identities };
+    return { rows, cursor: listed.cursor, bucket, agent, q, identities };
   });
 }
 
 export default function Sent({ loaderData }: Route.ComponentProps) {
-  const { rows, cursor, bucket, agent, identities } = loaderData;
-  const { t } = useT();
+  const { rows, cursor, bucket, agent, q, identities } = loaderData;
+  const { t, rich } = useT();
 
   /** Every control on this page narrows the same list, so each keeps the others. */
   const to = (changes: Record<string, string | null>) => {
     const params = new URLSearchParams();
-    const merged = { bucket, agent, ...changes };
+    const merged: Record<string, string | null> = { bucket, agent, q, ...changes };
     for (const [key, value] of Object.entries(merged)) {
       if (value !== null && value !== "") params.set(key, value);
     }
@@ -120,6 +123,16 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
           {t("sent.compose")}
         </Button>
       </PageHeader>
+
+      <Toolbar>
+        <SearchForm
+          action="/sent"
+          value={q}
+          placeholder={t("sent.searchPlaceholder")}
+          label={t("sent.searchLabel")}
+          keep={{ bucket, agent }}
+        />
+      </Toolbar>
 
       <Toolbar>
         {/* Four buckets, not ten wire statuses. The status is still on every row —
@@ -172,7 +185,7 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
           <Empty
             icon={<SendIcon />}
             action={
-              bucket === null && agent === null ? (
+              bucket === null && agent === null && q === "" ? (
                 <Button render={<Link to="/compose" />} size="sm" variant="outline">
                   {t("sent.compose")}
                 </Button>
@@ -183,7 +196,11 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
               )
             }
           >
-            {bucket === null && agent === null ? t("sent.emptyAll") : t("sent.emptyBucket")}
+            {q !== ""
+              ? rich("sent.noMatch", { query: <Mono>{q}</Mono> })
+              : bucket === null && agent === null
+                ? t("sent.emptyAll")
+                : t("sent.emptyBucket")}
           </Empty>
         ) : (
           <Table>
