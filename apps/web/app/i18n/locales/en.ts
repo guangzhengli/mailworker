@@ -38,7 +38,7 @@ export const en = {
     "field.received": "Received",
     "field.receivingAddress": "Receiving address",
     "field.recipients": "Recipients",
-    "field.result": "Outcome",
+    "field.result": "Status",
     "field.scopes": "Scopes",
     "field.agent": "Agent",
     "field.since": "Since",

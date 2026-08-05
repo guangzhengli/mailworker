@@ -27,7 +27,6 @@ import {
   PageHeader,
   Pager,
   PrimaryCell,
-  Provenance,
   Relative,
   SearchForm,
   Toolbar,
@@ -70,24 +69,19 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     });
 
     /**
-     * Expired addresses included, because their mail is still here and a row
-     * whose "received at" column is blank reads as a bug.
+     * Expired addresses included: their mail is still here, so the filter menu
+     * has to be able to name them.
      */
     const inboxes = await services.mailbox.listInboxes(caller, { includeExpired: true });
-    const addressOf = new Map(inboxes.items.map((row) => [row.id, row.address]));
 
     return {
       messages: listed.items.map((message) => ({
         id: message.id,
         subject: message.subject,
-        preview: message.preview,
         fromHeader: message.fromHeader,
+        toHeader: message.toHeader,
         seen: message.seen,
-        trusted: message.trusted,
-        injectionRisk: message.injectionRisk,
         receivedAt: message.receivedAt,
-        inboxId: message.inboxId,
-        address: addressOf.get(message.inboxId) ?? null,
       })),
       cursor: listed.cursor,
       q,
@@ -182,27 +176,30 @@ export default function Inbox({ loaderData }: Route.ComponentProps) {
             {q === "" ? t("inbox.empty") : rich("inbox.noMatch", { query: <Mono>{q}</Mono> })}
           </Empty>
         ) : (
-          <Table>
+          <Table className="table-fixed">
+            {/* `table-fixed` so the percentages below are obeyed. Auto layout
+                widens whichever column happens to hold the longest address and
+                starves the rest, which is what made From and To unreadable. */}
             <TableHeader>
               <TableRow>
-                <TableHead>{t("field.subject")}</TableHead>
-                <TableHead className="w-56">{t("field.from")}</TableHead>
-                <TableHead className="w-56">{t("field.receivingAddress")}</TableHead>
-                <TableHead className="w-32 text-right">{t("field.received")}</TableHead>
+                <TableHead className="w-[28%]">{t("field.subject")}</TableHead>
+                <TableHead className="w-[29%]">{t("field.from")}</TableHead>
+                <TableHead className="w-[29%]">{t("field.to")}</TableHead>
+                <TableHead className="w-[14%] text-right">{t("field.received")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {messages.map((message) => (
                 <TableRow key={message.id}>
-                  <TableCell className="max-w-0">
-                    <div className="flex min-w-0 items-start gap-2.5">
+                  <TableCell>
+                    <div className="flex min-w-0 items-center gap-2.5">
                       {/* Unread as a mark rather than only as weight: bold alone
                           is invisible in a list where half the subjects are long
                           enough to truncate anyway. */}
                       <span
                         aria-hidden="true"
                         className={cn(
-                          "mt-1.5 size-1.5 shrink-0 rounded-full",
+                          "size-1.5 shrink-0 rounded-full",
                           message.seen ? "bg-transparent" : "bg-primary",
                         )}
                         title={message.seen ? undefined : t("inbox.unread")}
@@ -217,39 +214,29 @@ export default function Inbox({ loaderData }: Route.ComponentProps) {
                             message.subject
                           )
                         }
-                        secondary={message.preview}
                       />
                     </div>
                   </TableCell>
-                  <TableCell className="max-w-0">
-                    <div className="flex min-w-0 flex-col gap-1">
-                      <Addresses
-                        header={message.fromHeader}
-                        className={message.seen ? "text-body" : "font-medium text-title"}
-                      />
-                      {/* Only the exceptions are drawn. A verified sender is the
-                          normal case, and painting a green tag on every row spends
-                          the reader's attention on the rows that need none — the
-                          unverified and the injection-shaped ones then stop
-                          standing out, which is the entire point of the flag. */}
-                      <Provenance
-                        trusted={message.trusted}
-                        injectionRisk={message.injectionRisk}
-                        quiet
-                      />
-                    </div>
+                  {/* `flex` rather than the component's default `inline-flex`:
+                      only a block-level flex container takes the fixed cell
+                      width, which is what lets its children truncate instead of
+                      overflowing. */}
+                  <TableCell className="overflow-hidden">
+                    <Addresses
+                      header={message.fromHeader}
+                      bare
+                      className={cn(
+                        "flex flex-nowrap",
+                        message.seen ? "text-body" : "font-medium text-title",
+                      )}
+                    />
                   </TableCell>
-                  <TableCell className="max-w-0 truncate">
-                    {message.address === null ? (
-                      <span className="text-hint">{t("common.dash")}</span>
-                    ) : (
-                      <Link
-                        to={to({ inbox: message.inboxId, cursor: null })}
-                        className="font-mono text-[13px] text-secondary-text hover:text-primary hover:underline"
-                      >
-                        {message.address}
-                      </Link>
-                    )}
+                  <TableCell className="overflow-hidden">
+                    <Addresses
+                      header={message.toHeader}
+                      bare
+                      className="flex flex-nowrap text-secondary-text"
+                    />
                   </TableCell>
                   <TableCell className="text-right">
                     <Relative value={message.receivedAt} />

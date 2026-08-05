@@ -181,31 +181,17 @@ export function StatusTag({ status }: { status: string }) {
 export function Provenance({
   trusted,
   injectionRisk,
-  quiet,
 }: {
   trusted: boolean;
   injectionRisk: boolean;
-  /**
-   * Draw only what is wrong.
-   *
-   * A listing where every row carries a green "verified sender" tag has spent
-   * its loudest signal on its most ordinary case, and the two rows that are
-   * actually unverified no longer stand out from the forty that are fine. On a
-   * detail page the positive statement is worth making — someone is reading one
-   * message and deciding whether to act on it — so `quiet` is off there.
-   */
-  quiet?: boolean;
 }) {
   const { t } = useT();
-  if (quiet === true && trusted && !injectionRisk) return null;
 
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      {!(quiet === true && trusted) && (
-        <Tag tone={trusted ? "success" : "warning"} title={t("provenance.attribution")}>
-          {trusted ? t("provenance.trusted") : t("provenance.unverified")}
-        </Tag>
-      )}
+      <Tag tone={trusted ? "success" : "warning"} title={t("provenance.attribution")}>
+        {trusted ? t("provenance.trusted") : t("provenance.unverified")}
+      </Tag>
       {injectionRisk && (
         <Tag tone="danger" title={t("provenance.injectionRiskTitle")}>
           {t("provenance.injectionRisk")}
@@ -412,7 +398,24 @@ export function Mono({
  * The untouched header stays in `title` — the decomposition is a reading aid,
  * not a claim to have improved on the original.
  */
-export function Addresses({ header, className }: { header: string; className?: string }) {
+export function Addresses({
+  header,
+  className,
+  /**
+   * Address only, no display name.
+   *
+   * A listing column is the one place the name costs more than it gives: it
+   * doubles the width of every cell to repeat what the address already says,
+   * and it is attacker-controlled, so `"support@yourbank.com" <x@evil.tld>`
+   * reads as the bank until the row is wide enough to show both. The full
+   * header stays in the tooltip, and the detail page still shows names.
+   */
+  bare,
+}: {
+  header: string;
+  className?: string;
+  bare?: boolean;
+}) {
   const { t } = useT();
   const entries = EmailAddress.parseHeaderList(header);
   if (entries.length === 0) return <span className="text-hint">{t("common.dash")}</span>;
@@ -434,7 +437,7 @@ export function Addresses({ header, className }: { header: string; className?: s
             {entry.address ?? entry.raw}
             {index < entries.length - 1 && <span className="text-hint">,</span>}
           </span>
-          {entry.name !== null && (
+          {bare !== true && entry.name !== null && (
             <span className="truncate text-[13px] text-hint">{entry.name}</span>
           )}
         </span>
@@ -664,8 +667,9 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   const { t } = useT();
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm"
       title={value}
       aria-label={label}
       onClick={() => {
@@ -674,7 +678,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
           setTimeout(() => setCopied(false), 1500);
         });
       }}
-      className="inline-flex max-w-full items-center gap-1.5 rounded-control border border-border bg-muted px-2 py-1 font-mono text-[12px] text-secondary-text transition-colors hover:text-title"
+      className="h-auto max-w-full gap-1.5 rounded-control border-border bg-muted px-2 py-1 font-mono text-[12px] font-normal text-secondary-text hover:text-title"
     >
       <span className="truncate">{value}</span>
       {copied ? (
@@ -683,7 +687,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
         <CopyIcon className="size-3.5 shrink-0 text-hint" />
       )}
       <span className="sr-only">{copied ? t("common.copied") : label}</span>
-    </button>
+    </Button>
   );
 }
 

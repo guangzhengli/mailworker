@@ -39,7 +39,7 @@ export const zh = {
     "field.received": "收到时间",
     "field.receivingAddress": "收件地址",
     "field.recipients": "收件人",
-    "field.result": "结果",
+    "field.result": "状态",
     "field.scopes": "权限范围",
     "field.agent": "归属 Agent",
     "field.since": "起始时间",

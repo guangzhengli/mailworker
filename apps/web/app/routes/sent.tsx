@@ -18,6 +18,7 @@ import {
 import { BUCKET_LABEL, BUCKETS, isBucket, statusesIn } from "@web/app/deliveries";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import {
+  Addresses,
   Empty,
   FilterTab,
   FilterTabs,
@@ -73,7 +74,9 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const nameOf = new Map(identities.map((identity) => [identity.id, identity.name]));
 
     /**
-     * The subject, which is in the payload blob rather than on the row.
+     * The subject and sender, which are in the payload blob rather than on the
+     * row. Recipients are not: the envelope list is on the delivery itself, so
+     * the To column survives a payload the retention sweep has already taken.
      *
      * One read per row is the cost of showing what a person uses to recognise a
      * message. R2 reads are parallel and the page is 25 rows.
@@ -90,6 +93,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           recipients: delivery.recipients,
           createdAt: delivery.createdAt,
           subject: preview?.subject ?? null,
+          from: preview?.from ?? null,
         };
       }),
     );
@@ -203,19 +207,24 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
                 : t("sent.emptyBucket")}
           </Empty>
         ) : (
-          <Table>
+          <Table className="table-fixed min-w-4xl">
+            {/* `min-w-` rather than letting six columns crush: below it the
+                wrapper's `overflow-x-auto` scrolls, which keeps every address
+                readable instead of ellipsing all of them at once. */}
             <TableHeader>
               <TableRow>
-                <TableHead>{t("field.subject")}</TableHead>
-                <TableHead className="w-40">{t("field.result")}</TableHead>
-                <TableHead className="w-44">{t("field.agent")}</TableHead>
-                <TableHead className="w-32 text-right">{t("field.created")}</TableHead>
+                <TableHead className="w-[22%]">{t("field.subject")}</TableHead>
+                <TableHead className="w-[20%]">{t("field.from")}</TableHead>
+                <TableHead className="w-[20%]">{t("field.to")}</TableHead>
+                <TableHead className="w-[13%]">{t("field.result")}</TableHead>
+                <TableHead className="w-[14%]">{t("field.agent")}</TableHead>
+                <TableHead className="w-[11%] text-right">{t("field.created")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell className="max-w-0">
+                  <TableCell>
                     <PrimaryCell
                       to={`/sent/${row.id}`}
                       strong
@@ -226,13 +235,30 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
                           row.subject
                         )
                       }
-                      secondary={<span className="font-mono">{row.recipients.join(", ")}</span>}
+                    />
+                  </TableCell>
+                  <TableCell className="overflow-hidden">
+                    {row.from === null ? (
+                      <span className="text-hint">{t("common.dash")}</span>
+                    ) : (
+                      <Addresses
+                        header={row.from}
+                        bare
+                        className="flex flex-nowrap text-secondary-text"
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="overflow-hidden">
+                    <Addresses
+                      header={row.recipients.join(", ")}
+                      bare
+                      className="flex flex-nowrap text-secondary-text"
                     />
                   </TableCell>
                   <TableCell>
                     <StatusTag status={row.status} />
                   </TableCell>
-                  <TableCell className="max-w-0 truncate">
+                  <TableCell className="overflow-hidden truncate">
                     {row.agent !== null ? (
                       <Mono className="text-secondary-text">{row.agent}</Mono>
                     ) : row.source === "console" ? (
