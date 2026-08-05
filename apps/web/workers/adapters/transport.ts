@@ -40,14 +40,23 @@ export class CloudflareTransport implements MailTransport {
         ...(message.html === null ? {} : { html: message.html }),
         headers: {
           ...message.headers,
-          // Ours, not the provider's. Threading and idempotency both key off
-          // this, and letting Cloudflare mint one would mean the id in our
-          // database is not the id in the recipient's mail client.
-          "Message-ID": `<${message.messageId}>`,
+          // NOT `Message-ID`. Email Sending mints that itself and rejects the
+          // header outright (`E_HEADER_NOT_ALLOWED`), so our id rides along as
+          // an `X-` header instead — that much the allowlist does permit. Our
+          // id stays the key for threading, idempotency and the archive; it is
+          // simply no longer the id the recipient's client sees.
+          "X-Mailworker-Message-ID": `<${message.messageId}>`,
           ...(message.inReplyTo === null ? {} : { "In-Reply-To": `<${message.inReplyTo}>` }),
-          ...(message.references.length === 0
-            ? {}
-            : { References: message.references.map((id) => `<${id}>`).join(" ") }),
+          // Our own id rides at the end of the chain, which RFC 5322 does not
+          // strictly sanction — `References` is meant to be ancestors, not
+          // self. It is the only way threading survives Cloudflare minting the
+          // `Message-ID`: a replying client copies this chain into its own
+          // `References`, so the reply reaches us carrying an id we recognise
+          // even though its `In-Reply-To` names an id we have never seen. Wire
+          // only; the archived `.eml` keeps the honest chain.
+          References: [...message.references, message.messageId]
+            .map((id) => `<${id}>`)
+            .join(" "),
         },
         ...(message.attachments.length === 0
           ? {}
