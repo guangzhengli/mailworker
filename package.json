@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "pnpm -r build",
+    "ship": "pnpm --filter @mailworker/web ship",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "biome ci .",
