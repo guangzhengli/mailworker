@@ -274,7 +274,12 @@ function listFilters(query: ListMessagesQuery): (SQL | undefined)[] {
 }
 
 /**
- * Full-text search over the external-content FTS5 index.
+ * The ids of every message whose indexed text matches, as a subquery.
+ *
+ * `null` when the input has no usable tokens — all punctuation and nothing
+ * else. The caller decides what that means: matching nothing is right for a
+ * message search, and wrong for a delivery search that also looks at
+ * recipients.
  *
  * The user's text is turned into quoted phrase tokens joined by AND, never
  * interpolated as FTS syntax. Raw input would let a stray `"` or a bare `AND`
@@ -282,20 +287,26 @@ function listFilters(query: ListMessagesQuery): (SQL | undefined)[] {
  * behaviour nobody asked for. Quoting each token makes every input a literal
  * word search, which is also what someone typing into a search box expects.
  */
-export function fullTextFilter(q: string): SQL {
+export function matchingMessageIds(q: string): SQL | null {
   const tokens = q
     .split(/\s+/)
     .map((token) => token.replace(/"/g, ""))
     .filter((token) => token.length > 0);
-  // All punctuation and nothing else: match nothing rather than hand FTS5 an
-  // empty query, which is an error.
-  if (tokens.length === 0) return sql`1 = 0`;
+  if (tokens.length === 0) return null;
   const match = tokens.map((token) => `"${token}"`).join(" AND ");
-  return sql`${messages.id} IN (
+  return sql`(
     SELECT m.id FROM messages m
     JOIN messages_fts f ON f.rowid = m.rowid
     WHERE messages_fts MATCH ${match}
   )`;
+}
+
+/** Full-text search over the external-content FTS5 index. */
+export function fullTextFilter(q: string): SQL {
+  const matching = matchingMessageIds(q);
+  // Match nothing rather than hand FTS5 an empty query, which is an error.
+  if (matching === null) return sql`1 = 0`;
+  return sql`${messages.id} IN ${matching}`;
 }
 
 function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {

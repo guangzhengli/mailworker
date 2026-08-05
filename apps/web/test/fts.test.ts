@@ -38,7 +38,7 @@ const db = createDb(env.DB);
 const messages = new D1Messages(db);
 
 let counter = 0;
-function aMessage(subject: string, bodyText: string): Message {
+function aMessage(subject: string, bodyText: string, fromHeader = "noreply@corp.com"): Message {
   counter += 1;
   const id = `01J${counter.toString().padStart(23, "0")}` as Ulid;
   return Message.create({
@@ -48,7 +48,7 @@ function aMessage(subject: string, bodyText: string): Message {
     rfcMessageId: RfcMessageId.parse(`${id}@corp.com`),
     threadId: ThreadId.parse(`${id}@corp.com`),
     direction: "inbound",
-    fromHeader: "noreply@corp.com",
+    fromHeader,
     from: EmailAddress.parse("noreply@corp.com"),
     toHeader: "agent@mail.example.com",
     subject,
@@ -119,6 +119,24 @@ describe("messages_fts triggers", () => {
     // rebuild a posting list for text that did not change. This proves the
     // narrowing did not also stop the index from being correct.
     expect(await search("invoice")).toEqual(["Invoice 4821"]);
+    await assertIndexMatchesTable();
+  });
+
+  it("finds a message by its sender", async () => {
+    await messages.insert(
+      ctx,
+      aMessage("Invoice 4821", "Payment is overdue.", '"Alice Cheng" <alice@vendor.example>'),
+    );
+    await messages.insert(ctx, aMessage("Receipt 4822", "Thanks."));
+
+    // The whole address as one token: `fullTextFilter` quotes it, and FTS5
+    // tokenizes a quoted string into a phrase, so `alice vendor example` has to
+    // appear consecutively — which is exactly how the header indexed it.
+    expect(await search("alice@vendor.example")).toEqual(["Invoice 4821"]);
+    // The display name is in the header too, so it is searchable as well.
+    expect(await search("cheng")).toEqual(["Invoice 4821"]);
+    // A sender that does not match must not drag the other message in.
+    expect(await search("vendor")).toEqual(["Invoice 4821"]);
     await assertIndexMatchesTable();
   });
 

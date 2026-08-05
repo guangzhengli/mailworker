@@ -29,6 +29,13 @@
       "when": 1785740315263,
       "tag": "0003_environments",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785740315264,
+      "tag": "0004_messages_fts_from",
+      "breakpoints": true
     }
   ]
 }

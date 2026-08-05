@@ -195,7 +195,7 @@ export const en = {
     "inbox.pageTitle": "Received mail · Mailworker",
     "inbox.title": "Received mail",
     "inbox.description": "All messages received by every address in this environment.",
-    "inbox.searchPlaceholder": "Search subject or message text…",
+    "inbox.searchPlaceholder": "Search subject, text or sender…",
     "inbox.searchLabel": "Search received mail",
     "inbox.allAddresses": "All receiving addresses",
     "inbox.manageAddresses": "Manage addresses",

@@ -177,7 +177,7 @@ export const zh = {
     "inbox.pageTitle": "收件邮件 · Mailworker",
     "inbox.title": "收件邮件",
     "inbox.description": "此环境所有收件地址收到的邮件，统一显示在这里。",
-    "inbox.searchPlaceholder": "搜索主题或正文…",
+    "inbox.searchPlaceholder": "搜索主题、正文或发件人…",
     "inbox.searchLabel": "搜索收件邮件",
     "inbox.allAddresses": "所有收件地址",
     "inbox.manageAddresses": "管理收件地址",
