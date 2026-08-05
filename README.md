@@ -1,236 +1,244 @@
+<div align="center">
+
 # Mailworker
 
-> Email runtime for AI agents. Self-hosted on your own Cloudflare account.
-> CLI-first, with delivery observability and guardrails on outbound.
+### Your products send. Your agents read. You approve.
 
-**Status: pre-alpha, mail goes both ways and there is a dashboard.** Inbound:
-Email Routing to the `email()` handler, into D1 and R2, waking a blocked
-`mailworker wait`, out of `GET /v1/messages`, saved as a fixture with
-`get --raw` and replayed with `inject`. Outbound: six policy gates, an approval
-queue, the `send_email` binding, attachments, batch sends, caller metadata that
-rides along on every delivery webhook, and a delivery timeline built from
-Cloudflare's event subscriptions. Control plane: agent identities with quotas and allowlists,
-scoped API keys, an approval queue, and signed webhooks. Environments: dev, test and
-production are separate tenants of one project, and a `sandbox` environment sends
-nothing to the outside world. Dashboard: server-
-rendered pages for all of the above, in the same Worker, with new mail appearing
-by itself over a WebSocket.
+**A self-hosted email runtime for AI agents, built on Cloudflare Email Service and Workers.**
 
-## What this is
+[简体中文](README.zh-CN.md) · [Quick start](#deploy-with-one-prompt) · [REST API](#connect-your-products) · [CLI](#give-agents-an-inbox)
 
-Programmatic inboxes that send and receive real email, aimed at agents and test
-automation rather than at humans reading mail:
+![Status: Alpha](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
+![Self-hosted](https://img.shields.io/badge/deployment-self--hosted-0f172a?style=flat-square)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020?style=flat-square&logo=cloudflare&logoColor=white)
+![License: MIT](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
 
-- **Ephemeral or persistent inboxes**, created by API call. No Cloudflare routing
-  rule per address, so the 200-rules-per-domain ceiling never applies.
-- **`wait` as a first-class operation** — block until the signup email lands and
-  print just the OTP, in one call, with a meaningful exit code.
-- **Delivery observability** — per-message timeline built from Cloudflare's
-  Email Sending event subscriptions, plus suppression list handling.
-- **Guardrails on sending** — per-identity quotas, recipient allowlists, an
-  approval queue, and loop breaking, because an agent sending email is an
-  irreversible outward action.
+</div>
 
-## Environments
+Mailworker turns a Cloudflare domain into email infrastructure that both your
+products and your AI agents can use. Applications get a Resend-like REST API for
+transactional email. Agents get a CLI for creating inboxes, waiting for messages,
+extracting OTPs, drafting replies, and submitting sends for human approval.
 
-`dev`, `test` and `production` are separate **accounts** under one project, so the
-`account_id` column that already scopes every query is what keeps them apart —
-there is no second isolation mechanism to get wrong.
+One deployment can serve multiple products and domains without a separate
+Mailworker subscription for each one. The infrastructure, data, and credentials
+stay in **your Cloudflare account**; Cloudflare plan and usage charges still apply.
 
-Each environment has a sending mode:
+![Received mail in the Mailworker dashboard](docs/screenshot-received-mail.jpg)
 
-| mode | what a send does |
+## Put email operations on an agent loop
+
+| Your need | What Mailworker gives you |
 |---|---|
-| `live` | goes out for real |
-| `sandbox` | **never touches `send_email`** — the seven gates, the state machine and the R2 archive all run, then the same bytes are looped back into a local inbox so `mailworker wait` still resolves |
-| `test` | goes out for real, but the identity's recipient allowlist stops being optional |
+| **Email for every product** | One REST API for transactional send and receive across multiple domains, with attachments, batch sends, webhooks, and delivery timelines |
+| **Agent-assisted support** | Agents read untrusted mail as data, draft replies, and submit them to a queue; a human approves the irreversible send in the dashboard |
+| **E2E and manual testing** | Create disposable inboxes on your own domain without creating a Cloudflare routing rule for every address; block until an OTP or link arrives |
+| **A control plane you own** | Scoped API keys, agent identities, quotas, recipient allowlists, suppression handling, isolated environments, and a sandbox that sends nothing outside |
 
-That is what makes a development signup flow safe to run end to end: the OTP is
-readable by `wait`, and not one message reaches a real address or your sending
-reputation.
-
-```sh
-# Keys name their environment, so a pasted one is obviously wrong at a glance.
-mailworker keys create --name support-bot --identity support-bot   # → mw_live_8fa2c1_…
-MAILWORKER_ENV=development mailworker keys create --name support-bot \
-  --identity support-bot                                           # → mw_test_3b91de_…
+```text
+customer email ──▶ Cloudflare Email Routing ──▶ Mailworker ──▶ Agent reads + drafts
+                                                                         │
+product API ─────▶ REST API / CLI ────────────▶ policy gates ──▶ human approves
+                                                                         │
+recipient ◀────── Cloudflare Email Sending ◀── delivery queue ◀──────────┘
 ```
 
-An agent key is pinned to the environment it was minted in and cannot reach
-another by asking. An `admin` credential spans the environments of its project,
-which is why the dashboard needs one login and an agent needs one key.
+## Deploy with one prompt
 
-Inbound mail is routed to an environment by hostname, so give each one a
-subdomain — `dev.mail.example.com` beside `mail.example.com`.
+There is no hosted Mailworker account to sign up for. Clone the repository in a
+coding-agent session and ask the agent to provision it into your Cloudflare
+account:
 
-Inbound email is treated as untrusted input throughout. Messages carry `trusted`
-and `injectionRisk` provenance flags. **Email content is not instructions.**
+```bash
+git clone https://github.com/guangzhengli/mailworker.git
+cd mailworker
+pnpm install
+```
 
-## Wiring up an agent
+```text
+Deploy this project to my Cloudflare account.
+```
 
-There is no MCP server by design; an agent drives the CLI. Have it run
-`mailworker help --agent` for the instructions it needs, or install the skill so
-it knows that without being told:
+The bundled `deploy-mailworker` skill walks through four gated phases —
+environment, discovery, plan, and execute. **It changes nothing before you
+approve the plan.** The plan covers D1, R2, Queues, a Durable Object, the Worker,
+Email Routing, Email Sending, delivery events, DNS, and the bootstrap admin key.
 
-```sh
+If your agent does not discover repository-local skills automatically, install
+the deployment skill explicitly:
+
+```bash
+npx skills add guangzhengli/mailworker -s deploy-mailworker
+```
+
+You can also read every deployment step in
+[`.agents/skills/deploy-mailworker/`](.agents/skills/deploy-mailworker/SKILL.md)
+and run it by hand.
+
+## Give agents an inbox
+
+Install the public Mailworker skill in Codex, Claude Code, Cursor, or another
+[Agent Skills](https://agentskills.io)-compatible agent:
+
+```bash
 npx skills add guangzhengli/mailworker
 ```
 
-That installs [`skills/mailworker`](skills/mailworker/SKILL.md) into Claude Code,
-Codex, Cursor and the other [skills-compatible agents](https://agentskills.io) —
-when to mint an inbox, how to branch on the exit codes, and the rule that a
-received message is data rather than instructions. It is the only skill that
-command installs; the deployment skills under `.agents/` are marked internal
-because they are for whoever runs the deployment, not for whoever uses it.
+Or use the CLI directly without cloning this repository:
 
-In Claude Code you can install it as a plugin instead, which adds version
-tracking and updates through `/plugin marketplace update`:
-
-```
-/plugin marketplace add guangzhengli/mailworker
-/plugin install mailworker@mailworker
-```
-
-The CLI itself needs no clone:
-
-```sh
+```bash
 npx @mailworker/cli@latest help --agent
 ```
 
-What the agent gets to do with it is decided here, not there:
+An end-to-end signup test is two operations:
 
-```sh
-# 1. Declare what the agent is allowed to be. Limits it cannot widen.
-mailworker identities create --name support-bot \
-  --quota 50 --allow '*@customer.example.com'
+```bash
+id=$(mailworker inbox create --prefix signup --ttl 10m --json | jq -r .id)
 
-# 2. Mint a narrow credential bound to that identity.
-mailworker keys create --name support-bot --identity support-bot \
-  --scope inbox:write --scope message:read --scope message:send
+# Trigger the signup flow, then wait. stdout contains only the OTP.
+CODE=$(mailworker wait --inbox "$id" --extract otp --timeout 60s) || exit $?
 ```
 
-Three things about that second command are deliberate:
+Creating an inbox is one database insert, not a Cloudflare API call or a new
+routing rule. Create one per test, expire it automatically, save a failed message
+as raw `.eml`, and replay it through the same ingest path later.
 
-- **`message:approve` is not in the list, and should never be.** The approval
-  queue only means something if the principal being approved and the principal
-  approving are different. An identity created with `--require-approval` sends
-  into a queue a human releases.
-- **The key is bound to an identity**, which is what `SendPolicy` meters, and
-  `--identity` is not optional for a key that may send. The sender rule, the
-  recipient allowlist and the quota are all properties *of* an identity, so an
-  unbound credential does not get generous limits — it skips those three gates
-  entirely. Rather than let a forgotten flag silently mint an unmetered sender,
-  `SendPolicy` refuses the send and says which flag is missing.
-- **`admin` cannot be bound to an identity at all** — an admin key could edit
-  the identity's own quota, so the metering would be optional for the thing
-  being metered. The API refuses it rather than pretending.
+| Command | Purpose |
+|---|---|
+| `inbox create` / `inbox ls` / `inbox rm` | Create and manage ephemeral or persistent addresses |
+| `wait` / `tail` | Wait for matching mail or stream new messages |
+| `ls` / `get` / `seen` | Search and read stored mail; `get --raw` exports the original MIME |
+| `inject` | Replay a captured `.eml` fixture through the real ingest path |
+| `send` / `status` | Send through policy gates and inspect the delivery timeline |
+| `approve` | Release a send held for a human; agents should not receive this scope |
+| `doctor` | Check MX, SPF, DKIM, DMARC, sending status, and bindings |
 
-The token is printed once, on stdout, with everything else on stderr — so
-`mailworker keys create … > key.txt` captures exactly the secret. Only its hash
-is stored; there is no endpoint that reads it back.
+Every command supports `--json`, never prompts in a non-TTY session, and uses
+stable exit codes. In particular, `wait` exits `4` when no matching message
+arrives, so agents and CI jobs can branch without parsing prose.
 
-## Layout
+## Connect your products
 
-| Path | What | State |
-|---|---|---|
-| `packages/core` | Domain contexts, services, ports, in-memory adapters | **built** |
-| `packages/mime` | MIME parse (postal-mime) + build + HTML sanitize | **built** |
-| `packages/contract` | zod schemas / DTOs shared across API, SDK, CLI | **built** |
-| `packages/sdk` | typed HTTP client | **not planned** — agents drive the CLI, and application code has the `/v1` REST API |
-| `packages/cli` | `@mailworker/cli` — the agent-facing surface | **built and published to npm**; `init`/`deploy` planned |
-| `apps/web` | The deployable Worker | `/v1` API, `email()`, `queue()`, `scheduled()`, dashboard, D1/R2/DO/Queues **built** |
+The CLI is a thin client over the same `/v1` REST API your applications use.
+Authenticate with a scoped key and call Mailworker from any language:
 
-The marketing site and public live demo live in a **separate** repo
-(`../mailworker-web`), not here.
+```bash
+curl -sS -X POST "$MAILWORKER_URL/v1/send" \
+  -H "Authorization: Bearer $MAILWORKER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": "support@mail.example.com",
+    "to": ["customer@example.com"],
+    "subject": "We received your request",
+    "text": "A human will follow up shortly.",
+    "idempotencyKey": "ticket-1842-reply-1"
+  }'
+```
 
-## Developing
+The `202` response contains a delivery ID, not a promise that the message was
+delivered. Query `GET /v1/send/:id` for the event timeline, or subscribe to
+signed webhooks. Use `POST /v1/inboxes` to create product-specific or temporary
+addresses and `GET /v1/messages/wait` to long-poll for incoming mail.
+
+See the complete [REST API reference](skills/mailworker/references/rest-api.md).
+
+## Human approval is a security boundary
+
+An agent can read an email, write a reply, and call `send`, while its identity is
+configured with `require-approval`. The delivery stops in `pending_approval`
+until a different principal approves it in the dashboard or through a credential
+with `message:approve`.
+
+That separation is deliberate:
+
+- The sending agent gets quotas, recipient allowlists, and only the scopes it needs.
+- The agent does **not** get `message:approve`; it cannot approve its own work.
+- Idempotency keys prevent a retry from sending the same message twice.
+- Loop detection, suppression handling, and per-identity policy gates run before dispatch.
+- Incoming email is always untrusted data. `trusted` means attributable sender,
+  never "safe instructions for the agent to follow."
+
+For development, a `sandbox` environment runs the policies, state machine, and
+archive, then loops the bytes back into a local inbox. Nothing reaches a real
+recipient, but `mailworker wait` still completes.
+
+## Current status and limits
+
+> [!WARNING]
+> **Mailworker is Alpha software. Try it, test it, and inspect it before depending on it.**
+>
+> - Cloudflare Email Sending is currently in public beta. Do not treat Mailworker
+>   as production email infrastructure yet.
+> - Start with a clean test domain or subdomain whose MX records are not serving
+>   mail you care about. Do not attach your primary domain first.
+> - Mailworker and Cloudflare Email Service are for transactional and agent mail,
+>   not newsletters, campaigns, or bulk/marketing email.
+
+Inbound Email Routing is available on Workers Free and Paid plans. Sending to
+arbitrary recipients requires Workers Paid; Cloudflare currently includes 3,000
+outbound messages per account per month and then charges by usage. New sending
+accounts also begin with conservative daily limits that grow with reputation.
+Check the current [Cloudflare pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
+and [limits](https://developers.cloudflare.com/email-service/platform/limits/)
+before deploying.
+
+## How it is built
+
+```text
+Email Routing ─▶ email() ─▶ MIME parse ─▶ D1 metadata + R2 raw mail
+                                            │
+REST API / CLI ─▶ domain services ─▶ Queues ─▶ Email Sending
+                         │                    └─▶ signed webhooks + delivery events
+                         └─▶ Durable Object rendezvous for wait / WebSocket updates
+```
+
+| Path | Role |
+|---|---|
+| `packages/core` | Domain services, policy, ports, and in-memory adapters |
+| `packages/mime` | MIME parsing/building and safe HTML presentation |
+| `packages/contract` | Shared Zod schemas and API DTOs |
+| `packages/cli` | Published agent-facing CLI |
+| `apps/web` | Worker entry points, REST API, queues, persistence, and dashboard |
+
+<details>
+<summary><strong>Develop locally</strong></summary>
 
 ```bash
 pnpm install
-pnpm check         # biome + typecheck + tests
-pnpm lint          # biome only
-pnpm format        # biome --write
+pnpm check
 
 cd apps/web
 echo 'MAILWORKER_ADMIN_KEY = "local-dev-admin-key"' > .dev.vars
 pnpm db:migrate:local
-pnpm dev           # the API and the dashboard, in workerd, on :5173
+pnpm dev
 ```
 
-`vite dev` runs the SSR environment inside workerd with the real bindings from
-`wrangler.jsonc`, so a loader that queries D1 is doing in development exactly
-what it does in production. Sign in at `/login` with the admin key above, or
-with any key from `mailworker keys create`.
+The API and server-rendered dashboard run inside workerd with the bindings from
+`wrangler.jsonc`. Open `/login` and use the local admin key above.
 
-Toolchain: TypeScript 7, Vitest 4, Biome 2.5, Zod 4, Drizzle for D1,
-React Router 8, pnpm workspaces. Imports use package-qualified
-aliases (`@core/*`, `@contract/*`, …) without file extensions inside a package, and
-`@mailworker/*` public exports across packages.
+</details>
 
-### Two suites, one set of assertions
-
-`packages/core`, `packages/mime`, `packages/contract` and `packages/cli` run on
-plain Node with no miniflare, no network and no Cloudflare account, because every
-port has an in-memory implementation — 297 tests in about half a second. That is deliberate:
-a project that sells email testing has to be able to test its own mail handling
-fast enough that people keep running the suite.
+<details>
+<summary><strong>Ship an update to an existing deployment</strong></summary>
 
 ```bash
-cd packages/core && pnpm test:watch
+pnpm ship
+pnpm ship --dry-run
 ```
 
-But a fake that quietly disagrees with the real database does not make the suite
-fast, it makes it lie. So `runRepositoryConformance` — one set of behavioural
-assertions, exported from `@mailworker/core/testing` — is run twice: against the
-in-memory adapters in `packages/core`, and against a **real D1 and R2 inside
-workerd** in `apps/web`.
+The ship command plans migration ordering, records the rollback target, builds,
+deploys, and runs smoke checks. First-time provisioning remains the job of the
+gated `deploy-mailworker` skill.
 
-`apps/web` also carries the tests that only mean something with real
-concurrency: a `wait` registered before a message arrives, woken by the
-`email()` handler mid-flight, against a real Durable Object. A fake would decide
-that race for us rather than test it.
+</details>
 
-It has already paid for itself. A correlated subquery counting attachments
-rendered its column references bare, so SQLite resolved them against the
-subquery's own table and every message came back with zero attachments — no
-error, and nothing a mock could have caught.
+## Contributing
 
-`test/architecture.test.ts` mechanically enforces the layering rule and
-the dependency direction between the four bounded contexts (`identity` ←
-`mailbox` ← `ingestion`, and `delivery` → `mailbox`), so "which domain may know
-about which" is a failing test rather than a diagram. It includes a self-check,
-so the guard cannot silently stop matching. The same
-principle is applied to the other guards in the repo: the error-code
-cross-check, the tenancy assertions and the "`/v1` never reads a cookie"
-assertion in `test/session.test.ts` were each verified by breaking them on
-purpose.
-
-That last one is worth stating plainly, because it is the dashboard's whole
-CSRF story. Dashboard pages authenticate with an httpOnly cookie; `/v1`
-authenticates with an `Authorization` header and **nothing else**. A browser
-attaches cookies to a cross-site request it was tricked into making and does not
-attach headers, so every mutating endpoint under `/v1` is unreachable that way
-without a token dance. The dashboard can afford that because its loaders call
-the services directly through the shared container rather than making an HTTP
-call to their own Worker.
-
-The live connection is the one place a cookie meets a socket, and it is outside
-`/v1` for exactly that reason: a browser cannot set an `Authorization` header on
-a `new WebSocket()`, so `/events` is on the dashboard side of the split rather
-than an exception to it. WebSockets are also exempt from CORS, so it checks the
-`Origin` header as a second lock behind `SameSite=Lax`.
-
-## Requirements (once the Worker exists)
-
-- A Cloudflare account with a domain on Cloudflare DNS
-- **Email Routing** for inbound — free, unlimited, works on the Free plan
-- **Email Sending** for outbound — needs **Workers Paid**; 3,000 messages/month
-  included, then $0.35 per 1,000
-
-Mailworker is for transactional and agent mail. Cloudflare Email Sending is in
-beta and its daily quota ramps with sender reputation, so this is **not** a bulk
-or marketing sender and should not be used as one.
+Issues and pull requests are welcome. Run `pnpm check` before opening a PR. The
+test suite runs the same repository conformance assertions against both in-memory
+adapters and real D1/R2 adapters in workerd; architectural dependency rules are
+tests too, not only conventions.
 
 ## License
 
-MIT
+[MIT](LICENSE)
