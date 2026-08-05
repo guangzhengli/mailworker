@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@web/app/components/ui/select";
+import { Textarea } from "@web/app/components/ui/textarea";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { Callout, Mono, Note, PageHeader } from "@web/app/ui";
 import { useEffect } from "react";
@@ -193,13 +194,7 @@ export default function Compose({ loaderData }: Route.ComponentProps) {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="text">{t("compose.body")}</Label>
-              <textarea
-                id="text"
-                name="text"
-                required
-                rows={12}
-                className="w-full rounded-control border border-border bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-primary"
-              />
+              <Textarea id="text" name="text" required rows={12} />
             </div>
 
             <div className="flex items-center gap-3">

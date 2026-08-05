@@ -148,19 +148,20 @@ function ViewTab({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-control px-2.5 py-1 text-[13px] transition-colors",
+        "h-auto rounded-control px-2.5 py-1 text-[13px] font-normal",
         active
           ? "bg-selected font-medium text-title"
           : "text-secondary-text hover:bg-hover hover:text-title",
       )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
