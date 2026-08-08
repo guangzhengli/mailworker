@@ -37,7 +37,14 @@ export interface InboxRepository {
   findById(ctx: Caller, id: Ulid): Promise<Inbox | null>;
   /** Looked up by the tag-stripped `matchKey`. */
   findByAddress(ctx: Caller, address: EmailAddress): Promise<Inbox | null>;
-  insert(ctx: Caller, inbox: Inbox): Promise<void>;
+  /**
+   * Insert, relying on the `(account_id, address)` unique constraint to settle
+   * who won. Returns `stored: false` when the address was already taken instead
+   * of throwing, because both callers race: two concurrent `POST /v1/inboxes`
+   * for the same address, and two inbound deliveries autocreating the same
+   * one. A read-then-write cannot decide this — both sides see it free.
+   */
+  insert(ctx: Caller, inbox: Inbox): Promise<{ stored: boolean }>;
   update(ctx: Caller, inbox: Inbox): Promise<void>;
   list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>>;
   /** Expired inboxes, oldest expiry first — drives the retention sweep. */

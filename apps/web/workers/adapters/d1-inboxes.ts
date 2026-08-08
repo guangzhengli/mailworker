@@ -46,8 +46,25 @@ export class D1Inboxes implements InboxRepository {
     return row === undefined ? null : toInbox(row);
   }
 
-  async insert(ctx: Caller, inbox: Inbox): Promise<void> {
-    await this.db.insert(inboxes).values(toRow(ctx, inbox));
+  /**
+   * Insert, letting `uq_inboxes_account_address` decide whether this caller was
+   * the one that created it.
+   *
+   * `ON CONFLICT DO NOTHING ... RETURNING id` collapses "is it already there"
+   * and "put it there" into one statement, the same way `D1Messages.insert`
+   * does. A read-then-write races itself here just as it does there: two
+   * concurrent creates of one address both find the table empty, both insert,
+   * and the loser surfaces a raw constraint violation as a 500 instead of the
+   * `address_taken` the caller can act on.
+   */
+  async insert(ctx: Caller, inbox: Inbox): Promise<{ stored: boolean }> {
+    const inserted = await this.db
+      .insert(inboxes)
+      .values(toRow(ctx, inbox))
+      .onConflictDoNothing()
+      .returning({ id: inboxes.id });
+
+    return { stored: inserted.length > 0 };
   }
 
   async update(ctx: Caller, inbox: Inbox): Promise<void> {

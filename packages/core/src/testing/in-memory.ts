@@ -187,8 +187,15 @@ export class InMemoryInboxes implements InboxRepository {
     );
   }
 
-  async insert(ctx: Caller, inbox: Inbox): Promise<void> {
-    scoped(this.rows, ctx).push(inbox);
+  async insert(ctx: Caller, inbox: Inbox): Promise<{ stored: boolean }> {
+    const rows = scoped(this.rows, ctx);
+    // Mirrors UNIQUE(account_id, address) as D1 declares it — the index does not
+    // include `deleted_at`, so a soft-deleted row still holds its address.
+    if (rows.some((row) => row.address === inbox.address)) {
+      return { stored: false };
+    }
+    rows.push(inbox);
+    return { stored: true };
   }
 
   async update(ctx: Caller, inbox: Inbox): Promise<void> {

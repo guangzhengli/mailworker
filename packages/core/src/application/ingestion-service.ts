@@ -108,15 +108,33 @@ export function createIngestionService(deps: IngestionDeps) {
           expiresAt: Inbox.expiryFromTtl(now, DEFAULT_AUTOCREATE_TTL_MS),
           now,
         });
-        await deps.inboxes.insert(ctx, inbox);
-        events.push({
-          type: "inbox.created",
-          accountId: ctx.accountId,
-          occurredAt: now,
-          inboxId: inbox.id,
-          address: inbox.address,
-          expiresAt: inbox.expiresAt,
-        });
+        // Two deliveries to the same unknown address arrive at once — Email
+        // Routing retries, and a sender can fan out — so both autocreate the
+        // same inbox and one loses. Losing must not drop the mail: the message
+        // is a fact that already happened, so fall back to the inbox the winner
+        // wrote and file against that. `inbox.created` is only announced by the
+        // winner, or a subscriber counts one creation twice.
+        const { stored } = await deps.inboxes.insert(ctx, inbox);
+        if (!stored) {
+          const existing = await deps.inboxes.findByAddress(ctx, inbox.address);
+          // Taken but unreadable means a soft-deleted row holds the address —
+          // the unique index spans it, `findByAddress` does not. That is the
+          // same "there is nowhere to file this" the deleted branch below
+          // reports, so it answers the same way rather than throwing.
+          if (existing === null) {
+            return { outcome: "inbox_unavailable", reason: "inbox_deleted" };
+          }
+          inbox = existing;
+        } else {
+          events.push({
+            type: "inbox.created",
+            accountId: ctx.accountId,
+            occurredAt: now,
+            inboxId: inbox.id,
+            address: inbox.address,
+            expiresAt: inbox.expiresAt,
+          });
+        }
       } else {
         const found =
           resolution.kind === "inbox" && existing !== null
@@ -156,7 +174,7 @@ export function createIngestionService(deps: IngestionDeps) {
         known,
       });
 
-      const trust = SenderTrust.assess(parsed.auth, { bodyText: parsed.bodyText ?? "" });
+      const trust = SenderTrust.assess(parsed.auth);
 
       const rawKey = BlobKeys.rawMessage(ctx.accountId, messageUlid);
       await deps.blobs.put(ctx, rawKey, input.raw, { contentType: "message/rfc822" });
@@ -200,7 +218,6 @@ export function createIngestionService(deps: IngestionDeps) {
         references: parsed.references,
         auth: parsed.auth,
         trusted: trust.trusted,
-        injectionRisk: trust.injectionRisk,
         trustReasons: trust.reasons,
         tag: resolution.tag,
         autoSubmitted: parsed.autoSubmitted,
@@ -239,7 +256,6 @@ export function createIngestionService(deps: IngestionDeps) {
           from: message.from,
           subject: message.subject,
           trusted: message.trusted,
-          injectionRisk: message.injectionRisk,
         },
       ]);
 

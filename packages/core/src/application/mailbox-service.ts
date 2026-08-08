@@ -1,7 +1,6 @@
 import type {
   AttachmentMeta,
   DomainEvent,
-  ExtractKind,
   InboxKind,
   Message,
   MessageSummary,
@@ -12,7 +11,6 @@ import type {
 import {
   Caller,
   DomainError,
-  Extractors,
   Inbox,
   invalidArgument,
   notFound,
@@ -72,14 +70,12 @@ const RANDOM_SUFFIX_BYTES = 6;
 
 export interface WaitForMessageRequest extends WaitCriteria {
   readonly timeoutMs?: number;
-  readonly extract?: ExtractKind;
 }
 
 export type WaitOutcome =
   | {
       readonly outcome: "matched";
       readonly message: Message;
-      readonly extracted: string | null;
     }
   | { readonly outcome: "timeout"; readonly waitedMs: number };
 
@@ -163,14 +159,18 @@ export function createMailboxService(deps: MailboxDeps) {
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       });
 
-      const clash = await deps.inboxes.findByAddress(ctx, inbox.address);
-      if (clash !== null) {
+      // The insert is what decides this, not a lookup before it. A read-then-
+      // write lets two concurrent creates of one address both see it free, and
+      // the loser then fails on the constraint as an opaque 500 rather than the
+      // `address_taken` it can act on — which is exactly what a test suite
+      // minting one fixture inbox from parallel workers hits.
+      const { stored } = await deps.inboxes.insert(ctx, inbox);
+      if (!stored) {
         throw new DomainError("address_taken", `${inbox.address} is taken.`, {
           address: inbox.address,
         });
       }
 
-      await deps.inboxes.insert(ctx, inbox);
       await deps.events.publish([
         {
           type: "inbox.created",
@@ -351,8 +351,9 @@ export function createMailboxService(deps: MailboxDeps) {
      * Block until a matching message arrives.
      *
      * This is the operation the whole CLI is shaped around: a test or an agent asks
-     * "did the signup email arrive, and what is the code", and gets an answer in one
-     * call with no polling loop of its own.
+     * "did the signup email arrive", and gets the whole message back in one call
+     * with no polling loop of its own. The whole message, deliberately — which
+     * part of it matters is the caller's judgement, not ours.
      *
      * A timeout is an outcome, not an error. The CLI turns it into exit code 4 so a
      * shell script can branch on it, and an agent can tell "no mail yet" apart from
@@ -397,7 +398,7 @@ export function createMailboxService(deps: MailboxDeps) {
         };
       }
 
-      return { outcome: "matched", message, extracted: extractFrom(message, input.extract) };
+      return { outcome: "matched", message };
     },
 
     /**
@@ -512,11 +513,4 @@ async function resolveDomain(
     );
   }
   return all[0]!.domain;
-}
-
-function extractFrom(message: Message, kind: ExtractKind | undefined): string | null {
-  if (kind === undefined || kind === "none") return null;
-  const body = message.bodyText ?? (message.bodyHtml ?? "").replace(/<[^>]+>/g, " ");
-  const haystack = `${message.subject}\n${body}`;
-  return kind === "otp" ? Extractors.otp(haystack) : Extractors.firstLink(haystack);
 }

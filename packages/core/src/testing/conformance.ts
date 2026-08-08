@@ -143,6 +143,21 @@ export function runRepositoryConformance(
         expect(await s.inboxes.findById(ALICE, inbox.id)).toEqual(inbox);
       });
 
+      it("reports the loser of a duplicate address rather than throwing", async () => {
+        // Both callers of `insert` race for one address — two concurrent
+        // `POST /v1/inboxes`, or two inbound deliveries autocreating the same
+        // inbox. Whoever loses has to learn that from a return value; a raw
+        // constraint violation reaches the client as a 500 it cannot act on.
+        const first = anInbox(`agent@${CONFORMANCE_DOMAIN}`);
+        expect(await s.inboxes.insert(ALICE, first)).toEqual({ stored: true });
+
+        const second = anInbox(`agent@${CONFORMANCE_DOMAIN}`);
+        expect(await s.inboxes.insert(ALICE, second)).toEqual({ stored: false });
+
+        // The winner keeps the address — the loser must not have overwritten it.
+        expect(await s.inboxes.findByAddress(ALICE, first.address)).toEqual(first);
+      });
+
       it("finds by the tag-stripped address and skips soft-deleted rows", async () => {
         const inbox = anInbox(`agent@${CONFORMANCE_DOMAIN}`);
         await s.inboxes.insert(ALICE, inbox);
@@ -278,7 +293,6 @@ export function runRepositoryConformance(
           references: [RfcMessageId.parse("root@corp.com")],
           auth: { spf: "pass", dkim: "pass", dmarc: "pass" },
           trusted: true,
-          injectionRisk: false,
           trustReasons: ["dmarc_pass"],
           tag: "run42",
           autoSubmitted: "auto-generated",
