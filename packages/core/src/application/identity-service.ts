@@ -233,7 +233,7 @@ export function createIdentityService(deps: IdentityDeps) {
     /**
      * Mint a credential.
      *
-     * The token is `mw_live_<public>_<secret>`: the public head is stored in
+     * The token is `mw_<mode>_<public>_<secret>`: the public head is stored in
      * the clear and indexed, so authenticating is one lookup rather than a hash
      * comparison against every key, and a token leaked into a log or a
      * repository can be identified and revoked from the prefix alone — which

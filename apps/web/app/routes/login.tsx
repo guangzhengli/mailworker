@@ -120,7 +120,7 @@ export default function Login({ loaderData, actionData }: Route.ComponentProps) 
                   id="token"
                   type="password"
                   name="token"
-                  placeholder="mw_live_…"
+                  placeholder="mw_live_… / mw_sbx_… / mw_test_…"
                   autoComplete="off"
                   spellCheck={false}
                   className="font-mono"

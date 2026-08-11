@@ -1,4 +1,4 @@
-import { ApiKeyToken } from "@core/domain";
+import { Account, ApiKeyToken } from "@core/domain";
 import { createHarness, type Harness } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -122,5 +122,46 @@ describe("revokeKey", () => {
     // before anyone noticed, and deleting it is how that becomes unanswerable.
     const listed = await h.services.identity.listKeys(h.ctx);
     expect(listed.map((key) => key.id)).toContain(minted.key.id);
+  });
+});
+
+/**
+ * The prefix has to distinguish all three modes, not two.
+ *
+ * `sandbox` and `test` shared `mw_test_` until they did not, and the token was
+ * the one place someone checks in a hurry. The difference between them is not
+ * cosmetic: a sandbox key cannot put mail on the network at all, and a test key
+ * sends for real to any allowlisted address. Reading one as the other is how a
+ * "safe" experiment reaches somebody's inbox.
+ */
+describe("key prefixes", () => {
+  it("gives each mode its own prefix", () => {
+    expect(Account.keyPrefix("live")).toBe("mw_live");
+    expect(Account.keyPrefix("sandbox")).toBe("mw_sbx");
+    expect(Account.keyPrefix("test")).toBe("mw_test");
+  });
+
+  it("mints a sandbox key that says sandbox", async () => {
+    const minted = await h.services.identity.createKey(
+      { ...h.ctx, mode: "sandbox" },
+      { name: "experiments", scopes: ["message:send"] },
+    );
+
+    expect(minted.token.startsWith("mw_sbx_")).toBe(true);
+    // Still a token the real parser accepts — a prefix nobody can authenticate
+    // with would be a worse bug than the one being fixed.
+    expect(ApiKeyToken.split(minted.token)?.prefix).toBe(minted.key.prefix);
+  });
+
+  it("still accepts a sandbox key minted under the old shared prefix", () => {
+    // Authentication resolves a key by the prefix stored on its row, so keys
+    // that predate the split are ordinary valid credentials. Dropping `test`
+    // from the pattern would have locked their owners out.
+    const legacy = `mw_test_aaaaaa_${"0".repeat(48)}`;
+    expect(ApiKeyToken.split(legacy)?.prefix).toBe("mw_test_aaaaaa");
+  });
+
+  it("rejects a prefix that names no mode", () => {
+    expect(ApiKeyToken.split(`mw_prod_aaaaaa_${"0".repeat(48)}`)).toBeNull();
   });
 });

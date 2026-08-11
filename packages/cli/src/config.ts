@@ -19,7 +19,8 @@ export interface Config {
   readonly token: string;
   /**
    * Target a sibling environment. Usually unnecessary: a key already belongs to
-   * exactly one environment, and its `mw_live_` / `mw_test_` prefix says which.
+   * exactly one environment, and its `mw_live_` / `mw_sbx_` / `mw_test_`
+   * prefix says which.
    * This is for an admin credential driving another one.
    */
   readonly environment: string | null;

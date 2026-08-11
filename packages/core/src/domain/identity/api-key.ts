@@ -1,4 +1,5 @@
 import { invalidArgument } from "@core/domain/errors";
+import type { KeyPrefix } from "@core/domain/identity/account";
 import type { AccountId } from "@core/domain/identity/account-id";
 import type { Scope } from "@core/domain/identity/scope";
 import type { Ulid } from "@core/domain/ulid";
@@ -42,18 +43,23 @@ export interface CreateApiKeyInput {
 export const API_KEY_PREFIX = "mw";
 
 /**
- * The token format: `mw_live_<public>_<secret>` or `mw_test_<public>_<secret>`.
+ * The token format: `mw_<mode>_<public>_<secret>`.
  *
  * The public head is stored in the clear and indexed, so authenticating is one
  * lookup rather than a hash comparison against every key — and a token leaked
  * into a log identifies which key to revoke without holding anything that could
- * authenticate. The `live`/`test` half makes pasting the wrong environment's key
- * visible at a glance.
+ * authenticate. The mode in the middle makes pasting the wrong environment's key
+ * visible at a glance: `mw_live` reaches real people, `mw_sbx` cannot leave the
+ * deployment, `mw_test` sends for real behind a recipient allowlist.
+ *
+ * `test` stays in the pattern for keys minted before `sandbox` got a prefix of
+ * its own — they are still valid credentials, and authentication resolves a key
+ * by the prefix stored on its row rather than by re-deriving one.
  */
 export const ApiKeyToken = {
-  PATTERN: /^(mw_(?:live|test)_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
+  PATTERN: /^(mw_(?:live|sbx|test)_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
 
-  format(keyPrefix: "mw_live" | "mw_test", publicId: string, secret: string): string {
+  format(keyPrefix: KeyPrefix, publicId: string, secret: string): string {
     return `${keyPrefix}_${publicId}_${secret}`;
   },
 

@@ -32,6 +32,12 @@ export const ProjectId = {
  */
 export type AccountMode = "live" | "sandbox" | "test";
 
+/**
+ * The public head of an API key token, one per mode. `mw_test` remains valid on
+ * keys minted for a sandbox environment before the prefixes were split.
+ */
+export type KeyPrefix = "mw_live" | "mw_sbx" | "mw_test";
+
 export const ACCOUNT_MODES: readonly AccountMode[] = ["live", "sandbox", "test"];
 
 export function isAccountMode(value: string): value is AccountMode {
@@ -85,7 +91,23 @@ export const Account = {
     return mode === "test";
   },
 
-  keyPrefix(mode: AccountMode): "mw_live" | "mw_test" {
-    return mode === "live" ? "mw_live" : "mw_test";
+  /**
+   * One prefix per mode, because the three modes are not two.
+   *
+   * `sandbox` and `test` used to share `mw_test`, which made the token unable
+   * to answer the only question anyone asks it in a hurry: does this thing send
+   * real mail? A sandbox key sends nothing outside the deployment; a test key
+   * sends for real and merely insists on the identity's recipient allowlist.
+   * Pasting one where the other was meant is the difference between a no-op and
+   * mail arriving in someone's inbox, and a prefix that reads the same in both
+   * cases cannot warn anybody.
+   *
+   * Keys minted before this returns `mw_test` for a sandbox environment keep
+   * working: authentication looks the prefix up as stored rather than deriving
+   * it from the mode, so this changes what is minted next, not what is valid.
+   */
+  keyPrefix(mode: AccountMode): KeyPrefix {
+    if (mode === "live") return "mw_live";
+    return mode === "sandbox" ? "mw_sbx" : "mw_test";
   },
 } as const;
