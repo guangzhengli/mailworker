@@ -171,8 +171,59 @@ export function diagnosticsReport(report: DiagnosticsDto): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * The wide and full-width ranges of Unicode's East Asian Width property, which
+ * is what a terminal uses to decide how many cells a glyph gets. Narrowed to
+ * the blocks that actually turn up in mail — CJK, kana, Hangul, the full-width
+ * forms, and the emoji planes — rather than the whole table.
+ */
+function isWide(code: number): boolean {
+  return (
+    (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+    (code >= 0x2e80 && code <= 0x303e) || // CJK radicals, punctuation
+    (code >= 0x3041 && code <= 0x33ff) || // kana, Hangul compat, CJK compat
+    (code >= 0x3400 && code <= 0x4dbf) || // CJK extension A
+    (code >= 0x4e00 && code <= 0x9fff) || // CJK unified ideographs
+    (code >= 0xa000 && code <= 0xa4cf) || // Yi
+    (code >= 0xac00 && code <= 0xd7a3) || // Hangul syllables
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+    (code >= 0xfe30 && code <= 0xfe4f) || // CJK compatibility forms
+    (code >= 0xff00 && code <= 0xff60) || // full-width forms
+    (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x1f300 && code <= 0x1f64f) || // emoji
+    (code >= 0x1f900 && code <= 0x1f9ff) ||
+    (code >= 0x20000 && code <= 0x3fffd) // CJK extensions B and beyond
+  );
+}
+
+/**
+ * Pad to a COLUMN width, which is not a character count.
+ *
+ * A CJK ideograph, a kana and a full-width punctuation mark each occupy two
+ * cells in a terminal, so `padEnd` — which counts UTF-16 code units — leaves
+ * every row containing one jutting past its column. On a list of Chinese mail
+ * that is every row, and the table stops being a table.
+ *
+ * Iterating with `for…of` rather than by index matters for the same reason in
+ * the other direction: `"😀".length` is 2, and counting it as two columns is as
+ * wrong as counting `订` as one.
+ */
 function pad(value: string, width: number): string {
-  return value.length >= width ? `${value.slice(0, width - 1)}…` : value.padEnd(width);
+  let taken = 0;
+  let kept = "";
+
+  for (const char of value) {
+    const next = taken + (isWide(char.codePointAt(0) ?? 0) ? 2 : 1);
+    // One cell is reserved for the ellipsis, so a truncated value still ends
+    // exactly on the column boundary rather than one past it.
+    if (next > width - 1) {
+      return `${kept}…${" ".repeat(width - taken - 1)}`;
+    }
+    taken = next;
+    kept += char;
+  }
+
+  return value + " ".repeat(width - taken);
 }
 
 function relative(iso: string): string {
