@@ -92,7 +92,17 @@ export class CloudflareTransport implements MailTransport {
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      return { ok: false, error: reason, retryable: isRetryable(reason) };
+      const verdict = classifyFailure(error, reason);
+      if (verdict.decidedBy === "prose") {
+        // Logged because it is the branch that can rot without anyone noticing:
+        // it decides a message's fate from the wording of an error string, and
+        // the wording is not ours. A run of these in the logs is the signal to
+        // add whatever code the provider is now sending to the table above.
+        console.warn(
+          `[transport] retryable=${verdict.retryable} decided by wording, no status code found: ${reason}`,
+        );
+      }
+      return { ok: false, error: reason, retryable: verdict.retryable };
     }
   }
 }
@@ -127,17 +137,77 @@ function destinationsOf(message: DispatchRequest): EmailDestinations {
  * retrying a rejected recipient burns quota against a wall, and giving up on a
  * throttle loses a message that would have gone out a minute later.
  *
- * Matched on the message because the binding surfaces a plain `Error` rather
- * than a typed failure. Conservative on purpose — the default is NOT retryable,
- * so an unrecognised error stops rather than looping. A message stuck in
- * `failed` with a reason in the timeline is a support question; a message
- * retrying forever is a bill.
+ * Three sources, most trustworthy first, because they are not equally reliable:
+ *
+ *   1. An SMTP reply code on the error. RFC 5321 §4.2.1 is unambiguous: 4xx is
+ *      transient, 5xx is permanent.
+ *   2. An HTTP status on the error. Also unambiguous, and the OPPOSITE way
+ *      round — 4xx is a client error nobody should retry, 5xx is the server
+ *      saying it failed on its own account.
+ *   3. The wording. A last resort, reported as `decidedBy: "prose"` so the
+ *      caller can log it: an English keyword list is rephrased around by any
+ *      change upstream, and silently, since the failure mode is a message that
+ *      quietly stops being retried.
+ *
+ * The two code conventions being inverses of each other is why a bare number
+ * found in the message text is NOT used. `421` is transient over SMTP and
+ * permanent over HTTP, and a three-digit number in an error string does not say
+ * which one it is — a guess there would be wrong systematically rather than
+ * occasionally.
+ *
+ * Conservative throughout — the default is NOT retryable, so an unrecognised
+ * error stops rather than looping. A message stuck in `failed` with a reason in
+ * the timeline is a support question; a message retrying forever is a bill.
  */
-function isRetryable(reason: string): boolean {
-  return /\b(rate|throttl|timeout|timed out|temporar|unavailable|try again|50[0234])\b/i.test(
-    reason,
-  );
+interface RetryVerdict {
+  readonly retryable: boolean;
+  readonly decidedBy: "smtp" | "http" | "prose";
 }
+
+export function classifyFailure(error: unknown, reason: string): RetryVerdict {
+  const smtp = statusField(error, ["smtpCode", "smtp_code"]);
+  if (smtp !== null) return { retryable: smtp < 500, decidedBy: "smtp" };
+
+  const http = statusField(error, ["status", "statusCode"]);
+  if (http !== null) return { retryable: RETRYABLE_HTTP.has(http), decidedBy: "http" };
+
+  return { retryable: TRANSIENT_WORDING.test(reason), decidedBy: "prose" };
+}
+
+/**
+ * A status the error object states outright, under any of the given keys.
+ *
+ * Several shapes are tried because the binding's failures are not a documented
+ * type. Constrained to three digits so a Cloudflare internal error number like
+ * `10021` — which is neither an SMTP reply nor an HTTP status — cannot be read
+ * as one.
+ */
+function statusField(error: unknown, keys: readonly string[]): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const source = error as Record<string, unknown>;
+  for (const key of keys) {
+    const value = source[key];
+    const numeric =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && /^\d{3}$/.test(value)
+          ? Number(value)
+          : null;
+    if (numeric !== null && numeric >= 100 && numeric <= 599) return numeric;
+  }
+  return null;
+}
+
+/**
+ * The HTTP statuses worth another attempt. Named individually rather than taken
+ * as a range: 500 and 501 are both 5xx, and only one of them is a server having
+ * a bad minute — the other says the endpoint will never implement this.
+ */
+const RETRYABLE_HTTP: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504]);
+
+/** The last resort. See `classifyFailure` for why this is not the first one. */
+const TRANSIENT_WORDING =
+  /\b(rate|throttl|timeout|timed out|temporar|unavailable|try again|too many)\b/i;
 
 /**
  * The binding serializes attachments, and a `Uint8Array` view over a larger
