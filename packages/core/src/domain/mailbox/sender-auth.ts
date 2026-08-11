@@ -46,8 +46,7 @@ export type TrustReason =
   | "dmarc_pass"
   | "spf_dkim_pass"
   | "unauthenticated_sender"
-  | "dmarc_fail"
-  | "instruction_like_content";
+  | "dmarc_fail";
 
 export const SenderAuth = {
   parseResult(input: string | null | undefined): AuthResult {

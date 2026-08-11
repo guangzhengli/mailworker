@@ -173,18 +173,12 @@ export function StatusTag({ status }: { status: string }) {
 }
 
 /**
- * The two provenance flags, together, because they answer different questions
- * and reading one without the other is how they get misused.
- * `trusted` says the domain is attributable; it never says the contents are
- * safe to act on, which is what `injectionRisk` is warning about.
+ * Whether the sending domain is attributable — and nothing more.
+ *
+ * `trusted` answers "did this domain really send it", never "is this safe to
+ * act on". The tooltip says so, because the word on its own does not.
  */
-export function Provenance({
-  trusted,
-  injectionRisk,
-}: {
-  trusted: boolean;
-  injectionRisk: boolean;
-}) {
+export function Provenance({ trusted }: { trusted: boolean }) {
   const { t } = useT();
 
   return (
@@ -192,11 +186,6 @@ export function Provenance({
       <Tag tone={trusted ? "success" : "warning"} title={t("provenance.attribution")}>
         {trusted ? t("provenance.trusted") : t("provenance.unverified")}
       </Tag>
-      {injectionRisk && (
-        <Tag tone="danger" title={t("provenance.injectionRiskTitle")}>
-          {t("provenance.injectionRisk")}
-        </Tag>
-      )}
     </span>
   );
 }

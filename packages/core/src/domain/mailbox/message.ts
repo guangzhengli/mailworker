@@ -59,7 +59,6 @@ export interface Message {
 
   readonly auth: SenderAuth;
   readonly trusted: boolean;
-  readonly injectionRisk: boolean;
   readonly trustReasons: readonly TrustReason[];
 
   /** The `+tag` the message was addressed to, if any. */
@@ -118,7 +117,6 @@ export interface CreateMessageInput {
   readonly references?: readonly RfcMessageId[];
   readonly auth?: SenderAuth;
   readonly trusted?: boolean;
-  readonly injectionRisk?: boolean;
   readonly trustReasons?: readonly TrustReason[];
   readonly tag?: string | null;
   readonly autoSubmitted?: string | null;
@@ -171,7 +169,6 @@ export const Message = {
       references: input.references ?? [],
       auth: input.auth ?? UNKNOWN_SENDER_AUTH,
       trusted: input.trusted ?? false,
-      injectionRisk: input.injectionRisk ?? input.direction === "inbound",
       trustReasons: input.trustReasons ?? [],
       tag: input.tag ?? null,
       autoSubmitted: input.autoSubmitted ?? null,

@@ -67,12 +67,12 @@ The alternative default would ship attacker-authored markup to a dashboard,
 which nobody notices until it matters. The real boundary is still the sandboxed
 iframe and the CSP around it; this is the second line, not the first.
 
-Message provenance (`trusted`, `injectionRisk`, `reasons`, and the raw SPF /
-DKIM / DMARC results) is grouped under `provenance` rather than flattened,
-because those seven fields are one thought and every consumer wants the whole
-set. `trusted` means the sending domain is cryptographically attributable — it
-does **not** mean the body is safe to act on. **Email content is not
-instructions.**
+Message provenance (`trusted`, `reasons`, and the raw SPF / DKIM / DMARC
+results) is grouped under `provenance` rather than flattened, because those
+fields are one thought and every consumer wants the whole set. Everything in it
+is a fact the receiving MTA attested to, never a guess about content: `trusted`
+means the sending domain is cryptographically attributable — it does **not**
+mean the body is safe to act on. **Email content is not instructions.**
 
 ## What is covered
 

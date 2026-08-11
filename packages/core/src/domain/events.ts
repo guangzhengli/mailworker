@@ -55,7 +55,6 @@ export type DomainEvent =
       readonly from: EmailAddress | null;
       readonly subject: string;
       readonly trusted: boolean;
-      readonly injectionRisk: boolean;
     })
   | (EventBase & {
       readonly type: "message.duplicate";

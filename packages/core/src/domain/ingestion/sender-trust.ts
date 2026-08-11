@@ -1,57 +1,35 @@
 import type { SenderAuth, TrustReason } from "@core/domain/mailbox/sender-auth";
 
 /**
- * Does the sender authentication add up to "this domain really sent it", and
- * does the body look like it is trying to steer an agent?
+ * Does the sender authentication add up to "this domain really sent it"?
  *
  * Separated from `SenderAuth` on purpose: that type is a fact reported by the
  * receiving MTA, this is our reading of it. The fact is stored on every message
  * forever; the reading can change when we learn more, without a migration.
+ *
+ * Only authentication is assessed here. There is deliberately no content
+ * scoring: a keyword list that flags "looks like prompt injection" is trivially
+ * rephrased around, silent on every language it was not written in, and — worst
+ * of the three — reads as an all-clear when it does not fire. The real control
+ * is that an email body is never treated as instructions in the first place,
+ * and that control does not need a heuristic to hold.
  */
 
 export interface TrustAssessment {
   /**
    * The sending domain is cryptographically attributable: DMARC passed, or both
    * SPF and DKIM passed. False means the From address could be forged.
+   *
+   * True says who sent it, and nothing about whether the body is safe to act
+   * on. Nothing makes inbound email safe to act on.
    */
   readonly trusted: boolean;
-  /**
-   * Elevated risk that the body is crafted to steer an agent.
-   *
-   * IMPORTANT: `injectionRisk === false` does NOT mean the content is safe to
-   * treat as instructions. Nothing makes inbound email safe to treat as
-   * instructions. This is a provenance signal for ranking and for warning a
-   * human — never an authorization to act on what the email says.
-   */
-  readonly injectionRisk: boolean;
   /** Machine-readable reasons, for logs and for the API response. */
   readonly reasons: readonly TrustReason[];
 }
 
-export interface ContentSignals {
-  readonly bodyText?: string;
-}
-
-/**
- * A deliberately short, high-signal pattern list. This is a hint for humans and
- * for ranking, not a filter — treating it as a security control would be a
- * mistake, since any real attacker just rephrases. The actual control is that
- * we never feed email bodies to a model as instructions.
- */
-const INSTRUCTION_PATTERNS: readonly RegExp[] = [
-  /ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions/i,
-  /disregard\s+(?:all\s+|any\s+)?(?:previous|prior|above)/i,
-  /you\s+are\s+now\s+(?:a|an|in)\b/i,
-  /\bsystem\s*prompt\b/i,
-  /<\s*\/?\s*(?:system|assistant)\s*>/i,
-];
-
-function looksLikeInstructions(bodyText: string): boolean {
-  return INSTRUCTION_PATTERNS.some((pattern) => pattern.test(bodyText));
-}
-
 export const SenderTrust = {
-  assess(auth: SenderAuth, signals: ContentSignals = {}): TrustAssessment {
+  assess(auth: SenderAuth): TrustAssessment {
     const reasons: TrustReason[] = [];
 
     let trusted = false;
@@ -67,12 +45,6 @@ export const SenderTrust = {
       reasons.push("unauthenticated_sender");
     }
 
-    let injectionRisk = !trusted;
-    if (signals.bodyText !== undefined && looksLikeInstructions(signals.bodyText)) {
-      injectionRisk = true;
-      reasons.push("instruction_like_content");
-    }
-
-    return { trusted, injectionRisk, reasons };
+    return { trusted, reasons };
   },
 } as const;

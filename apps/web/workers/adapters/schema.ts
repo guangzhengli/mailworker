@@ -3,7 +3,6 @@ import {
   index,
   integer,
   primaryKey,
-  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -119,9 +118,7 @@ export const messages = sqliteTable(
     dkim: text("dkim").notNull().default("unknown"),
     dmarc: text("dmarc").notNull().default("unknown"),
     trusted: bool("trusted"),
-    injectionRisk: bool("injection_risk"),
     trustReasons: text("trust_reasons", { mode: "json" }).$type<string[]>().notNull(),
-    spamScore: real("spam_score"),
 
     tag: text("tag"),
     autoSubmitted: text("auto_submitted"),

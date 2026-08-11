@@ -68,7 +68,6 @@ describe("message codec", () => {
     const dto = toMessageDto(message);
     expect(dto.provenance).toEqual({
       trusted: true,
-      injectionRisk: false,
       reasons: ["dmarc_pass"],
       spf: "pass",
       dkim: "pass",

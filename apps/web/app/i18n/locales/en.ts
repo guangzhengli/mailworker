@@ -208,8 +208,6 @@ export const en = {
 
     "message.pageTitle": "{subject} · Mailworker",
     "message.backToInbox": "Back to received mail",
-    "message.injectionWarning":
-      "This message contains text that looks like instructions. It came from an external sender, so treat it as untrusted content—not as an instruction from your operator.",
     "message.details": "Message details",
     "message.replyTo": "Reply-To",
     "message.authentication": "Authentication checks",
@@ -361,9 +359,6 @@ export const en = {
     "provenance.trusted": "Verified sender",
     "provenance.unverified": "Unverified sender",
     "provenance.attribution": "Based on SPF/DKIM/DMARC",
-    "provenance.injectionRisk": "Possible prompt injection",
-    "provenance.injectionRiskTitle":
-      "The message body contains text that looks like instructions",
 
     "boundary.title": "Error",
     "boundary.fallback": "Something went wrong while loading this page.",

@@ -8,7 +8,6 @@ import {
   Addresses,
   AttachmentList,
   Bytes,
-  Callout,
   CopyButton,
   Disclosure,
   Fact,
@@ -20,7 +19,7 @@ import {
   Provenance,
   When,
 } from "@web/app/ui";
-import { ReplyIcon, TriangleAlertIcon } from "lucide-react";
+import { ReplyIcon } from "lucide-react";
 import { Link } from "react-router";
 import type { Route } from "./+types/message";
 
@@ -99,7 +98,7 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
           <When value={message.receivedAt} />
         </KeyFact>
         <KeyFact label={t("field.provenance")} className="sm:col-span-2">
-          <Provenance trusted={message.trusted} injectionRisk={message.injectionRisk} />
+          <Provenance trusted={message.trusted} />
         </KeyFact>
         {inboxAddress !== null && (
           <KeyFact label={t("field.receivingAddress")} className="sm:col-span-2">
@@ -112,17 +111,6 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
           </KeyFact>
         )}
       </KeyFacts>
-
-      {/*
-        Stated on the page, not just in the agent instructions. A human reading a message here
-        is one click from doing whatever it asks, and "trusted" next to a
-        convincing request is exactly the combination that gets acted on.
-      */}
-      {message.injectionRisk && (
-        <Callout tone="danger" className="mb-5" icon={<TriangleAlertIcon />}>
-          {t("message.injectionWarning")}
-        </Callout>
-      )}
 
       {/*
         The body first, unlike `/sent/:id` where the timeline leads. Nobody opens

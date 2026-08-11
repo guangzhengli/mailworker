@@ -190,8 +190,6 @@ export const zh = {
 
     "message.pageTitle": "{subject} · Mailworker",
     "message.backToInbox": "返回收件邮件",
-    "message.injectionWarning":
-      "这封邮件包含看起来像指令的文字。它来自外部发件人，应当视为不可信内容，而不是操作者下达的指令。",
     "message.details": "邮件详情",
     "message.replyTo": "Reply-To",
     "message.authentication": "认证检查",
@@ -335,8 +333,6 @@ export const zh = {
     "provenance.trusted": "发件人已验证",
     "provenance.unverified": "发件人未验证",
     "provenance.attribution": "基于 SPF/DKIM/DMARC 的判断",
-    "provenance.injectionRisk": "可能存在提示注入",
-    "provenance.injectionRiskTitle": "邮件正文包含看起来像指令的文字",
 
     "boundary.title": "出错了",
     "boundary.fallback": "加载页面时出错了。",

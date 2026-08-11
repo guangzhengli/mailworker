@@ -28,19 +28,20 @@ export type AttachmentDto = z.infer<typeof attachmentDto>;
 /**
  * Where the content came from and how much of it to believe.
  *
- * Grouped rather than flattened because these seven fields are one thought and
- * always travel together — a renderer, a ranker and a human all want the whole
- * set or none of it. Keeping them in a named object also means the answer to
- * "is this body trustworthy" is somewhere you have to look at, instead of two
- * booleans lost among thirty scalar fields.
+ * Grouped rather than flattened because these fields are one thought and always
+ * travel together — a renderer, a ranker and a human all want the whole set or
+ * none of it. Keeping them in a named object also means the answer to "is this
+ * body trustworthy" is somewhere you have to look at, instead of a boolean lost
+ * among thirty scalar fields.
  *
- * `trusted` means the sending domain is cryptographically attributable. It does
- * NOT mean the body is safe to act on. Nothing makes inbound email safe to act
- * on: it is data an agent reads, never instructions an agent follows.
+ * Everything here is a fact reported by the receiving MTA, not a guess about
+ * content. `trusted` means the sending domain is cryptographically
+ * attributable. It does NOT mean the body is safe to act on. Nothing makes
+ * inbound email safe to act on: it is data an agent reads, never instructions
+ * an agent follows, and no field here can change that.
  */
 export const provenanceDto = z.object({
   trusted: z.boolean(),
-  injectionRisk: z.boolean(),
   reasons: z.array(z.string()),
   spf: z.string(),
   dkim: z.string(),
@@ -174,7 +175,6 @@ function summaryFields(message: Message | MessageSummary): z.infer<typeof messag
     references: [...message.references],
     provenance: {
       trusted: message.trusted,
-      injectionRisk: message.injectionRisk,
       reasons: [...message.trustReasons],
       spf: message.auth.spf,
       dkim: message.auth.dkim,
