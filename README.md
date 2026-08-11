@@ -18,7 +18,7 @@
 Mailworker turns a Cloudflare domain into email infrastructure that both your
 products and your AI agents can use. Applications get a Resend-like REST API for
 transactional email. Agents get a CLI for creating inboxes, waiting for messages,
-extracting OTPs, drafting replies, and submitting sends for human approval.
+reading bodies, drafting replies, and submitting sends for human approval.
 
 One deployment can serve multiple products and domains without a separate
 Mailworker subscription for each one. The infrastructure, data, and credentials
@@ -32,7 +32,7 @@ stay in **your Cloudflare account**; Cloudflare plan and usage charges still app
 |---|---|
 | **Email for every product** | One REST API for transactional send and receive across multiple domains, with attachments, batch sends, webhooks, and delivery timelines |
 | **Agent-assisted support** | Agents read untrusted mail as data, draft replies, and submit them to a queue; a human approves the irreversible send in the dashboard |
-| **E2E and manual testing** | Create disposable inboxes on your own domain without creating a Cloudflare routing rule for every address; block until an OTP or link arrives |
+| **E2E and manual testing** | Create disposable inboxes on your own domain without creating a Cloudflare routing rule for every address; block until the message arrives and read its body |
 | **A control plane you own** | Scoped API keys, agent identities, quotas, recipient allowlists, suppression handling, isolated environments, and a sandbox that sends nothing outside |
 
 ```text
@@ -95,8 +95,8 @@ An end-to-end signup test is two operations:
 ```bash
 id=$(mailworker inbox create --prefix signup --ttl 10m --json | jq -r .id)
 
-# Trigger the signup flow, then wait. stdout contains only the OTP.
-CODE=$(mailworker wait --inbox "$id" --extract otp --timeout 60s) || exit $?
+# Trigger the signup flow, then wait. stdout contains only the body.
+BODY=$(mailworker wait --inbox "$id" --text --timeout 60s) || exit $?
 ```
 
 Creating an inbox is one database insert, not a Cloudflare API call or a new
@@ -107,7 +107,7 @@ as raw `.eml`, and replay it through the same ingest path later.
 |---|---|
 | `inbox create` / `inbox ls` / `inbox rm` | Create and manage ephemeral or persistent addresses |
 | `wait` / `tail` | Wait for matching mail or stream new messages |
-| `ls` / `get` / `seen` | Search and read stored mail; `get --raw` exports the original MIME |
+| `ls` / `get` / `seen` | Search and read stored mail; `--text` prints just the body, `--raw` exports the original MIME |
 | `inject` | Replay a captured `.eml` fixture through the real ingest path |
 | `send` / `status` | Send through policy gates and inspect the delivery timeline |
 | `approve` | Release a send held for a human; agents should not receive this scope |

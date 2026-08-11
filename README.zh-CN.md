@@ -17,7 +17,7 @@
 
 独立开发者如何利用 AI Agents 管理邮件？Mailworker 把你的 Cloudflare 域名变成一套
 同时服务于产品和 Agent 的邮件基础设施：产品通过类似 Resend 的 REST API 收发事务性
-邮件；Agent 通过 CLI 创建收件箱、等待邮件、提取验证码、撰写回复，并把发送动作提交给
+邮件；Agent 通过 CLI 创建收件箱、等待邮件、读取正文、撰写回复，并把发送动作提交给
 人类审批。
 
 一个部署可以托管多个产品和域名，不需要为每个产品或域名单独购买 Mailworker 订阅。
@@ -32,7 +32,7 @@
 |---|---|
 | **为每个产品接入邮件** | 一套 REST API 管理多个域名的事务性收发，支持附件、批量发送、Webhook 和投递时间线 |
 | **让 Agent 协助客服** | Agent 把邮件当作不可信数据读取、撰写回复并提交审批；人类在 Dashboard 中批准这个不可撤销的发送动作 |
-| **E2E 与人工测试** | 在自己的域名上按需创建临时邮箱，无需为每个地址新增 Cloudflare 路由规则；阻塞等待 OTP 或验证链接 |
+| **E2E 与人工测试** | 在自己的域名上按需创建临时邮箱，无需为每个地址新增 Cloudflare 路由规则；阻塞等待邮件到达并读出正文 |
 | **自己掌控控制面** | 限定权限的 API Key、Agent 身份、配额、收件人白名单、退信抑制、环境隔离，以及绝不向外发信的 Sandbox |
 
 ```text
@@ -92,8 +92,8 @@ npx @mailworker/cli@latest help --agent
 ```bash
 id=$(mailworker inbox create --prefix signup --ttl 10m --json | jq -r .id)
 
-# 触发注册流程后等待邮件；stdout 里只有 OTP 本身。
-CODE=$(mailworker wait --inbox "$id" --extract otp --timeout 60s) || exit $?
+# 触发注册流程后等待邮件；stdout 里只有正文本身。
+BODY=$(mailworker wait --inbox "$id" --text --timeout 60s) || exit $?
 ```
 
 创建一个收件箱只是一次数据库写入，不会调用 Cloudflare API，也不会新增路由规则。
@@ -104,7 +104,7 @@ CODE=$(mailworker wait --inbox "$id" --extract otp --timeout 60s) || exit $?
 |---|---|
 | `inbox create` / `inbox ls` / `inbox rm` | 创建和管理临时或持久邮箱地址 |
 | `wait` / `tail` | 等待匹配邮件，或持续读取新邮件 |
-| `ls` / `get` / `seen` | 搜索和读取邮件；`get --raw` 导出原始 MIME |
+| `ls` / `get` / `seen` | 搜索和读取邮件；`--text` 只输出正文，`--raw` 导出原始 MIME |
 | `inject` | 沿真实接收链路重放捕获的 `.eml` Fixture |
 | `send` / `status` | 经过策略闸门发送，并查看完整投递时间线 |
 | `approve` | 放行等待人类审批的邮件；不应把这项权限交给 Agent |

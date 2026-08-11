@@ -19,8 +19,8 @@ machines at once:
 
 - `--json` on everything, with a schema kept stable within a major version
 - zero interaction when stdin is not a TTY — never block waiting for input
-- one command completes one whole intent (`wait --extract otp` prints the code
-  itself, not a message to parse)
+- one command completes one whole intent (`wait --text` blocks for the message
+  and writes its body to stdout, with nothing to parse off it afterwards)
 - exit codes carry meaning, so a script or agent can branch without reading text
 
 | Code | Meaning |
@@ -52,7 +52,7 @@ history.
 ```sh
 id=$(mailworker inbox create --prefix signup --json | jq -r .id)
 # … drive your signup flow against the printed address …
-CODE=$(mailworker wait --inbox "$id" --extract otp --timeout 60s) || exit $?
+BODY=$(mailworker wait --inbox "$id" --text --timeout 60s) || exit $?
 ```
 
 `get --raw > fixture.eml` into `inject fixture.eml` is the loop that turns a
