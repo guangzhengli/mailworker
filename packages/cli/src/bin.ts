@@ -9,6 +9,6 @@ import { run } from "@cli/main";
  *
  * `exitCode` rather than `process.exit()`: exiting immediately truncates stdout
  * when it is a pipe, which is exactly the case that matters —
- * `CODE=$(mailworker wait --extract otp)` would intermittently come back empty.
+ * `BODY=$(mailworker wait --text)` would intermittently come back truncated.
  */
 process.exitCode = await run(process.argv.slice(2));

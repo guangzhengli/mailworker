@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { type BodyOptions, bodyFormatOf, writeBody } from "@cli/body";
 import type { Client } from "@cli/client";
 import { emit, messageDetail, messageTable, type OutputOptions } from "@cli/output";
 import type { MessageDto, MessageSummaryDto, PageDto } from "@mailworker/contract";
@@ -12,9 +13,7 @@ interface ListOptions extends OutputOptions {
   unseen?: boolean;
 }
 
-interface GetOptions extends OutputOptions {
-  raw?: boolean;
-}
+type GetOptions = OutputOptions & BodyOptions;
 
 interface InjectOptions extends OutputOptions {
   to: string;
@@ -43,24 +42,39 @@ export function lsCommand(client: () => Client): Command {
 }
 
 /**
- * `mailworker get <id>` — one message, or its original bytes.
+ * `mailworker get <id>` — one message, or just its body.
  *
- * `--raw` writes the stored MIME to stdout untouched, which is the first half
- * of the loop that makes strange production mail into a regression test:
- * `get --raw > fixture.eml`, commit it, `inject` it back.
+ * The body flags are the same three `wait` takes, because "read what it says"
+ * should not depend on whether you blocked for the message or looked it up
+ * afterwards. `--raw` writes the stored MIME to stdout untouched, which is also
+ * the first half of the loop that makes strange production mail into a
+ * regression test: `get --raw > fixture.eml`, commit it, `inject` it back.
  */
 export function getCommand(client: () => Client): Command {
   return new Command("get")
     .argument("<id>")
     .description("Show one message")
-    .option("--raw", "write the original MIME to stdout")
+    .option("--text", "write the plain-text body to stdout and nothing else")
+    .option("--html", "write the sanitized HTML body to stdout and nothing else")
+    .option("--raw", "write the original MIME to stdout and nothing else")
     .option("--json", "print the DTO instead of a rendering")
     .action(async (id: string, options: GetOptions) => {
-      if (options.raw === true) {
-        process.stdout.write(await client().bytes(`/v1/messages/${id}/raw`));
+      const format = bodyFormatOf(options);
+      const api = client();
+
+      // Straight to the bytes: `--raw` is the one body format that does not
+      // need the parsed message first, and fetching it would be a wasted round
+      // trip on a message that can be several megabytes.
+      if (format === "raw") {
+        process.stdout.write(await api.bytes(`/v1/messages/${id}/raw`));
         return;
       }
-      const message = await client().get<MessageDto>(`/v1/messages/${id}`);
+
+      const message = await api.get<MessageDto>(`/v1/messages/${id}`);
+      if (format !== null) {
+        await writeBody(api, message, format);
+        return;
+      }
       emit(message, options, () => messageDetail(message));
     });
 }

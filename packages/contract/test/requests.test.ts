@@ -73,12 +73,9 @@ describe("query schemas", () => {
 
 describe("waitQuery", () => {
   it("renames to the use case's fields and normalizes the timeout", () => {
-    expect(
-      waitQuery.parse({ inbox: "01ARZ3NDEKTSV4RRFFQ69G5FAV", timeout: "45s", extract: "otp" }),
-    ).toEqual({
+    expect(waitQuery.parse({ inbox: "01ARZ3NDEKTSV4RRFFQ69G5FAV", timeout: "45s" })).toEqual({
       inboxId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       timeoutMs: 45_000,
-      extract: "otp",
     });
   });
 

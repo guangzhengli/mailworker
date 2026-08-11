@@ -1,4 +1,5 @@
 import { ApiError, type Client } from "@cli/client";
+import { UsageError } from "@cli/errors";
 import { buildProgram } from "@cli/main";
 import { ExitCode } from "@mailworker/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,10 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * The CLI's contract with a shell script, tested as a contract.
  *
  * Everything here is about the exit code and what lands on stdout, because that
- * is the whole interface an agent has. `wait --extract otp` printing the code
- * and nothing else is not a formatting preference — it is what makes
- * `CODE=$(mailworker wait …)` work, and a stray newline or a JSON wrapper
- * breaks every caller at once.
+ * is the whole interface an agent has. `wait --text` printing the body and
+ * nothing else is not a formatting preference — it is what makes
+ * `BODY=$(mailworker wait …)` work, and a stray label or a JSON wrapper breaks
+ * every caller at once.
  *
  * The client is faked rather than the network, so these stay fast and so a test
  * can assert on the query the CLI *built* — the translation from flags to query
@@ -59,29 +60,54 @@ async function invoke(client: Client, argv: string[]): Promise<number> {
     await program.parseAsync(argv, { from: "user" });
     return process.exitCode === undefined ? ExitCode.OK : Number(process.exitCode);
   } catch (error) {
+    // The same two mappings `run` makes. Kept in step with it deliberately:
+    // a test that swallowed a UsageError differently from the binary would
+    // assert an exit code no caller ever sees.
     if (error instanceof ApiError) return error.exitCode;
+    if (error instanceof UsageError) return ExitCode.USAGE;
     throw error;
   }
 }
 
 describe("wait", () => {
-  it("prints the OTP bare, so $(…) captures exactly the code", async () => {
+  it("prints the body bare, so $(…) captures exactly the body", async () => {
     const client = fakeClient({
       get: async () =>
-        ({ outcome: "matched", message: { id: "01J" }, extracted: "314159" }) as never,
+        ({
+          outcome: "matched",
+          message: { id: "01J", bodyText: "Your code is 314159." },
+        }) as never,
     });
 
     const code = await invoke(client, [
       "wait",
       "--inbox",
       "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      "--extract",
-      "otp",
+      "--text",
     ]);
 
     expect(code).toBe(ExitCode.OK);
-    // Nothing else. Not a label, not quotes, not JSON.
-    expect(stdout).toBe("314159\n");
+    // Nothing else. Not a header block, not quotes, not JSON.
+    expect(stdout).toBe("Your code is 314159.\n");
+  });
+
+  it("does not double the trailing newline a body already ends with", async () => {
+    const client = fakeClient({
+      get: async () =>
+        ({ outcome: "matched", message: { id: "01J", bodyText: "line\n" } }) as never,
+    });
+
+    expect(await invoke(client, ["wait", "--text"])).toBe(ExitCode.OK);
+    expect(stdout).toBe("line\n");
+  });
+
+  it("refuses to guess when two output formats are asked for", async () => {
+    const client = fakeClient({ get: async () => ({ outcome: "timeout" }) as never });
+
+    // Before the long poll, not after: waiting sixty seconds to be told the
+    // command line was wrong is the worst possible time to find out.
+    expect(await invoke(client, ["wait", "--text", "--json"])).toBe(ExitCode.USAGE);
+    expect(stdout).toBe("");
   });
 
   it("exits 4 with empty stdout when nothing arrives", async () => {
@@ -144,13 +170,13 @@ describe("wait", () => {
     });
   });
 
-  it("reports a message that arrived without the thing asked for", async () => {
+  it("reports a message that arrived without the body format asked for", async () => {
     const client = fakeClient({
       get: async () =>
-        ({ outcome: "matched", message: { id: "01J" }, extracted: null }) as never,
+        ({ outcome: "matched", message: { id: "01J", bodyHtml: null } }) as never,
     });
 
-    const code = await invoke(client, ["wait", "--extract", "otp"]);
+    const code = await invoke(client, ["wait", "--html"]);
 
     // Not a timeout: mail did arrive. Conflating the two would send a script
     // back round a retry loop that can never succeed.
@@ -186,9 +212,9 @@ describe("help --agent", () => {
     expect(await invoke(client, ["help", "--agent"])).toBe(ExitCode.OK);
 
     expect(stdout).toContain("EXIT CODES");
-    expect(stdout).toContain("--extract otp");
+    expect(stdout).toContain("--text");
     // The provenance warning is not decoration: it is the standing instruction
     // that keeps an agent from treating mail as orders.
-    expect(stdout).toContain("data an agent reads, never");
+    expect(stdout).toContain("data you read, never");
   });
 });

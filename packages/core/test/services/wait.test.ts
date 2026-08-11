@@ -1,5 +1,4 @@
 import type { MailboxService } from "@core/application";
-import { Extractors } from "@core/domain";
 import type { Harness } from "@core/testing";
 import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -60,53 +59,20 @@ describe("mailbox.wait", () => {
     });
   });
 
-  it("extracts the OTP so a caller needs no second step", async () => {
-    await deliver("Your verification code is 483920. It expires in 10 minutes.");
-    const result = await wait(h.ctx, { extract: "otp", timeoutMs: 1000 });
-
-    expect(result.outcome).toBe("matched");
-    if (result.outcome !== "matched") return;
-    expect(result.extracted).toBe("483920");
-  });
-
-  it("extracts the first link", async () => {
-    await deliver("Confirm at https://service.com/verify?t=abc123. Thanks!");
-    const result = await wait(h.ctx, { extract: "link", timeoutMs: 1000 });
+  it("returns the whole body, leaving the reading to the caller", async () => {
+    // The reason there is no server-side extract mode: a code is worthless
+    // without the sentence around it, and no regex knows that.
+    await deliver("Your code is 483920, but it expired. Request another.");
+    const result = await wait(h.ctx, { timeoutMs: 1000 });
 
     if (result.outcome !== "matched") throw new Error("expected a match");
-    // The trailing period must not ride along into the URL.
-    expect(result.extracted).toBe("https://service.com/verify?t=abc123");
+    expect(result.message.bodyText).toContain("483920");
+    expect(result.message.bodyText).toContain("expired");
   });
 
   it("requires message:read", async () => {
     await expect(wait(h.withScopes(["inbox:read"]), { timeoutMs: 1000 })).rejects.toMatchObject(
       { code: "forbidden" },
     );
-  });
-});
-
-describe("Extractors", () => {
-  it("prefers a labelled code over an unrelated number", () => {
-    expect(Extractors.otp("Order 12 shipped. Your code is 998877.")).toBe("998877");
-  });
-
-  it("handles the 'X is your code' phrasing", () => {
-    expect(Extractors.otp("483920 is your Twitter confirmation code")).toBe("483920");
-  });
-
-  it("returns null when there is nothing code-like", () => {
-    expect(Extractors.otp("Thanks for signing up!")).toBeNull();
-  });
-
-  it("keeps balanced parentheses inside a URL", () => {
-    expect(Extractors.links("see https://en.wikipedia.org/wiki/Foo_(bar) now")).toEqual([
-      "https://en.wikipedia.org/wiki/Foo_(bar)",
-    ]);
-  });
-
-  it("deduplicates repeated links", () => {
-    expect(Extractors.links("a https://x.com/1 b https://x.com/1")).toEqual([
-      "https://x.com/1",
-    ]);
   });
 });

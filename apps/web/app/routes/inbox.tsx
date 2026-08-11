@@ -43,7 +43,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  * Everything that arrived, across every address.
  *
  * The dashboard used to make the inbox *address* the way in to reading mail, so
- * "did the verification code land" could not be answered without first knowing
+ * "did the signup mail land" could not be answered without first knowing
  * which of a dozen addresses it was sent to. An address is configuration; the
  * mail is the content. This is the content page, and `/inboxes` is now where
  * addresses are managed.

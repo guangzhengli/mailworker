@@ -202,14 +202,17 @@ export const listMessagesQuery = pageQuery.extend({
 
 export type ListMessagesQuery = z.infer<typeof listMessagesQuery>;
 
-export const extractKind = z.enum(["otp", "link", "none"]);
-
 /**
  * `GET /v1/messages/wait`, the operation the CLI is shaped around.
  *
  * `timeout` accepts `30s` as readily as `30000`, because the person typing it is
  * usually a person. A timeout is an outcome here, not an error — see
  * `waitResponse`.
+ *
+ * The response is the whole message. There is deliberately no server-side
+ * "extract the code" mode: which part of a body matters depends on the flow,
+ * and a caller that can read the body at all can decide that better than a
+ * regular expression here can.
  */
 export const waitQuery = z
   .object({
@@ -219,7 +222,6 @@ export const waitQuery = z
     match: z.string().max(512).optional(),
     after: ulid.optional(),
     timeout: durationMs.optional(),
-    extract: extractKind.optional(),
   })
   .transform(
     (input): WaitForMessageRequest => ({
@@ -229,7 +231,6 @@ export const waitQuery = z
       ...(input.match === undefined ? {} : { match: input.match }),
       ...(input.after === undefined ? {} : { after: input.after }),
       ...(input.timeout === undefined ? {} : { timeoutMs: input.timeout }),
-      ...(input.extract === undefined ? {} : { extract: input.extract }),
     }),
   );
 
@@ -237,8 +238,6 @@ export const waitResponse = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("matched"),
     message: messageDto,
-    /** The code or link, when `extract` was asked for. Null when nothing matched. */
-    extracted: z.string().nullable(),
   }),
   z.object({
     outcome: z.literal("timeout"),

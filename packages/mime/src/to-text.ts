@@ -3,13 +3,12 @@ import { decodeEntities, RAW_TEXT, readTag, skipRawText } from "@mime/sanitize";
 /**
  * A plain-text rendering of an HTML body, for messages that ship no text part.
  *
- * Not cosmetic. `bodyText` is what four things read: the list preview, the FTS5
- * index, `wait --match`, and — the one that actually matters —
- * `Extractors.otp`. A verification mail sent as HTML only would otherwise store
- * a null text body, and `mailworker wait --extract otp` would sit there timing
- * out on a message whose code is right there in the markup. Plenty of senders
- * ship HTML with no `text/plain` alternative, so this is the common case, not
- * the edge.
+ * Not cosmetic. `bodyText` is what three things read: the list preview, the FTS5
+ * index, and `wait --match` — and it is what a caller reading the body gets when
+ * the sender shipped no text part. Without this, an HTML-only message would
+ * store a null text body: unsearchable, unpreviewable, and empty on `--text`
+ * despite the words being right there in the markup. Plenty of senders ship HTML
+ * with no `text/plain` alternative, so this is the common case, not the edge.
  *
  * Deliberately NOT a dependency. `html-to-text` is 180 KB and pulls in
  * htmlparser2 + deepmerge-ts for another 480 KB; against a Worker bundle budget
@@ -52,8 +51,8 @@ export function htmlToText(input: string): string {
     }
 
     // `<style>` and `<script>` bodies are not prose. Emitting them would put CSS
-    // selectors into the search index and, worse, give the OTP extractor a pile
-    // of digits to pick a wrong answer out of.
+    // selectors and minified JavaScript into the search index and into whatever
+    // reads the body, burying the words a human actually received.
     if (RAW_TEXT.has(tag.name)) {
       i = tag.closing ? tag.end : skipRawText(input, tag.end, tag.name);
       continue;
@@ -106,7 +105,7 @@ const BLOCK = new Set([
  * One line per block, no blank lines, no source indentation.
  *
  * `</p><p>` emits two breaks and nested blocks emit more; none of that carries
- * information for the four consumers (preview, FTS, `--match`, `--extract`),
+ * information for the three consumers (preview, FTS, `--match`),
  * and a 160-character preview made mostly of newlines is worse than useless.
  */
 function collapse(value: string): string {

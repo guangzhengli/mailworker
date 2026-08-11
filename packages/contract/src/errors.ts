@@ -144,7 +144,7 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
  * or an agent can branch without parsing prose:
  *
  * ```sh
- * mailworker wait --inbox "$id" --extract otp || case $? in
+ * mailworker wait --inbox "$id" --text || case $? in
  *   4) echo "no mail yet" ;;
  *   3) echo "bad credentials" ;;
  * esac

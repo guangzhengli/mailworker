@@ -650,7 +650,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       /**
        * A sandbox environment gets the whole shape of a real send without one
        * leaving: the same bytes we just archived are fed back through the
-       * inbound path, so a development OTP is resolvable by `wait`, and a
+       * inbound path, so a development send is resolvable by `wait`, and a
        * `delivered` event is synthesized so the timeline reads the same as
        * production instead of looking stuck at `dispatched`.
        *

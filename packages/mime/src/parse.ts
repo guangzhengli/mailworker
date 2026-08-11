@@ -41,7 +41,7 @@ export class PostalMimeParser implements MimeParser {
       replyTo: mailboxAddress(email.replyTo?.[0]),
       subject: email.subject ?? "",
       // An HTML-only message still needs a text body: it is what the preview,
-      // the FTS index, `wait --match` and `--extract otp` all read. Deriving it
+      // the FTS index, `wait --match` and `wait --text` all read. Deriving it
       // here means every consumer sees one shape and none of them has to know
       // whether the sender bothered with a `text/plain` alternative.
       bodyText: emptyToNull(email.text) ?? deriveText(email.html),

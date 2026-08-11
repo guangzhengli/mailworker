@@ -62,7 +62,7 @@ export interface WebhookRequest {
  * A port rather than a call into the ingestion service, because the two are
  * different layers and wiring them directly would make the application depend on
  * itself. The composition root binds this to the same ingest path inbound mail
- * takes, which is what makes a development OTP resolvable by `wait` without a
+ * takes, which is what makes a development send resolvable by `wait` without a
  * single message leaving the building.
  */
 export interface LoopbackSink {

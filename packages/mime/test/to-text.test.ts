@@ -9,7 +9,7 @@ describe("htmlToText", () => {
 
   it("drops script and style CONTENT, not just their tags", () => {
     // The reason this cannot be a regex over `<[^>]+>`: a stylesheet is full of
-    // digits, and the OTP extractor would happily return one of them.
+    // digits and braces that would land in the body a caller reads.
     const html = "<style>.a{width:428571px}</style><p>Your code is 903214</p>";
     expect(htmlToText(html)).toBe("Your code is 903214");
   });
@@ -33,7 +33,7 @@ describe("htmlToText", () => {
 describe("PostalMimeParser", () => {
   it("derives a text body for an HTML-only message", async () => {
     // Without this an HTML-only verification mail stores bodyText = null, and
-    // `wait --extract otp` times out on a message whose code is right there.
+    // `wait --text` prints nothing for a message whose words are right there.
     const raw = new TextEncoder().encode(
       [
         "From: noreply@corp.com",

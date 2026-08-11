@@ -101,9 +101,9 @@ function buildEml(fixture: Fixture): string {
     `Date: ${date.toUTCString().replace("GMT", "+0000")}`,
     `Message-ID: <${fixture.id}@seed.${DOMAIN}>`,
     "MIME-Version: 1.0",
-    // What makes `trusted` and `injectionRisk` mean something on the message
-    // page. Both states are seeded on purpose — a dashboard where every message
-    // is green never shows you what a bad one looks like.
+    // What makes `trusted` mean something on the message page. Both states are
+    // seeded on purpose — a dashboard where every message is green never shows
+    // you what an unauthenticated one looks like.
     fixture.authenticated === true
       ? `Authentication-Results: mx.${DOMAIN}; spf=pass; dkim=pass; dmarc=pass`
       : `Authentication-Results: mx.${DOMAIN}; spf=fail; dkim=none; dmarc=fail`,
@@ -208,15 +208,16 @@ ${button("View receipt", "https://example.com/receipt/4471")}`,
     ),
   },
   {
-    id: "seed-otp",
+    id: "seed-verification",
     from: "no-reply@auth.example",
     fromName: "Acme Security",
     to: "signup",
     subject: "Your verification code is 483920",
     daysAgo: 0,
     authenticated: true,
-    // The shape `mailworker wait --extract otp` is built for. Worth having in
-    // the seed so the extractor has something real to run against.
+    // A verification mail, because it is the shape people reach for `wait`
+    // with most often — and because its code lives only in the HTML table
+    // below, which is what exercises the HTML-to-text fallback.
     text: "Your verification code is 483920.\n\nIt expires in 10 minutes. If you did not request it, ignore this email.",
     html: shell(
       `<h1 style="${H1}">Verify your email</h1>

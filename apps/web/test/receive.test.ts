@@ -161,7 +161,7 @@ describe("inbound mail", () => {
 
   it("derives a text body from an HTML-only message", async () => {
     // The bug this exists to catch is invisible: no error, just an empty
-    // preview, an unsearchable message and `--extract otp` finding nothing.
+    // preview, an unsearchable message and `wait --text` printing nothing.
     const inbox = await createInbox();
     const raw = [
       `From: Sender <noreply@sender.test>`,
@@ -189,13 +189,13 @@ describe("wait", () => {
 
     // Registered first, deliberately: this is the case the Durable Object
     // exists for, and the one a look-back over stored messages cannot answer.
-    const waiting = api(`/v1/messages/wait?inbox=${inbox.id}&timeout=10s&extract=otp`);
+    const waiting = api(`/v1/messages/wait?inbox=${inbox.id}&timeout=10s`);
     await deliver(inbox.address, rawEmail(inbox.address, { body: "Your code is 998877" }));
 
     const result = (await (await waiting).json()) as WaitResponse;
     expect(result.outcome).toBe("matched");
     if (result.outcome !== "matched") return;
-    expect(result.extracted).toBe("998877");
+    expect(result.message.bodyText).toContain("998877");
   });
 
   it("answers a message that arrived before the wait started", async () => {

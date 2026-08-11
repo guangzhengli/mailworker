@@ -13,8 +13,8 @@ import type {
  * Everything upstream still runs — the seven gates, the state machine, the sent
  * copy in R2 — so a development send is indistinguishable from a production one
  * right up to the network call that does not happen. That is what makes a
- * development OTP safe: not a rule someone has to remember, but the absence of a
- * binding call.
+ * development environment safe to point at real addresses: not a rule someone
+ * has to remember, but the absence of a binding call.
  *
  * It reports success because the send did succeed at what a sandbox promises.
  * `delivery-service` synthesizes the `delivered` event and loops the bytes back

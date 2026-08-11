@@ -50,7 +50,6 @@ export const messages = new Hono<HttpEnv>()
         : {
             outcome: "matched",
             message: toMessageDto(outcome.message, dtoOptions),
-            extracted: outcome.extracted,
           };
     return c.json(body);
   })

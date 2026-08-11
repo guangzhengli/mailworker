@@ -47,7 +47,7 @@ describe("sandbox environments", () => {
 
     await dispatch(ctx, { deliveryId: queued.delivery.id });
 
-    // The whole point: a development OTP is resolvable by `wait` without a
+    // The whole point: a development send is resolvable by `wait` without a
     // single message reaching the real recipient.
     expect(h.loopback.delivered).toHaveLength(1);
     expect(h.loopback.delivered[0]!.message.recipient).toBe("user@corp.com");

@@ -1,28 +1,31 @@
+import { type BodyOptions, bodyFormatOf, writeBody } from "@cli/body";
 import type { Client, Query } from "@cli/client";
 import { emit, messageDetail, messageLine, type OutputOptions } from "@cli/output";
 import type { WaitResponse } from "@mailworker/contract";
 import { ExitCode } from "@mailworker/contract";
 import { Command } from "commander";
 
-interface WaitOptions extends OutputOptions {
+interface WaitOptions extends OutputOptions, BodyOptions {
   inbox?: string;
   from?: string;
   subject?: string;
   match?: string;
   after?: string;
   timeout?: string;
-  extract?: "otp" | "link" | "none";
 }
 
 /**
  * `mailworker wait` — the operation the whole CLI is shaped around.
  *
- * One command completes one whole intent. `--extract otp` prints the code
- * itself on stdout, not a JSON document containing the code, because the caller
- * is usually a shell script or an agent that would otherwise need a second tool
- * to dig it out:
+ * One command completes one whole intent: block until the message arrives, then
+ * put it where the caller can use it. `--text` writes the body to stdout bare,
+ * so an agent or a script reads it with no second tool and no second parse:
  *
- *     CODE=$(mailworker wait --inbox "$id" --extract otp)
+ *     BODY=$(mailworker wait --inbox "$id" --text)
+ *
+ * The whole body, deliberately — not a code or a link picked out of it. Which
+ * part matters is the caller's judgement, and an agent reading "your code is
+ * 1234, but it has expired, request another" needs the sentence, not the digits.
  *
  * A timeout leaves stdout empty and exits 4. That is the difference between "no
  * mail yet" and "your request was wrong" (2) or "bad credentials" (3), which is
@@ -37,10 +40,17 @@ export function waitCommand(client: () => Client): Command {
     .option("--match <regex>", "regular expression over subject and text body")
     .option("--after <id>", "only messages newer than this one")
     .option("--timeout <duration>", "how long to block, e.g. 60s (default 30s)")
-    .option("--extract <kind>", "print just the otp or link instead of the message")
+    .option("--text", "write the plain-text body to stdout and nothing else")
+    .option("--html", "write the sanitized HTML body to stdout and nothing else")
+    .option("--raw", "write the original MIME to stdout and nothing else")
     .option("--json", "print the whole outcome as JSON")
     .action(async (options: WaitOptions) => {
-      const result = await client().get<WaitResponse>("/v1/messages/wait", criteriaOf(options));
+      // Validated before the long poll, so a bad flag combination fails now
+      // rather than after someone has waited sixty seconds to find out.
+      const format = bodyFormatOf(options);
+
+      const api = client();
+      const result = await api.get<WaitResponse>("/v1/messages/wait", criteriaOf(options));
 
       if (result.outcome === "timeout") {
         if (options.json === true) {
@@ -52,18 +62,8 @@ export function waitCommand(client: () => Client): Command {
         return;
       }
 
-      if (
-        options.extract !== undefined &&
-        options.extract !== "none" &&
-        options.json !== true
-      ) {
-        if (result.extracted === null) {
-          process.stderr.write(`A message arrived but had no ${options.extract} in it.\n`);
-          process.exitCode = ExitCode.ERROR;
-          return;
-        }
-        // Bare, with a trailing newline and nothing else. `$(...)` strips it.
-        process.stdout.write(`${result.extracted}\n`);
+      if (format !== null) {
+        await writeBody(api, result.message, format);
         return;
       }
 
@@ -115,6 +115,5 @@ function criteriaOf(options: WaitOptions): Query {
     match: options.match,
     after: options.after,
     timeout: options.timeout,
-    extract: options.extract,
   };
 }
