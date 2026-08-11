@@ -25,7 +25,7 @@ export function lsCommand(client: () => Client): Command {
     .description("List stored messages")
     .option("--inbox <id>", "only this inbox")
     .option("--from <address>", "only from this sender")
-    .option("-q, --q <text>", "full-text search over subject and body")
+    .option("-q, --q <text>", "substring search over subject, body and sender")
     .option("--unseen", "only messages not yet marked seen")
     .option("--limit <n>", "how many to return")
     .option("--json", "print the page instead of a table")

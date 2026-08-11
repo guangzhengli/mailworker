@@ -274,30 +274,64 @@ function listFilters(query: ListMessagesQuery): (SQL | undefined)[] {
 }
 
 /**
+ * The shortest term a trigram index can answer. Below this the index holds no
+ * posting that could match, and FTS5 reports that as zero rows rather than as
+ * an error — which is why a term this short must never reach it.
+ */
+const TRIGRAM_MIN_LENGTH = 3;
+
+/**
  * The ids of every message whose indexed text matches, as a subquery.
  *
- * `null` when the input has no usable tokens — all punctuation and nothing
- * else. The caller decides what that means: matching nothing is right for a
- * message search, and wrong for a delivery search that also looks at
- * recipients.
+ * `null` when the input has no usable terms — all whitespace and nothing else.
+ * The caller decides what that means: matching nothing is right for a message
+ * search, and wrong for a delivery search that also looks at recipients.
  *
- * The user's text is turned into quoted phrase tokens joined by AND, never
- * interpolated as FTS syntax. Raw input would let a stray `"` or a bare `AND`
- * turn a search into a syntax error, and `NEAR`/`*`/column filters into
- * behaviour nobody asked for. Quoting each token makes every input a literal
- * word search, which is also what someone typing into a search box expects.
+ * Terms are ANDed, and each one is matched as a SUBSTRING, not as a word. That
+ * is the whole point of the trigram index behind this (migration 0006): with
+ * the default tokenizer an entire run of Han characters is one token, so
+ * `验证码` could not find `您的验证码是483920` — the two are different tokens,
+ * and no amount of query rewriting fixes that from this side.
+ *
+ * Terms shorter than three characters take a LIKE scan instead, because the
+ * index cannot answer them at all. Two-character words are ordinary in Chinese
+ * (订单, 发票, 退款), so treating those as unanswerable would have replaced one
+ * broken case with a quieter one. The scan is bounded by everything else in the
+ * WHERE clause — account, inbox, cursor — and by the page limit.
+ *
+ * Nothing here is interpolated as FTS syntax. Terms are quoted into phrases, so
+ * a stray `"` or a bare `AND` is text rather than a syntax error, and `NEAR`,
+ * `*` and column filters cannot be reached from a search box.
  */
 export function matchingMessageIds(q: string): SQL | null {
-  const tokens = q
-    .split(/\s+/)
-    .map((token) => token.replace(/"/g, ""))
-    .filter((token) => token.length > 0);
-  if (tokens.length === 0) return null;
-  const match = tokens.map((token) => `"${token}"`).join(" AND ");
+  const terms = q.split(/\s+/).filter((term) => term.length > 0);
+  if (terms.length === 0) return null;
+
+  const conditions = terms.map((term) =>
+    term.length >= TRIGRAM_MIN_LENGTH ? trigramMatch(term) : likeScan(term),
+  );
+  return sql`(SELECT m.id FROM messages m WHERE ${and(...conditions)})`;
+}
+
+/** One indexed substring term. The quotes make it a phrase, never FTS syntax. */
+function trigramMatch(term: string): SQL {
+  const phrase = `"${term.replace(/"/g, "")}"`;
+  return sql`m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${phrase})`;
+}
+
+/**
+ * The unindexed fallback, over the same three columns the index covers.
+ *
+ * `%` and `_` are escaped rather than passed through: someone searching for a
+ * literal `100%` off means the character, and an unescaped `%` here would
+ * quietly match every message in the account.
+ */
+function likeScan(term: string): SQL {
+  const pattern = `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
   return sql`(
-    SELECT m.id FROM messages m
-    JOIN messages_fts f ON f.rowid = m.rowid
-    WHERE messages_fts MATCH ${match}
+    m.subject LIKE ${pattern} ESCAPE '\\'
+    OR m.body_text LIKE ${pattern} ESCAPE '\\'
+    OR m.from_header LIKE ${pattern} ESCAPE '\\'
   )`;
 }
 

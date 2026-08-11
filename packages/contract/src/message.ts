@@ -195,7 +195,7 @@ export const listMessagesQuery = pageQuery.extend({
   direction: z.enum(["inbound", "outbound"]).optional(),
   from: emailAddress.optional(),
   seen: queryBool.optional(),
-  /** Full text over subject and text body. */
+  /** Substring search over subject, text body and sender. Terms are ANDed. */
   q: z.string().min(1).max(256).optional(),
   after: ulid.optional(),
 });

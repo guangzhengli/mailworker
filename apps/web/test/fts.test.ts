@@ -150,3 +150,71 @@ describe("messages_fts triggers", () => {
     expect((await messages.list(bob, { q: "invoice" })).items).toEqual([]);
   });
 });
+
+/**
+ * What the tokenizer choice actually buys, asserted in the language that broke.
+ *
+ * The default `unicode61` tokenizer splits on non-alphanumerics, which assumes
+ * words are delimited by spaces. An entire run of Han characters is therefore
+ * ONE token, and `验证码` could not find `您的验证码是483920` — not a ranking
+ * problem, a zero-results problem. Migration 0006 switches to `trigram`; these
+ * are the cases that would regress if it were ever switched back.
+ */
+describe("search across languages", () => {
+  beforeEach(async () => {
+    await db.batch([db.delete(schema.attachments), db.delete(schema.messages)]);
+  });
+
+  it("finds a Chinese word inside an unspaced run", async () => {
+    await messages.insert(ctx, aMessage("验证", "您的验证码是483920，十分钟内有效"));
+    await messages.insert(ctx, aMessage("发货", "订单已发货，请查收发票"));
+
+    expect(await search("验证码")).toEqual(["验证"]);
+    expect(await search("十分钟")).toEqual(["验证"]);
+    // Not merely "returns something": the other message must stay out.
+    expect(await search("请查收")).toEqual(["发货"]);
+    await assertIndexMatchesTable();
+  });
+
+  it("finds a two-character Chinese word, which the index alone cannot answer", async () => {
+    await messages.insert(ctx, aMessage("发货", "订单已发货，请查收发票"));
+    await messages.insert(ctx, aMessage("验证", "您的验证码是483920"));
+
+    // A trigram index holds no posting shorter than three characters, and FTS5
+    // reports that as zero rows rather than as an error. 订单 and 发票 are
+    // perfectly ordinary words, so the adapter routes them to a LIKE scan.
+    expect(await search("订单")).toEqual(["发货"]);
+    expect(await search("发票")).toEqual(["发货"]);
+    // And the fallback still has to be a filter, not a pass-through.
+    expect(await search("退款")).toEqual([]);
+  });
+
+  it("ANDs a short term with an indexed one", async () => {
+    await messages.insert(ctx, aMessage("发货", "订单已发货，请查收发票"));
+    await messages.insert(ctx, aMessage("退款", "订单已退款，款项原路返回"));
+
+    // One term through the index, one through the scan, both required.
+    expect(await search("订单 已发货")).toEqual(["发货"]);
+    expect(await search("订单 已退款")).toEqual(["退款"]);
+    expect(await search("订单 不存在的词")).toEqual([]);
+  });
+
+  it("matches part of an English word, not just the whole word", async () => {
+    await messages.insert(ctx, aMessage("Verify", "Your verification code is 483920"));
+
+    // `unicode61` matched whole tokens, so this returned nothing.
+    expect(await search("verif")).toEqual(["Verify"]);
+    expect(await search("cation")).toEqual(["Verify"]);
+    await assertIndexMatchesTable();
+  });
+
+  it("treats % and _ in a short term as characters, not wildcards", async () => {
+    await messages.insert(ctx, aMessage("Sale", "100% off this week"));
+    await messages.insert(ctx, aMessage("Plain", "nothing on offer"));
+
+    // Unescaped, `%` in a LIKE pattern matches every message in the account —
+    // the worst kind of wrong answer, because it looks like a working search.
+    expect(await search("%")).toEqual(["Sale"]);
+    expect(await search("_")).toEqual([]);
+  });
+});
