@@ -16,11 +16,17 @@
   // handling inbound mail.
   "assets": { "directory": "./build/client" },
 
+  // A stable origin for the CLI, the SDK and bookmarks, instead of the
+  // workers.dev name that changes if the Worker is ever renamed. Cloudflare
+  // provisions the proxied hostname record itself; it is orthogonal to MX, so
+  // this shares nextdevkit.com with Lark's mailboxes without touching them.
+  "routes": [{ "pattern": "mailworker.nextdevkit.com", "custom_domain": true }],
+
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "mailworker",
-      "database_id": "PLACEHOLDER_RUN_MAILWORKER_DEPLOY",
+      "database_id": "24ed88fc-b204-4dbb-b776-f689a4166457",
       "migrations_dir": "migrations"
     }
   ],
