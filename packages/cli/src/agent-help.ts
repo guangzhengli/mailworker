@@ -38,6 +38,11 @@ ENVIRONMENT
     mw_test_…  test. Sends FOR REAL, but only to addresses on the identity's
                recipient allowlist. Older sandbox keys also carry this prefix.
 
+  mailworker capabilities [--json]
+      Start here. Shows this key's environment, identity, scopes, allowed
+      actions, server limits and available features. Works with ordinary Agent
+      keys. \`env ls\` and \`doctor\` are administrative operations.
+
   mailworker env ls
 
 RECEIVING
@@ -45,7 +50,8 @@ RECEIVING
       Mints an address. Prints "<id>  <address>  <expiry>", or the DTO with --json.
       Cheap: one database insert, no Cloudflare API call. Make one per test.
       --prefix p gives p-<random>@d; --name p gives p@d and fails if it is taken.
-  mailworker inbox ls [--include-expired]
+  mailworker inbox ls [--include-expired] [--cursor id]
+                       [--all --max-items n] [--json|--jsonl]
   mailworker inbox rm <id>
 
   mailworker wait [--inbox id] [--from a@b] [--subject text] [--match regex]
@@ -60,6 +66,7 @@ RECEIVING
       id of the last message you saw and nothing can arrive in the gap.
 
   mailworker ls [--inbox id] [--from a@b] [-q text] [--unseen] [--limit n]
+                [--cursor id] [--all --max-items n] [--json|--jsonl]
       -q is a SUBSTRING search over subject, body and sender, not a word match:
       "verif" finds "verification", and it works the same in languages that do
       not put spaces between words. Several terms are ANDed.
@@ -96,16 +103,19 @@ SENDING — an irreversible outward action
       --metadata k=v pairs come back on status and on every webhook about this
       send, including a bounce days later. Use them to correlate rather than
       keeping your own id-to-delivery table.
+      --dry-run is LOCAL PREVIEW only. It does not call the server or evaluate
+      quotas, allowlists, suppressions, approval or other policy gates.
 
   mailworker status <delivery-id>
       The timeline: what the provider has said since. Exit 5 if it reached a
       terminal failure (bounced/failed/rejected/complained). This is where "did
       it arrive" is answered — the send response cannot answer it.
   mailworker approve <delivery-id>
+  mailworker reject <delivery-id> [--reason text]
       Releases a send held for a human. Needs the message:approve scope, which
       an agent should NOT have — that separation is the point of the queue.
 
-  mailworker doctor
+  mailworker doctor  (admin only)
       Checks MX, SPF, DKIM, DMARC, sending-domain verification and the
       bindings. Exit 1 on any hard failure. Run it first when mail is not
       arriving; most "it does not work" is one missing DNS record.

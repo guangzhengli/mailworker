@@ -1,4 +1,5 @@
 import { AGENT_HELP } from "@cli/agent-help";
+import { capabilitiesCommand } from "@cli/capabilities";
 import { ApiError, type Client, createClient } from "@cli/client";
 import { ConfigError, resolveConfig } from "@cli/config";
 import { envCommand } from "@cli/environments";
@@ -6,7 +7,13 @@ import { UsageError } from "@cli/errors";
 import { inboxCommand } from "@cli/inbox";
 import { identitiesCommand, keysCommand, webhooksCommand } from "@cli/keys";
 import { getCommand, injectCommand, lsCommand, seenCommand } from "@cli/messages";
-import { approveCommand, doctorCommand, sendCommand, statusCommand } from "@cli/send";
+import {
+  approveCommand,
+  doctorCommand,
+  rejectCommand,
+  sendCommand,
+  statusCommand,
+} from "@cli/send";
 import { tailCommand, waitCommand } from "@cli/wait";
 import { ExitCode } from "@mailworker/contract";
 import { Command, CommanderError } from "commander";
@@ -38,6 +45,7 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
   const client = () => makeClient(program.opts<GlobalOptions>());
 
   program.addCommand(inboxCommand(client));
+  program.addCommand(capabilitiesCommand(client));
   program.addCommand(lsCommand(client));
   program.addCommand(getCommand(client));
   program.addCommand(seenCommand(client));
@@ -47,6 +55,7 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
   program.addCommand(sendCommand(client));
   program.addCommand(statusCommand(client));
   program.addCommand(approveCommand(client));
+  program.addCommand(rejectCommand(client));
   program.addCommand(doctorCommand(client));
   program.addCommand(envCommand(client));
   program.addCommand(keysCommand(client));

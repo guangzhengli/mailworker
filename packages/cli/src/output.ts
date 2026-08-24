@@ -1,3 +1,4 @@
+import { UsageError } from "@cli/errors";
 import type {
   DeliveryDto,
   DeliveryTimelineDto,
@@ -20,10 +21,33 @@ import type {
  */
 export interface OutputOptions {
   readonly json?: boolean;
+  readonly jsonl?: boolean;
 }
 
 export function emit(value: unknown, options: OutputOptions, human: () => string): void {
+  validateOutputOptions(options);
   process.stdout.write(options.json === true ? `${JSON.stringify(value, null, 2)}\n` : human());
+}
+
+/** One compact JSON value per line, suitable for streaming parsers. */
+export function emitJsonLines(
+  values: readonly unknown[],
+  options: OutputOptions,
+  human: () => string,
+): void {
+  validateOutputOptions(options);
+  if (options.jsonl === true) {
+    process.stdout.write(values.map((value) => JSON.stringify(value)).join("\n"));
+    if (values.length > 0) process.stdout.write("\n");
+    return;
+  }
+  emit(values, options, human);
+}
+
+export function validateOutputOptions(options: OutputOptions): void {
+  if (options.json === true && options.jsonl === true) {
+    throw new UsageError("--json and --jsonl cannot be combined.");
+  }
 }
 
 export function inboxLine(inbox: InboxDto): string {

@@ -169,6 +169,20 @@ export function approveCommand(client: () => Client): Command {
     });
 }
 
+export function rejectCommand(client: () => Client): Command {
+  return new Command("reject")
+    .argument("<id>")
+    .description("Decline a send that is awaiting human approval")
+    .option("--reason <text>", "audit reason for declining the send")
+    .option("--json")
+    .action(async (id: string, options: OutputOptions & { reason?: string }) => {
+      const delivery = await client().post<DeliveryDto>(`/v1/send/${id}/reject`, {
+        ...(options.reason === undefined ? {} : { reason: options.reason }),
+      });
+      emit(delivery, options, () => deliveryLine(delivery));
+    });
+}
+
 /**
  * `mailworker doctor` — the command none of the reference projects has.
  *

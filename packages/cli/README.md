@@ -47,6 +47,37 @@ Both may also come from `.mailworker/config.json`, project directory first then
 home. Prefer the environment: a token in argv is visible in `ps` and in shell
 history.
 
+URL and token are resolved as one credential profile, in this order:
+
+1. the current process (`--url` / `--token` over their environment variables)
+2. the project `.mailworker/config.json`
+3. the home `~/.mailworker/config.json`
+
+A profile that sets either value must set both, and its optional target
+environment stays with that profile. In particular, a checkout cannot put its
+own URL or target environment in project config and inherit your environment or
+home token.
+Deployment URLs must use HTTPS; plain HTTP is accepted only for the exact local
+development hosts `localhost`, `127.0.0.1`, and `[::1]`.
+
+Start an automated run with `mailworker capabilities --json`. It tells the
+caller which environment and identity the key belongs to, its scopes and usable
+actions, the deployment features, domains and server-side limits. Unlike
+`doctor`, it is available to an ordinary scoped Agent key; `doctor` is an
+administrative DNS and deployment diagnostic.
+
+List commands accept `--cursor`. `--all` deliberately requires
+`--max-items <n>` so an unattended caller cannot turn a list into an unbounded
+database scan and stdout stream.
+Use `inbox ls --jsonl` or `ls --jsonl` to emit one compact DTO per line;
+`--jsonl` and `--json` are mutually exclusive.
+
+Ordinary HTTP requests have a 30-second network deadline. `wait` and `tail`
+extend that deadline to the requested server wait plus five seconds for the
+timeout response to travel back. A server-reported wait timeout still exits `4`;
+a network deadline is an upstream failure and exits `1`, so automation does not
+mistake a broken connection for “no message yet.”
+
 ## The shape of a test
 
 ```sh

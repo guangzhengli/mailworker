@@ -1,9 +1,14 @@
 import { type BodyOptions, bodyFormatOf, writeBody } from "@cli/body";
 import type { Client, Query } from "@cli/client";
+import { usage } from "@cli/errors";
 import { emit, messageDetail, messageLine, type OutputOptions } from "@cli/output";
 import type { WaitResponse } from "@mailworker/contract";
-import { ExitCode } from "@mailworker/contract";
+import { durationMs, ExitCode } from "@mailworker/contract";
 import { Command } from "commander";
+
+const DEFAULT_SERVER_WAIT_MS = 30_000;
+const MAX_SERVER_WAIT_MS = 300_000;
+const NETWORK_GRACE_MS = 5_000;
 
 interface WaitOptions extends OutputOptions, BodyOptions {
   inbox?: string;
@@ -48,9 +53,12 @@ export function waitCommand(client: () => Client): Command {
       // Validated before the long poll, so a bad flag combination fails now
       // rather than after someone has waited sixty seconds to find out.
       const format = bodyFormatOf(options);
+      const requestTimeoutMs = waitRequestTimeout(options.timeout);
 
       const api = client();
-      const result = await api.get<WaitResponse>("/v1/messages/wait", criteriaOf(options));
+      const result = await api.get<WaitResponse>("/v1/messages/wait", criteriaOf(options), {
+        timeoutMs: requestTimeoutMs,
+      });
 
       if (result.outcome === "timeout") {
         if (options.json === true) {
@@ -90,14 +98,18 @@ export function tailCommand(client: () => Client): Command {
     .action(async (options: WaitOptions) => {
       let after = options.after;
       for (;;) {
-        const result = await client().get<WaitResponse>("/v1/messages/wait", {
-          ...criteriaOf(options),
-          after,
-          // The API ceiling. Re-asking on a timeout costs one request every few
-          // minutes and keeps the connection from being killed by an
-          // intermediary that dislikes long-open sockets.
-          timeout: "300s",
-        });
+        const result = await client().get<WaitResponse>(
+          "/v1/messages/wait",
+          {
+            ...criteriaOf(options),
+            after,
+            // The API ceiling. Re-asking on a timeout costs one request every few
+            // minutes and keeps the connection from being killed by an
+            // intermediary that dislikes long-open sockets.
+            timeout: "300s",
+          },
+          { timeoutMs: MAX_SERVER_WAIT_MS + NETWORK_GRACE_MS },
+        );
 
         if (result.outcome === "timeout") continue;
         after = result.message.id;
@@ -116,4 +128,15 @@ function criteriaOf(options: WaitOptions): Query {
     after: options.after,
     timeout: options.timeout,
   };
+}
+
+function waitRequestTimeout(value: string | undefined): number {
+  const parsed = durationMs.safeParse(value ?? DEFAULT_SERVER_WAIT_MS);
+  if (!parsed.success) {
+    throw usage(`--timeout ${parsed.error.issues[0]?.message ?? "is not a valid duration."}`);
+  }
+  if (parsed.data > MAX_SERVER_WAIT_MS) {
+    throw usage(`--timeout cannot exceed ${MAX_SERVER_WAIT_MS / 1000}s.`);
+  }
+  return parsed.data + NETWORK_GRACE_MS;
 }

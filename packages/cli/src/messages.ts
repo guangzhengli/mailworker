@@ -1,11 +1,18 @@
 import { readFileSync } from "node:fs";
 import { type BodyOptions, bodyFormatOf, writeBody } from "@cli/body";
 import type { Client } from "@cli/client";
-import { emit, messageDetail, messageTable, type OutputOptions } from "@cli/output";
-import type { MessageDto, MessageSummaryDto, PageDto } from "@mailworker/contract";
+import {
+  emit,
+  emitJsonLines,
+  messageDetail,
+  messageTable,
+  type OutputOptions,
+} from "@cli/output";
+import { fetchPage, type PaginationOptions } from "@cli/pagination";
+import type { MessageDto, MessageSummaryDto } from "@mailworker/contract";
 import { Command } from "commander";
 
-interface ListOptions extends OutputOptions {
+interface ListOptions extends OutputOptions, PaginationOptions {
   inbox?: string;
   from?: string;
   q?: string;
@@ -28,16 +35,27 @@ export function lsCommand(client: () => Client): Command {
     .option("-q, --q <text>", "substring search over subject, body and sender")
     .option("--unseen", "only messages not yet marked seen")
     .option("--limit <n>", "how many to return")
+    .option("--cursor <id>", "continue after this cursor")
+    .option("--all", "follow cursors until --max-items is reached")
+    .option("--max-items <n>", "required safety bound for --all")
     .option("--json", "print the page instead of a table")
+    .option("--jsonl", "print one compact message object per line")
     .action(async (options: ListOptions) => {
-      const page = await client().get<PageDto<MessageSummaryDto>>("/v1/messages", {
-        inbox: options.inbox,
-        from: options.from,
-        q: options.q,
-        limit: options.limit,
-        ...(options.unseen === true ? { seen: false } : {}),
-      });
-      emit(page, options, () => messageTable(page.items));
+      const page = await fetchPage<MessageSummaryDto>(
+        client(),
+        "/v1/messages",
+        {
+          inbox: options.inbox,
+          from: options.from,
+          q: options.q,
+          limit: options.limit,
+          ...(options.unseen === true ? { seen: false } : {}),
+        },
+        options,
+      );
+      if (options.jsonl === true)
+        emitJsonLines(page.items, options, () => messageTable(page.items));
+      else emit(page, options, () => messageTable(page.items));
     });
 }
 

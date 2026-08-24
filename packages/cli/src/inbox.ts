@@ -1,6 +1,7 @@
 import type { Client } from "@cli/client";
-import { emit, inboxLine, inboxTable, type OutputOptions } from "@cli/output";
-import type { InboxDto, PageDto } from "@mailworker/contract";
+import { emit, emitJsonLines, inboxLine, inboxTable, type OutputOptions } from "@cli/output";
+import { fetchPage, type PaginationOptions } from "@cli/pagination";
+import type { InboxDto } from "@mailworker/contract";
 import { Command } from "commander";
 
 interface CreateOptions extends OutputOptions {
@@ -13,7 +14,7 @@ interface CreateOptions extends OutputOptions {
   identity?: string;
 }
 
-interface ListOptions extends OutputOptions {
+interface ListOptions extends OutputOptions, PaginationOptions {
   limit?: string;
   includeExpired?: boolean;
 }
@@ -57,14 +58,25 @@ export function inboxCommand(client: () => Client): Command {
     .command("ls")
     .description("List inboxes")
     .option("--limit <n>", "how many to return")
+    .option("--cursor <id>", "continue after this cursor")
+    .option("--all", "follow cursors until --max-items is reached")
+    .option("--max-items <n>", "required safety bound for --all")
     .option("--include-expired", "show inboxes whose TTL has passed")
     .option("--json", "print the page instead of a table")
+    .option("--jsonl", "print one compact inbox object per line")
     .action(async (options: ListOptions) => {
-      const page = await client().get<PageDto<InboxDto>>("/v1/inboxes", {
-        limit: options.limit,
-        includeExpired: options.includeExpired,
-      });
-      emit(page, options, () => inboxTable(page.items));
+      const page = await fetchPage<InboxDto>(
+        client(),
+        "/v1/inboxes",
+        {
+          limit: options.limit,
+          includeExpired: options.includeExpired,
+        },
+        options,
+      );
+      if (options.jsonl === true)
+        emitJsonLines(page.items, options, () => inboxTable(page.items));
+      else emit(page, options, () => inboxTable(page.items));
     });
 
   inbox

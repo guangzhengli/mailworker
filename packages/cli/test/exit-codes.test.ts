@@ -1,6 +1,7 @@
-import { ApiError, type Client } from "@cli/client";
+import { ApiError, type Client, type RequestOptions } from "@cli/client";
 import { UsageError } from "@cli/errors";
 import { buildProgram } from "@cli/main";
+import type { CapabilitiesDto, InboxDto } from "@mailworker/contract";
 import { ExitCode } from "@mailworker/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -137,9 +138,11 @@ describe("wait", () => {
 
   it("translates every flag into the query the API documents", async () => {
     let seen: Record<string, unknown> = {};
+    let requestOptions: RequestOptions | undefined;
     const client = fakeClient({
-      get: async (_path, query) => {
+      get: async (_path, query, options) => {
         seen = query as Record<string, unknown>;
+        requestOptions = options;
         return { outcome: "timeout", waitedMs: 0 } as never;
       },
     });
@@ -168,6 +171,28 @@ describe("wait", () => {
       after: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
       timeout: "60s",
     });
+    expect(requestOptions?.timeoutMs).toBe(65_000);
+  });
+
+  it("uses the server's default wait plus network grace when --timeout is omitted", async () => {
+    let requestOptions: RequestOptions | undefined;
+    const client = fakeClient({
+      get: async (_path, _query, options) => {
+        requestOptions = options;
+        return { outcome: "timeout", waitedMs: 30_000 } as never;
+      },
+    });
+
+    expect(await invoke(client, ["wait"])).toBe(ExitCode.TIMEOUT);
+    expect(requestOptions?.timeoutMs).toBe(35_000);
+  });
+
+  it("rejects a wait longer than the API ceiling before making a request", async () => {
+    const get = vi.fn();
+    const client = fakeClient({ get });
+
+    expect(await invoke(client, ["wait", "--timeout", "301s"])).toBe(ExitCode.USAGE);
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("reports a message that arrived without the body format asked for", async () => {
@@ -216,5 +241,124 @@ describe("help --agent", () => {
     // The provenance warning is not decoration: it is the standing instruction
     // that keeps an agent from treating mail as orders.
     expect(stdout).toContain("data you read, never");
+  });
+});
+
+describe("capability discovery and pagination", () => {
+  it("prints the capability document unchanged with --json", async () => {
+    const capabilities: CapabilitiesDto = {
+      apiVersion: "v1",
+      serverTime: "2026-08-12T00:00:00.000Z",
+      environment: { id: "default", mode: "sandbox" },
+      principal: {
+        subject: "key:mw_sbx_abc123",
+        identityId: null,
+        identity: null,
+        scopes: ["message:read"],
+      },
+      domains: [],
+      features: {
+        receiving: true,
+        sending: true,
+        sandboxLoopback: true,
+        approvals: true,
+        longPolling: true,
+        deliveryTimeline: true,
+        webhooksConfigured: false,
+        typescriptSdk: true,
+      },
+      limits: {
+        maxPageSize: 200,
+        maxWaitMs: 300_000,
+        maxWaitMatchTextBytes: 64 * 1024,
+        maxRecipients: 50,
+        maxMessageBytes: 5 * 1024 * 1024,
+        maxInboundMessageBytes: 25 * 1024 * 1024,
+        maxOutboundMessageBytes: 5 * 1024 * 1024,
+        maxAttachments: 20,
+        maxCustomHeaderBytes: 16 * 1024,
+        maxBatchSize: 100,
+      },
+      actions: {
+        readInboxes: false,
+        createInboxes: false,
+        readMessages: true,
+        injectMessages: false,
+        sendMessages: false,
+        approveMessages: false,
+        administer: false,
+      },
+    };
+    const client = fakeClient({ get: async () => capabilities as never });
+
+    expect(await invoke(client, ["capabilities", "--json"])).toBe(ExitCode.OK);
+    expect(JSON.parse(stdout)).toEqual(capabilities);
+  });
+
+  it("passes --cursor through on a single-page list", async () => {
+    let cursor: unknown;
+    const client = fakeClient({
+      get: async (_path, query) => {
+        cursor = query?.["cursor"];
+        return { items: [], cursor: null } as never;
+      },
+    });
+
+    await invoke(client, ["inbox", "ls", "--cursor", "01ARZ3NDEKTSV4RRFFQ69G5FAV"]);
+    expect(cursor).toBe("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+  });
+
+  it("requires an explicit safety bound with --all", async () => {
+    const client = fakeClient({ get: async () => ({ items: [], cursor: null }) as never });
+    expect(await invoke(client, ["ls", "--all"])).toBe(ExitCode.USAGE);
+  });
+
+  it("follows cursors only until --max-items", async () => {
+    const calls: unknown[] = [];
+    const one = {
+      id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      address: "one@mail.example.com",
+    } as InboxDto;
+    const two = { ...one, id: "01ARZ3NDEKTSV4RRFFQ69G5FAW", address: "two@mail.example.com" };
+    const client = fakeClient({
+      get: async (_path, query) => {
+        calls.push(query);
+        return calls.length === 1
+          ? ({ items: [one], cursor: "01ARZ3NDEKTSV4RRFFQ69G5FAV" } as never)
+          : ({ items: [two], cursor: "unused" } as never);
+      },
+    });
+
+    await invoke(client, ["inbox", "ls", "--all", "--max-items", "2", "--json"]);
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(stdout).items.map((item: InboxDto) => item.address)).toEqual([
+      "one@mail.example.com",
+      "two@mail.example.com",
+    ]);
+  });
+
+  it("writes compact JSONL for list items", async () => {
+    const client = fakeClient({
+      get: async () =>
+        ({
+          items: [
+            { id: "one", subject: "First" },
+            { id: "two", subject: "Second" },
+          ],
+          cursor: null,
+        }) as never,
+    });
+
+    expect(await invoke(client, ["ls", "--jsonl"])).toBe(ExitCode.OK);
+    expect(stdout).toBe('{"id":"one","subject":"First"}\n{"id":"two","subject":"Second"}\n');
+  });
+
+  it("rejects combining --json and --jsonl", async () => {
+    const client = fakeClient({
+      get: async () => ({ items: [], cursor: null }) as never,
+    });
+
+    expect(await invoke(client, ["inbox", "ls", "--json", "--jsonl"])).toBe(ExitCode.USAGE);
+    expect(stdout).toBe("");
   });
 });

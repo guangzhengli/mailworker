@@ -19,7 +19,7 @@ export function keysCommand(client: () => Client): Command {
     .requiredOption("--name <name>", "what this key is for, for the audit trail")
     .requiredOption(
       "--scope <scope...>",
-      "inbox:read inbox:write message:read message:send message:approve admin",
+      "inbox:read inbox:write message:read message:send message:inject message:approve admin",
     )
     .option("--identity <name>", "bind to an agent identity, so sends are metered")
     .option("--expires <iso>", "an ISO timestamp after which it stops working")
