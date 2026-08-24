@@ -24,6 +24,12 @@ export interface Clock {
   now(): Date;
 }
 
+/** Stable content digests used for replay-safe identifiers. */
+export interface ContentHasher {
+  /** Lowercase hexadecimal SHA-256 digest. */
+  sha256(content: Uint8Array): Promise<string>;
+}
+
 /**
  * Id generation. ULIDs need a clock and randomness, which is why the domain only
  * validates them and minting lives out here — the test generator is

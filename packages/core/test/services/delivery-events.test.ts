@@ -9,6 +9,11 @@ let h: Harness;
 let record: DeliveryService["recordEvent"];
 const FROM = `agent@${TEST_DOMAIN}`;
 const TO = "user@corp.com" as EmailAddress;
+const providerFields = (eventId: string) => ({
+  eventId,
+  sourceDomain: TEST_DOMAIN,
+  sourceZoneId: "zone-1",
+});
 
 async function dispatched(): Promise<Delivery> {
   const queued = await h.services.delivery.send(h.ctx, {
@@ -34,6 +39,7 @@ describe("delivery.recordEvent", () => {
     h.clock.advance(1000);
 
     const result = await record(h.ctx, {
+      ...providerFields("evt-delivered-1"),
       type: "delivered",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -51,6 +57,7 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-deferred-1"),
       type: "deferred",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -60,6 +67,7 @@ describe("delivery.recordEvent", () => {
     });
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-delivered-2"),
       type: "delivered",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -76,11 +84,13 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-bounced-hard-1"),
       type: "bounced",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
       occurredAt: h.clock.now(),
       terminal: true,
+      bounceType: "hard",
       smtpResponse: "550 no such user",
     });
 
@@ -94,6 +104,7 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-delivered-3"),
       type: "delivered",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -102,6 +113,7 @@ describe("delivery.recordEvent", () => {
     });
     h.clock.advance(86_400_000);
     const result = await record(h.ctx, {
+      ...providerFields("evt-complained-1"),
       type: "complained",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -120,6 +132,7 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-deferred-2"),
       type: "deferred",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -129,6 +142,7 @@ describe("delivery.recordEvent", () => {
     });
     h.clock.advance(86_400_000);
     const result = await record(h.ctx, {
+      ...providerFields("evt-complained-2"),
       type: "complained",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -145,6 +159,7 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(1000);
     await record(h.ctx, {
+      ...providerFields("evt-deferred-3"),
       type: "deferred",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -154,6 +169,7 @@ describe("delivery.recordEvent", () => {
     });
     h.clock.advance(1000);
     const result = await record(h.ctx, {
+      ...providerFields("evt-rejected-1"),
       type: "rejected",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -173,6 +189,7 @@ describe("delivery.recordEvent", () => {
     const delivery = await dispatched();
     h.clock.advance(5000);
     await record(h.ctx, {
+      ...providerFields("evt-delivered-4"),
       type: "delivered",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -181,6 +198,7 @@ describe("delivery.recordEvent", () => {
     });
 
     const result = await record(h.ctx, {
+      ...providerFields("evt-deferred-stale"),
       type: "deferred",
       providerMessageId: delivery.providerMessageId!,
       recipient: TO,
@@ -193,16 +211,157 @@ describe("delivery.recordEvent", () => {
 
   it("still records an event it cannot match to a send", async () => {
     const result = await record(h.ctx, {
+      ...providerFields("evt-bounced-unmatched"),
       type: "bounced",
       providerMessageId: "prov-unknown",
       recipient: TO,
       occurredAt: h.clock.now(),
       terminal: true,
+      bounceType: "hard",
     });
 
     expect(result).toEqual({ outcome: "unmatched" });
     // Reputation protection must not depend on tidy bookkeeping.
     expect(await h.deps.suppressions.filterSuppressed(h.ctx, [TO])).toEqual([TO]);
+  });
+
+  it("does not suppress a soft bounce", async () => {
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+
+    await record(h.ctx, {
+      ...providerFields("evt-bounced-soft-1"),
+      type: "bounced",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+      bounceType: "soft",
+      bounceReason: "Retries exhausted",
+    });
+
+    expect(await h.deps.suppressions.filterSuppressed(h.ctx, [TO])).toEqual([]);
+  });
+
+  it("deduplicates a provider event before applying side effects", async () => {
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+    const event = {
+      ...providerFields("evt-bounced-once"),
+      type: "bounced" as const,
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+      bounceType: "hard" as const,
+    };
+
+    expect(await record(h.ctx, event)).toMatchObject({ outcome: "applied" });
+    expect(await record(h.ctx, event)).toEqual({ outcome: "duplicate" });
+    expect(eventsOfType(h.events.published, "suppression.added")).toHaveLength(1);
+    expect(await h.deps.deliveries.listDeliveryEvents(h.ctx, delivery.id)).toHaveLength(1);
+  });
+
+  it("retries a live claim after a hard crash instead of acknowledging it as a duplicate", async () => {
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+    const event = {
+      ...providerFields("evt-crashed-after-claim"),
+      type: "delivered" as const,
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+    };
+
+    await h.deps.deliveries.appendDeliveryEvent(h.ctx, {
+      id: h.ids.ulid(),
+      eventId: event.eventId,
+      deliveryId: delivery.id,
+      providerMessageId: event.providerMessageId,
+      recipient: event.recipient,
+      sourceDomain: event.sourceDomain,
+      sourceZoneId: event.sourceZoneId,
+      type: event.type,
+      terminal: event.terminal,
+      smtpCode: null,
+      smtpEnhancedCode: null,
+      smtpResponse: null,
+      bounceType: null,
+      bounceClassification: null,
+      bounceReason: null,
+      occurredAt: event.occurredAt,
+      raw: null,
+    });
+    expect(
+      await h.deps.deliveries.claimDeliveryEvent(
+        h.ctx,
+        event.eventId,
+        h.clock.now(),
+        new Date(h.clock.now().getTime() - 5 * 60 * 1000),
+      ),
+    ).toBe("claimed");
+
+    // Simulate the isolate disappearing without running the catch/release
+    // branch. The immediate queue retry must stay retryable, not be ACKed as a
+    // completed duplicate.
+    await expect(record(h.ctx, event)).rejects.toThrow("still being processed");
+    expect(await h.deps.deliveries.findById(h.ctx, delivery.id)).toMatchObject({
+      status: "dispatched",
+    });
+
+    h.clock.advance(5 * 60 * 1000 + 1);
+    await expect(record(h.ctx, event)).resolves.toEqual({
+      outcome: "applied",
+      from: "dispatched",
+      to: "delivered",
+    });
+    expect(await h.deps.deliveries.listDeliveryEvents(h.ctx, delivery.id)).toHaveLength(1);
+  });
+
+  it("resumes an event whose side effects failed after its durable insert", async () => {
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+    const event = {
+      ...providerFields("evt-resume-after-publish-failure"),
+      type: "bounced" as const,
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: true,
+      bounceType: "hard" as const,
+    };
+
+    h.events.failure = new Error("webhook queue unavailable");
+    await expect(record(h.ctx, event)).rejects.toThrow("webhook queue unavailable");
+    h.events.failure = null;
+
+    await expect(record(h.ctx, event)).resolves.toMatchObject({ outcome: "applied" });
+    expect(await h.deps.suppressions.filterSuppressed(h.ctx, [TO])).toEqual([TO]);
+    expect(await h.deps.deliveries.listDeliveryEvents(h.ctx, delivery.id)).toHaveLength(1);
+    expect(await h.deps.deliveries.findById(h.ctx, delivery.id)).toMatchObject({
+      status: "bounced",
+    });
+  });
+
+  it("records a non-terminal failure without freezing the delivery", async () => {
+    const delivery = await dispatched();
+    h.clock.advance(1000);
+
+    const result = await record(h.ctx, {
+      ...providerFields("evt-failed-retryable"),
+      type: "failed",
+      providerMessageId: delivery.providerMessageId!,
+      recipient: TO,
+      occurredAt: h.clock.now(),
+      terminal: false,
+      smtpResponse: "Provider will retry",
+    });
+
+    expect(result).toEqual({ outcome: "recorded_only", reason: "non_terminal_failure" });
+    expect(await h.deps.deliveries.findById(h.ctx, delivery.id)).toMatchObject({
+      status: "dispatched",
+    });
   });
 });
 

@@ -42,6 +42,7 @@ import type {
   BlobStore,
   BuildMimeSpec,
   Clock,
+  ContentHasher,
   DeliveryEvent,
   DeliveryRepository,
   DispatchQueue,
@@ -85,6 +86,15 @@ export class FakeClock implements Clock {
 
   advance(ms: number): void {
     this.current = new Date(this.current.getTime() + ms);
+  }
+}
+
+export class FakeContentHasher implements ContentHasher {
+  async sha256(content: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(content));
+    return [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
   }
 }
 
@@ -208,6 +218,9 @@ export class InMemoryInboxes implements InboxRepository {
     let rows = scoped(this.rows, ctx).filter((row) => row.deletedAt === null);
     if (query.kind !== undefined) rows = rows.filter((row) => row.kind === query.kind);
     if (query.domain !== undefined) rows = rows.filter((row) => row.domain === query.domain);
+    if (query.identityId !== undefined) {
+      rows = rows.filter((row) => row.identityId === query.identityId);
+    }
     if (query.activeAt !== undefined) {
       const at = query.activeAt.getTime();
       rows = rows.filter((row) => row.expiresAt === null || row.expiresAt.getTime() > at);
@@ -238,14 +251,31 @@ export class InMemoryInboxes implements InboxRepository {
 
 export class InMemoryMessages implements MessageRepository {
   readonly rows = new Map<string, Message[]>();
+  private readonly bodyKeys = new Map<string, string>();
 
-  async insert(ctx: Caller, message: Message): Promise<{ stored: boolean }> {
+  async insert(
+    ctx: Caller,
+    message: Message,
+    options: { readonly bodyKey?: string | null } = {},
+  ): Promise<{ stored: boolean }> {
     const rows = scoped(this.rows, ctx);
-    // Mirrors the UNIQUE(account_id, rfc_message_id) constraint that D1 enforces.
-    if (rows.some((row) => row.rfcMessageId === message.rfcMessageId)) {
+    // Mirrors UNIQUE(account_id, inbox_id, envelope_recipient, rfc_message_id)
+    // in D1: two routes into one catch-all inbox are distinct placements, while
+    // an at-least-once retry to the same RCPT TO is one.
+    if (
+      rows.some(
+        (row) =>
+          row.inboxId === message.inboxId &&
+          row.envelopeRecipient === message.envelopeRecipient &&
+          row.rfcMessageId === message.rfcMessageId,
+      )
+    ) {
       return { stored: false };
     }
     rows.push(message);
+    if (options.bodyKey != null) {
+      this.bodyKeys.set(`${ctx.accountId}/${message.id}`, options.bodyKey);
+    }
     return { stored: true };
   }
 
@@ -257,20 +287,42 @@ export class InMemoryMessages implements MessageRepository {
     return scoped(this.rows, ctx).find((row) => row.rfcMessageId === rfcId) ?? null;
   }
 
+  async findPlacement(
+    ctx: Caller,
+    inboxId: Ulid,
+    envelopeRecipient: EmailAddress | null,
+    rfcId: RfcMessageId,
+  ): Promise<Message | null> {
+    return (
+      scoped(this.rows, ctx).find(
+        (row) =>
+          row.inboxId === inboxId &&
+          row.envelopeRecipient === envelopeRecipient &&
+          row.rfcMessageId === rfcId,
+      ) ?? null
+    );
+  }
+
   async findThreadIds(
     ctx: Caller,
     rfcIds: readonly RfcMessageId[],
+    inboxId?: Ulid,
   ): Promise<ReadonlyMap<string, ThreadId>> {
     const wanted = new Set<string>(rfcIds);
     const found = new Map<string, ThreadId>();
     for (const row of scoped(this.rows, ctx)) {
-      if (wanted.has(row.rfcMessageId)) found.set(row.rfcMessageId, row.threadId);
+      if (wanted.has(row.rfcMessageId) && (inboxId === undefined || row.inboxId === inboxId)) {
+        found.set(row.rfcMessageId, row.threadId);
+      }
     }
     return found;
   }
 
   async list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
     let rows = scoped(this.rows, ctx);
+    if (query.identityId !== undefined) {
+      rows = rows.filter((row) => row.identityId === query.identityId);
+    }
     if (query.inboxId !== undefined) rows = rows.filter((row) => row.inboxId === query.inboxId);
     if (query.threadId !== undefined)
       rows = rows.filter((row) => row.threadId === query.threadId);
@@ -329,8 +381,12 @@ export class InMemoryMessages implements MessageRepository {
     const doomed = rows.filter((row) => row.inboxId === inboxId);
     const keys = doomed.flatMap((row) => [
       ...(row.rawKey === null ? [] : [row.rawKey]),
+      ...(this.bodyKeys.get(`${ctx.accountId}/${row.id}`) === undefined
+        ? []
+        : [this.bodyKeys.get(`${ctx.accountId}/${row.id}`)!]),
       ...row.attachments.map((attachment) => attachment.storageKey),
     ]);
+    for (const row of doomed) this.bodyKeys.delete(`${ctx.accountId}/${row.id}`);
     this.rows.set(
       ctx.accountId,
       rows.filter((row) => row.inboxId !== inboxId),
@@ -342,6 +398,8 @@ export class InMemoryMessages implements MessageRepository {
 export class InMemoryDeliveries implements DeliveryRepository {
   readonly rows = new Map<string, Delivery[]>();
   readonly events = new Map<string, DeliveryEvent[]>();
+  readonly eventClaims = new Map<string, { status: "processing" | "processed"; at: Date }>();
+  readonly dispatchOutbox = new Map<string, Map<Ulid, Date>>();
 
   async resolveAccount(providerId: string): Promise<AccountId | null> {
     for (const [accountId, rows] of this.rows) {
@@ -352,8 +410,55 @@ export class InMemoryDeliveries implements DeliveryRepository {
     return null;
   }
 
-  async insert(ctx: Caller, delivery: Delivery): Promise<void> {
-    scoped(this.rows, ctx).push(delivery);
+  async insert(
+    ctx: Caller,
+    delivery: Delivery,
+    options: import("@core/domain/ports").DeliveryInsertOptions = {},
+  ): Promise<import("@core/domain/ports").DeliveryInsertResult> {
+    const rows = scoped(this.rows, ctx);
+    if (
+      delivery.idempotencyKey !== null &&
+      rows.some(
+        (row) =>
+          row.idempotencyKey === delivery.idempotencyKey &&
+          row.identityId === delivery.identityId,
+      )
+    ) {
+      return "duplicate";
+    }
+    if (
+      options.quota !== undefined &&
+      rows.filter(
+        (row) =>
+          row.identityId === options.quota!.identityId &&
+          row.createdAt.getTime() >= options.quota!.since.getTime() &&
+          row.status !== "rejected",
+      ).length >= options.quota.maximum
+    ) {
+      return "quota_exceeded";
+    }
+    if (options.exchange !== undefined) {
+      const prior = rows.filter(
+        (row) =>
+          row.createdAt.getTime() >= options.exchange!.since.getTime() &&
+          row.status !== "rejected" &&
+          row.inboxId === delivery.inboxId,
+      );
+      if (
+        options.exchange.recipients.some(
+          (recipient) =>
+            prior.filter((row) => row.recipients.includes(recipient)).length >=
+            options.exchange!.maximum,
+        )
+      ) {
+        return "exchange_limit_exceeded";
+      }
+    }
+    rows.push(delivery);
+    if (options.stageDispatch === true) {
+      await this.stageDispatch(ctx, delivery.id, delivery.createdAt);
+    }
+    return "inserted";
   }
 
   async update(ctx: Caller, delivery: Delivery): Promise<void> {
@@ -362,12 +467,51 @@ export class InMemoryDeliveries implements DeliveryRepository {
     if (index >= 0) rows[index] = delivery;
   }
 
+  async attachMessageId(
+    ctx: Caller,
+    deliveryId: Ulid,
+    messageId: Ulid,
+    at: Date,
+  ): Promise<void> {
+    const rows = scoped(this.rows, ctx);
+    const index = rows.findIndex((row) => row.id === deliveryId);
+    if (index >= 0) rows[index] = { ...rows[index]!, messageId, updatedAt: at };
+  }
+
+  async updateIfStatus(
+    ctx: Caller,
+    delivery: Delivery,
+    expected: Delivery["status"],
+  ): Promise<boolean> {
+    const rows = scoped(this.rows, ctx);
+    const index = rows.findIndex((row) => row.id === delivery.id && row.status === expected);
+    if (index < 0) return false;
+    rows[index] = delivery;
+    return true;
+  }
+
+  async approveAndStage(ctx: Caller, delivery: Delivery): Promise<boolean> {
+    const updated = await this.updateIfStatus(ctx, delivery, "pending_approval");
+    if (updated) await this.stageDispatch(ctx, delivery.id, delivery.updatedAt);
+    return updated;
+  }
+
   async findById(ctx: Caller, id: Ulid): Promise<Delivery | null> {
     return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
   }
 
-  async findByIdempotencyKey(ctx: Caller, key: string): Promise<Delivery | null> {
-    return scoped(this.rows, ctx).find((row) => row.idempotencyKey === key) ?? null;
+  async findByIdempotencyKey(
+    ctx: Caller,
+    key: string,
+    identityId?: Ulid | null,
+  ): Promise<Delivery | null> {
+    return (
+      scoped(this.rows, ctx).find(
+        (row) =>
+          row.idempotencyKey === key &&
+          (identityId === undefined || row.identityId === identityId),
+      ) ?? null
+    );
   }
 
   async findByProviderMessageId(ctx: Caller, providerId: string): Promise<Delivery | null> {
@@ -392,8 +536,66 @@ export class InMemoryDeliveries implements DeliveryRepository {
     ).length;
   }
 
-  async appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<void> {
+  async stageDispatch(ctx: Caller, deliveryId: Ulid, now: Date): Promise<boolean> {
+    let rows = this.dispatchOutbox.get(ctx.accountId);
+    if (rows === undefined) {
+      rows = new Map();
+      this.dispatchOutbox.set(ctx.accountId, rows);
+    }
+    if (rows.has(deliveryId)) return false;
+    rows.set(deliveryId, now);
+    return true;
+  }
+
+  async listStagedDispatches(
+    ctx: Caller,
+    limit: number,
+  ): Promise<Array<{ deliveryId: Ulid; createdAt: Date }>> {
+    return [...(this.dispatchOutbox.get(ctx.accountId) ?? new Map()).entries()]
+      .sort((a, b) => a[1].getTime() - b[1].getTime())
+      .slice(0, limit)
+      .map(([deliveryId, createdAt]) => ({ deliveryId, createdAt }));
+  }
+
+  async unstageDispatch(ctx: Caller, deliveryId: Ulid): Promise<void> {
+    this.dispatchOutbox.get(ctx.accountId)?.delete(deliveryId);
+  }
+
+  async appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<boolean> {
+    if (
+      event.eventId !== null &&
+      [...this.events.values()].some((rows) =>
+        rows.some((row) => row.eventId === event.eventId),
+      )
+    ) {
+      return false;
+    }
     scoped(this.events, ctx).push(event);
+    return true;
+  }
+
+  async claimDeliveryEvent(
+    _ctx: Caller,
+    eventId: string,
+    now: Date,
+    staleBefore: Date,
+  ): Promise<"claimed" | "processed" | "busy"> {
+    const current = this.eventClaims.get(eventId);
+    if (current?.status === "processed") return "processed";
+    if (current?.status === "processing" && current.at.getTime() >= staleBefore.getTime()) {
+      return "busy";
+    }
+    this.eventClaims.set(eventId, { status: "processing", at: now });
+    return "claimed";
+  }
+
+  async completeDeliveryEvent(_ctx: Caller, eventId: string, _at: Date): Promise<void> {
+    this.eventClaims.set(eventId, { status: "processed", at: _at });
+  }
+
+  async releaseDeliveryEvent(_ctx: Caller, eventId: string): Promise<void> {
+    if (this.eventClaims.get(eventId)?.status === "processing")
+      this.eventClaims.delete(eventId);
   }
 
   async listDeliveryEvents(ctx: Caller, deliveryId: Ulid): Promise<DeliveryEvent[]> {
@@ -437,6 +639,18 @@ export class InMemoryApiKeys implements ApiKeyRepository {
   async update(_ctx: Caller, key: ApiKey): Promise<void> {
     const index = this.rows.findIndex((row) => row.id === key.id);
     if (index >= 0) this.rows[index] = key;
+  }
+
+  async touchLastUsed(ctx: Caller, keyId: Ulid, at: Date): Promise<void> {
+    const index = this.rows.findIndex(
+      (row) => row.accountId === ctx.accountId && row.id === keyId,
+    );
+    if (index < 0) return;
+    const current = this.rows[index]!;
+    const cutoff = at.getTime() - 5 * 60 * 1000;
+    if (current.lastUsedAt === null || current.lastUsedAt.getTime() <= cutoff) {
+      this.rows[index] = { ...current, lastUsedAt: at };
+    }
   }
 
   async list(ctx: Caller): Promise<ApiKey[]> {
@@ -512,7 +726,7 @@ export class InMemoryBlobs implements BlobStore {
   }
 }
 
-/** `raw/{account}/…`, `att/{account}/…`, `out/{account}/…` — see `BlobKeys`. */
+/** `raw|body|att|out/{account}/…` — see `BlobKeys`. */
 function isOwned(ctx: Caller, key: string): boolean {
   return key.split("/")[1] === ctx.accountId;
 }
@@ -595,8 +809,10 @@ export class MemoryTransport implements MailTransport {
  */
 export class MemoryDispatchQueue implements DispatchQueue {
   readonly enqueued: Ulid[] = [];
+  failure: Error | null = null;
 
   async enqueue(_ctx: Caller, deliveryId: Ulid): Promise<void> {
+    if (this.failure !== null) throw this.failure;
     this.enqueued.push(deliveryId);
   }
 
@@ -677,8 +893,10 @@ export class RecordingWebhookSender implements WebhookSender {
 
 export class RecordingEventBus implements EventBus {
   readonly published: DomainEvent[] = [];
+  failure: Error | null = null;
 
   async publish(events: readonly DomainEvent[]): Promise<void> {
+    if (this.failure !== null) throw this.failure;
     this.published.push(...events);
   }
 }
@@ -793,8 +1011,10 @@ export class SimpleMimeBuilder implements MimeBuilder {
    * records.
    */
   readonly specs: BuildMimeSpec[] = [];
+  failure: Error | null = null;
 
   async build(spec: BuildMimeSpec): Promise<Uint8Array> {
+    if (this.failure !== null) throw this.failure;
     this.specs.push(spec);
     const lines = [
       `From: ${spec.fromName === null ? spec.from : `"${spec.fromName}" <${spec.from}>`}`,

@@ -96,6 +96,40 @@ export const Attachment = {
       );
     }
   },
+
+  /** Validate caller-supplied headers before they reach R2, MIME, or provider. */
+  validateHeaders(headers: Readonly<Record<string, string>>): void {
+    let totalBytes = 0;
+    for (const [name, value] of Object.entries(headers)) {
+      if (!/^[A-Za-z0-9-]+$/.test(name) || name.length === 0) {
+        throw invalidArgument(`Invalid custom header name: ${name || "(empty)"}.`);
+      }
+      if (/\r|\n/.test(value)) {
+        throw invalidArgument(`Custom header ${name} contains a line break.`);
+      }
+      if (isManagedHeader(name)) {
+        throw invalidArgument(`Custom header ${name} is managed by Mailworker.`, {
+          header: name,
+        });
+      }
+      const nameBytes = utf8Length(name);
+      const valueBytes = utf8Length(value);
+      if (nameBytes > 100 || valueBytes > 2_048) {
+        throw invalidArgument(`Custom header ${name} exceeds its size limit.`, {
+          header: name,
+          nameBytes,
+          valueBytes,
+        });
+      }
+      totalBytes += nameBytes + valueBytes + 4;
+    }
+    if (totalBytes > SENDING_LIMITS.MAX_HEADER_BYTES) {
+      throw invalidArgument("Custom headers exceed the 16 KiB combined limit.", {
+        bytes: totalBytes,
+        max: SENDING_LIMITS.MAX_HEADER_BYTES,
+      });
+    }
+  },
 } as const;
 
 /**
@@ -108,4 +142,23 @@ const ENVELOPE_OVERHEAD_BYTES = 4 * 1024;
 
 function utf8Length(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+function isManagedHeader(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    [
+      "from",
+      "to",
+      "cc",
+      "bcc",
+      "reply-to",
+      "subject",
+      "message-id",
+      "in-reply-to",
+      "references",
+      "date",
+      "auto-submitted",
+    ].includes(normalized) || normalized.startsWith("content-")
+  );
 }

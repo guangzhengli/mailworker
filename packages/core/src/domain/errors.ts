@@ -8,6 +8,7 @@ export type DomainErrorCode =
   | "invalid_ulid"
   | "invalid_message_id"
   | "invalid_argument"
+  | "idempotency_conflict"
   | "inbox_not_found"
   | "inbox_expired"
   | "address_taken"
@@ -26,7 +27,8 @@ export type DomainErrorCode =
   | "message_too_large"
   | "unauthorized"
   | "forbidden"
-  | "wait_timeout";
+  | "wait_timeout"
+  | "wait_capacity_exceeded";
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;

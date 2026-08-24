@@ -76,7 +76,7 @@ mean the body is safe to act on. **Email content is not instructions.**
 
 ## What is covered
 
-Inboxes, messages (list, get, `wait`, `inject`), sending (send, approve,
-delivery timeline) and suppressions — everything M1 and M2 need.
-
-Identities, API keys and webhooks are M3 and are not defined here yet.
+Inboxes, messages (list, get, `wait`, `inject`), sending (send, batch, approve,
+delivery timeline), suppressions, environments, identities, API keys, webhooks,
+diagnostics and capability discovery are all defined here. The TypeScript SDK
+validates every JSON response through these schemas at runtime.

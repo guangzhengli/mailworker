@@ -185,13 +185,20 @@ describe("outbound and delivery-event codecs", () => {
   it("round-trips a delivery event, raw payload included", () => {
     const event: DeliveryEvent = {
       id: OUTBOUND_ID,
+      eventId: "0190d0c4-7ea1-7af2-8b88-c1d2e3f4a5b6",
       deliveryId: OUTBOUND_ID,
       providerMessageId: "prov-1",
       recipient: message.from,
+      sourceDomain: "mail.example.com",
+      sourceZoneId: "zone-1",
       type: "bounced",
       terminal: true,
       smtpCode: "550",
+      smtpEnhancedCode: "5.1.1",
       smtpResponse: "5.1.1 user unknown",
+      bounceType: "hard",
+      bounceClassification: "permanent_failure",
+      bounceReason: "User unknown",
       occurredAt: new Date("2026-07-01T12:00:05.000Z"),
       raw: '{"type":"cf.email.sending.message.bounced"}',
     };
@@ -201,5 +208,6 @@ describe("outbound and delivery-event codecs", () => {
     // mapping did not anticipate the reason.
     expect(dto.raw).toContain("bounced");
     expect(dto.smtpResponse).toBe("5.1.1 user unknown");
+    expect(dto.bounceType).toBe("hard");
   });
 });

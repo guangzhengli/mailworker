@@ -8,6 +8,7 @@ export type DeliveryStatus =
   | "draft"
   | "pending_approval"
   | "queued"
+  | "dispatching"
   | "dispatched"
   | "deferred"
   | "delivered"
@@ -51,7 +52,8 @@ export type DeliveryEventType =
 const TRANSITIONS: Readonly<Record<DeliveryStatus, readonly DeliveryStatus[]>> = {
   draft: ["pending_approval", "queued", "rejected"],
   pending_approval: ["queued", "rejected"],
-  queued: ["dispatched", "failed", "rejected"],
+  queued: ["dispatching", "failed", "rejected"],
+  dispatching: ["queued", "dispatched", "failed", "rejected"],
   dispatched: ["delivered", "deferred", "bounced", "complained", "failed", "rejected"],
   deferred: ["dispatched", "delivered", "bounced", "complained", "failed", "rejected"],
   delivered: ["complained"],
@@ -241,9 +243,19 @@ export const Delivery = {
   markDispatched(delivery: Delivery, providerMessageId: string | null, now: Date): Delivery {
     return Delivery.transitionTo(delivery, "dispatched", now, {
       providerMessageId,
+      lastError: null,
+    });
+  },
+
+  beginDispatch(delivery: Delivery, now: Date): Delivery {
+    return Delivery.transitionTo(delivery, "dispatching", now, {
       attempts: delivery.attempts + 1,
       lastError: null,
     });
+  },
+
+  retryDispatch(delivery: Delivery, error: string, now: Date): Delivery {
+    return Delivery.transitionTo(delivery, "queued", now, { lastError: error });
   },
 
   reject(delivery: Delivery, reason: string, now: Date): Delivery {

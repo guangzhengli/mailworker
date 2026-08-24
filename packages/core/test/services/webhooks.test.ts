@@ -46,6 +46,17 @@ describe("fanOut", () => {
     });
   });
 
+  it("signs an old event with the current delivery-attempt time", async () => {
+    await h.services.delivery.createWebhook(h.ctx, { url: "https://a.test/hook" });
+    h.clock.advance(60 * 60 * 1000);
+
+    await h.services.delivery.fanOut(h.ctx, event, "evt-delayed");
+    expect(h.webhookSender.delivered[0]?.timestamp).toEqual(h.clock.now());
+    expect(JSON.parse(h.webhookSender.delivered[0]!.body)).toMatchObject({
+      occurredAt: event.occurredAt.toISOString(),
+    });
+  });
+
   it("skips a subscription that asked for other types", async () => {
     await h.services.delivery.createWebhook(h.ctx, {
       url: "https://a.test/hook",

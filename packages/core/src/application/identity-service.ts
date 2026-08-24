@@ -78,7 +78,9 @@ export interface MintedKey {
   readonly token: string;
 }
 
-const PUBLIC_ID_BYTES = 3;
+// Eight bytes keeps the indexed public head collision-resistant even for large
+// installations; the parser still accepts legacy three-byte heads.
+const PUBLIC_ID_BYTES = 8;
 const SECRET_BYTES = 24;
 
 export const CONSOLE_IDENTITY = "console";
@@ -86,6 +88,7 @@ export const CONSOLE_IDENTITY = "console";
 export function createIdentityService(deps: IdentityDeps) {
   return {
     async listEnvironments(ctx: Caller): Promise<Account[]> {
+      Caller.require(ctx, "admin");
       return await deps.accounts.listByProject(ctx.projectId);
     },
 
@@ -254,6 +257,11 @@ export function createIdentityService(deps: IdentityDeps) {
         // something that can opt out.
         throw invalidArgument(
           "An admin key cannot be bound to an agent identity: it could raise its own limits.",
+        );
+      }
+      if (input.scopes.includes("message:approve") && input.identityName !== undefined) {
+        throw invalidArgument(
+          "An approval key cannot be bound to the identity whose sends it could release.",
         );
       }
 

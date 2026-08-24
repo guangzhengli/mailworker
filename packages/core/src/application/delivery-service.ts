@@ -1,5 +1,6 @@
 import type {
   AgentIdentity,
+  AttachmentMeta,
   AttachmentSpec,
   Check,
   CheckStatus,
@@ -20,6 +21,7 @@ import {
   DomainError,
   DomainHealthPolicy,
   EmailAddress,
+  encodeStoredMessageBody,
   invalidArgument,
   isDomainError,
   LoopBreakerPolicy,
@@ -193,22 +195,192 @@ export type DispatchOutcome =
  * `cf.email.sending.message.*`, flattened by the adapter.
  */
 export interface ProviderDeliveryEvent {
+  readonly eventId: string;
   readonly type: DeliveryEventType;
   readonly providerMessageId: string;
   readonly recipient: EmailAddress | null;
+  readonly sourceDomain: string;
+  readonly sourceZoneId: string;
   readonly occurredAt: Date;
   readonly terminal: boolean;
   readonly smtpCode?: string | null;
+  readonly smtpEnhancedCode?: string | null;
   readonly smtpResponse?: string | null;
+  readonly bounceType?: "hard" | "soft" | null;
+  readonly bounceClassification?: string | null;
+  readonly bounceReason?: string | null;
   readonly raw?: string | null;
 }
 
 export type RecordEventOutcome =
   | { readonly outcome: "applied"; readonly from: string; readonly to: string }
   | { readonly outcome: "recorded_only"; readonly reason: string }
+  | { readonly outcome: "duplicate" }
   | { readonly outcome: "unmatched" };
 
+export interface DispatchReconcileResult {
+  examined: number;
+  enqueued: number;
+  discarded: number;
+  markedUnknown: number;
+  failed: number;
+  backlogRemaining: boolean;
+}
+
+export const DEFAULT_DISPATCH_RECONCILE_LIMIT = 200;
+export const DISPATCH_LEASE_MS = 5 * 60 * 1000;
+const UNKNOWN_HANDOFF_REASON =
+  "Dispatch worker stopped during provider hand-off; delivery outcome is unknown. Verify before retrying.";
+
 export function createDeliveryService(deps: DeliveryDeps) {
+  async function publishStagedDispatch(ctx: Caller, deliveryId: Ulid): Promise<void> {
+    // This row is a durable processing fact, not merely a D1-to-Queue hand-off.
+    // It stays until transport hand-off AND sent-copy archival complete. That
+    // lets cron recover a stopped consumer without ever repeating a successful
+    // provider call just because the local archive failed afterwards.
+    await deps.dispatchQueue.enqueue(ctx, deliveryId);
+  }
+
+  async function persistNewDelivery(
+    ctx: Caller,
+    delivery: Delivery,
+    payloadKey: string,
+    stageDispatch: boolean,
+    quota: { readonly identityId: Ulid; readonly maximum: number } | null,
+    exchange: {
+      readonly from: EmailAddress;
+      readonly recipients: readonly EmailAddress[];
+    } | null,
+    request: SendMessageRequest,
+  ): Promise<SendResult | null> {
+    const result = await deps.deliveries.insert(ctx, delivery, {
+      ...(stageDispatch ? { stageDispatch: true } : {}),
+      ...(quota === null
+        ? {}
+        : {
+            quota: {
+              identityId: quota.identityId,
+              maximum: quota.maximum,
+              since: new Date(delivery.createdAt.getTime() - QUOTA_WINDOW_MS),
+            },
+          }),
+      ...(exchange === null
+        ? {}
+        : {
+            exchange: {
+              ...exchange,
+              maximum: LoopBreakerPolicy.MAX_EXCHANGES_PER_WINDOW,
+              since: new Date(
+                delivery.createdAt.getTime() - LoopBreakerPolicy.EXCHANGE_WINDOW_MS,
+              ),
+            },
+          }),
+    });
+    if (result === "inserted") return null;
+
+    // Another request won the idempotency race after our optimistic read. Its
+    // payload is keyed by its own delivery id, so this loser's blob is safe to
+    // remove and must not become permanent R2 garbage.
+    await deps.blobs.delete(ctx, [payloadKey]);
+    if (result === "quota_exceeded") {
+      throw new DomainError(
+        "quota_exceeded",
+        `Identity reached its quota of ${quota?.maximum ?? 0} messages.`,
+        { quota: quota?.maximum ?? 0, identityId: quota?.identityId ?? null },
+      );
+    }
+    if (result === "exchange_limit_exceeded") {
+      throw new DomainError(
+        "loop_detected",
+        "Too many recent accepted sends to this recipient.",
+        {
+          reason: "too_many_exchanges",
+          max: LoopBreakerPolicy.MAX_EXCHANGES_PER_WINDOW,
+        },
+      );
+    }
+    if (delivery.idempotencyKey === null) {
+      throw new Error("A delivery id collided unexpectedly.");
+    }
+    const existing = await deps.deliveries.findByIdempotencyKey(
+      ctx,
+      delivery.idempotencyKey,
+      delivery.identityId,
+    );
+    if (existing === null) {
+      throw new Error("Idempotent delivery winner is missing after a unique-key conflict.");
+    }
+    await assertIdempotentRequestMatches(ctx, request, existing);
+    if (resourceIdentity(ctx) !== null && existing.identityId !== resourceIdentity(ctx)) {
+      throw invalidArgument("That idempotency key is already in use.", {
+        idempotencyKey: delivery.idempotencyKey,
+      });
+    }
+    return { outcome: "duplicate", delivery: existing };
+  }
+
+  async function assertIdempotentRequestMatches(
+    ctx: Caller,
+    request: SendMessageRequest,
+    existing: Delivery,
+  ): Promise<void> {
+    if (existing.payloadKey === null) return;
+    const bytes = await deps.blobs.get(ctx, existing.payloadKey);
+    // Retention may remove the old payload while the idempotency row remains.
+    // In that legacy case preserve retry safety; there is no body left to prove
+    // either equality or conflict.
+    if (bytes === null) return;
+    const payload = decodePayload(bytes);
+
+    let intendedParent: RfcMessageId | null = null;
+    if (request.inReplyToMessageId !== undefined) {
+      const parent = await deps.messages.findById(ctx, Ulid.parse(request.inReplyToMessageId));
+      if (parent === null) return;
+      intendedParent = parent.rfcMessageId;
+    }
+
+    const intended = canonicalJson({
+      from: EmailAddress.parse(request.from),
+      to: request.to.map(EmailAddress.parse),
+      cc: (request.cc ?? []).map(EmailAddress.parse),
+      bcc: (request.bcc ?? []).map(EmailAddress.parse),
+      replyTo: request.replyTo === undefined ? null : EmailAddress.parse(request.replyTo),
+      subject: request.subject,
+      text: request.text ?? null,
+      html: request.html ?? null,
+      inReplyTo: intendedParent,
+      headers: {
+        ...request.headers,
+        "Auto-Submitted": LoopBreakerPolicy.autoSubmittedHeader(request.automated ?? false),
+      },
+      attachments: request.attachments ?? [],
+      metadata: request.metadata ?? {},
+      source: request.source ?? "agent",
+    });
+    const recorded = canonicalJson({
+      from: payload.from,
+      to: payload.to,
+      cc: payload.cc,
+      bcc: payload.bcc,
+      replyTo: payload.replyTo,
+      subject: payload.subject,
+      text: payload.text,
+      html: payload.html,
+      inReplyTo: payload.inReplyTo,
+      headers: payload.headers,
+      attachments: payload.attachments ?? [],
+      metadata: existing.metadata,
+      source: existing.source,
+    });
+    if (intended !== recorded) {
+      throw new DomainError(
+        "idempotency_conflict",
+        "This idempotency key was already used for a different send request.",
+        { idempotencyKey: request.idempotencyKey ?? null, deliveryId: existing.id },
+      );
+    }
+  }
+
   const service = {
     /**
      * Everything between "an agent wants to send" and "it is safe to hand to a
@@ -227,8 +399,18 @@ export function createDeliveryService(deps: DeliveryDeps) {
       // Idempotency first: a retried request must not re-run the policy gates,
       // let alone re-send.
       if (input.idempotencyKey !== undefined) {
-        const existing = await deps.deliveries.findByIdempotencyKey(ctx, input.idempotencyKey);
+        const existing = await deps.deliveries.findByIdempotencyKey(
+          ctx,
+          input.idempotencyKey,
+          resourceIdentity(ctx),
+        );
         if (existing !== null) {
+          if (resourceIdentity(ctx) !== null && existing.identityId !== resourceIdentity(ctx)) {
+            throw invalidArgument("That idempotency key is already in use.", {
+              idempotencyKey: input.idempotencyKey,
+            });
+          }
+          await assertIdempotentRequestMatches(ctx, input, existing);
           return { outcome: "duplicate", delivery: existing };
         }
       }
@@ -241,6 +423,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       // 6 MiB attachment should not cost an inbox lookup and a quota count
       // before being told it is too big.
       const attachments = input.attachments ?? [];
+      Attachment.validateHeaders(input.headers ?? {});
       Attachment.enforceMessageSize({
         text: input.text ?? null,
         html: input.html ?? null,
@@ -265,8 +448,36 @@ export function createDeliveryService(deps: DeliveryDeps) {
           from,
         });
       }
+      // An identity-bound credential owns only inboxes explicitly assigned to
+      // that identity. Answer as if the address did not exist so the key cannot
+      // use the send endpoint as an oracle for another agent's resources.
+      if (
+        ctx.identityId !== null &&
+        !Caller.has(ctx, "admin") &&
+        inbox.identityId !== ctx.identityId
+      ) {
+        throw new DomainError("inbox_not_found", `No inbox owns ${from}; cannot send as it.`, {
+          from,
+        });
+      }
 
       const identity = await resolveIdentity(deps, ctx, inbox.identityId);
+
+      // An unbound/admin caller can legitimately send from an identity-owned
+      // inbox. Its optimistic lookup above cannot know that identity yet, so do
+      // the authoritative lookup now, before quota or policy changes could turn
+      // a harmless retry into a rejection.
+      if (input.idempotencyKey !== undefined && identity?.id !== resourceIdentity(ctx)) {
+        const existing = await deps.deliveries.findByIdempotencyKey(
+          ctx,
+          input.idempotencyKey,
+          identity?.id ?? null,
+        );
+        if (existing !== null) {
+          await assertIdempotentRequestMatches(ctx, input, existing);
+          return { outcome: "duplicate", delivery: existing };
+        }
+      }
 
       let inReplyTo: RfcMessageId | null = null;
       let references: RfcMessageId[] = [];
@@ -280,6 +491,13 @@ export function createDeliveryService(deps: DeliveryDeps) {
             {
               messageId: input.inReplyToMessageId,
             },
+          );
+        }
+        if (resourceIdentity(ctx) !== null && parent.identityId !== resourceIdentity(ctx)) {
+          throw new DomainError(
+            "message_not_found",
+            `No message ${input.inReplyToMessageId}.`,
+            { messageId: input.inReplyToMessageId },
           );
         }
         inReplyTo = parent.rfcMessageId;
@@ -358,6 +576,10 @@ export function createDeliveryService(deps: DeliveryDeps) {
       });
 
       const source = input.source ?? "agent";
+      const quota =
+        identity?.dailySendQuota == null
+          ? null
+          : { identityId: identity.id, maximum: identity.dailySendQuota };
       let delivery = Delivery.create({
         id: deliveryId,
         accountId: ctx.accountId,
@@ -377,7 +599,16 @@ export function createDeliveryService(deps: DeliveryDeps) {
       // rejecting gate above still ran.
       if (decision.kind === "require_approval" && source === "console") {
         delivery = Delivery.enqueue(delivery, now);
-        await deps.deliveries.insert(ctx, delivery);
+        const duplicate = await persistNewDelivery(
+          ctx,
+          delivery,
+          payloadKey,
+          true,
+          quota,
+          { from, recipients },
+          input,
+        );
+        if (duplicate !== null) return duplicate;
         await deps.events.publish([
           {
             type: "delivery.queued",
@@ -388,13 +619,22 @@ export function createDeliveryService(deps: DeliveryDeps) {
             recipients,
           },
         ]);
-        await deps.dispatchQueue.enqueue(ctx, delivery.id);
+        await publishStagedDispatch(ctx, delivery.id);
         return { outcome: "queued", delivery };
       }
 
       if (decision.kind === "require_approval") {
         delivery = Delivery.requireApproval(delivery, decision.reason, now);
-        await deps.deliveries.insert(ctx, delivery);
+        const duplicate = await persistNewDelivery(
+          ctx,
+          delivery,
+          payloadKey,
+          false,
+          quota,
+          { from, recipients },
+          input,
+        );
+        if (duplicate !== null) return duplicate;
         await deps.events.publish([
           {
             type: "delivery.approval_requested",
@@ -409,7 +649,16 @@ export function createDeliveryService(deps: DeliveryDeps) {
       }
 
       delivery = Delivery.enqueue(delivery, now);
-      await deps.deliveries.insert(ctx, delivery);
+      const duplicate = await persistNewDelivery(
+        ctx,
+        delivery,
+        payloadKey,
+        true,
+        quota,
+        { from, recipients },
+        input,
+      );
+      if (duplicate !== null) return duplicate;
       await deps.events.publish([
         {
           type: "delivery.queued",
@@ -422,7 +671,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       ]);
 
       // Last, after the row, the payload and the decision are all durable.
-      await deps.dispatchQueue.enqueue(ctx, delivery.id);
+      await publishStagedDispatch(ctx, delivery.id);
       return { outcome: "queued", delivery };
     },
 
@@ -503,30 +752,49 @@ export function createDeliveryService(deps: DeliveryDeps) {
         });
       }
 
-      // A queue can deliver the same job twice; anything not queued is already
-      // handled and must not be sent again.
-      if (delivery.status !== "queued") {
+      // A provider hand-off may succeed before our sent-copy archive does. A
+      // queue retry repairs that archive from the durable payload, but it must
+      // never call the transport again. `providerMessageId !== null` is the
+      // durable proof that hand-off already happened, even if a later provider
+      // event advanced the status beyond `dispatched` in the meantime.
+      const repairingArchive =
+        delivery.status !== "queued" &&
+        delivery.status !== "dispatching" &&
+        delivery.messageId === null &&
+        hasProviderHandoff(delivery);
+      if (delivery.status !== "queued" && !repairingArchive) {
         return { outcome: "skipped", reason: `status is ${delivery.status}` };
+      }
+
+      let claimed = delivery;
+      if (!repairingArchive) {
+        claimed = Delivery.beginDispatch(delivery, now);
+        if (!(await deps.deliveries.updateIfStatus(ctx, claimed, "queued"))) {
+          return { outcome: "skipped", reason: "already claimed by another consumer" };
+        }
       }
       // `send` guarantees both of these; a violation means the row was written
       // by something else, and fabricating a value would attach the sent copy to an
       // inbox that does not exist.
       if (delivery.inboxId === null) {
         const reason = "outbound message has no originating inbox";
-        const failed = Delivery.fail(delivery, reason, now);
-        await deps.deliveries.update(ctx, failed);
+        const failed = Delivery.fail(claimed, reason, now);
+        await deps.deliveries.updateIfStatus(ctx, failed, "dispatching");
+        await deps.deliveries.unstageDispatch(ctx, failed.id);
         return { outcome: "failed", delivery: failed, error: reason };
       }
       if (delivery.payloadKey === null) {
-        const failed = Delivery.fail(delivery, "payload missing", now);
-        await deps.deliveries.update(ctx, failed);
+        const failed = Delivery.fail(claimed, "payload missing", now);
+        await deps.deliveries.updateIfStatus(ctx, failed, "dispatching");
+        await deps.deliveries.unstageDispatch(ctx, failed.id);
         return { outcome: "failed", delivery: failed, error: "payload missing" };
       }
 
       const bytes = await deps.blobs.get(ctx, delivery.payloadKey);
       if (bytes === null) {
-        const failed = Delivery.fail(delivery, "payload blob not found", now);
-        await deps.deliveries.update(ctx, failed);
+        const failed = Delivery.fail(claimed, "payload blob not found", now);
+        await deps.deliveries.updateIfStatus(ctx, failed, "dispatching");
+        await deps.deliveries.unstageDispatch(ctx, failed.id);
         return { outcome: "failed", delivery: failed, error: "payload blob not found" };
       }
       const payload = decodePayload(bytes);
@@ -544,32 +812,43 @@ export function createDeliveryService(deps: DeliveryDeps) {
         contentId: spec.contentId,
       }));
 
-      const result = await deps.transport.dispatch(ctx, {
-        from: payload.from,
-        fromName: null,
-        to: payload.to,
-        cc: payload.cc,
-        bcc: payload.bcc,
-        replyTo: payload.replyTo,
-        subject: payload.subject,
-        text: payload.text,
-        html: payload.html,
-        messageId: payload.messageId,
-        inReplyTo: payload.inReplyTo,
-        references: payload.references,
-        headers: payload.headers,
-        attachments,
-      });
+      const result = repairingArchive
+        ? {
+            ok: true as const,
+            providerMessageId: delivery.providerMessageId,
+            accepted: [] as readonly EmailAddress[],
+            queued: [] as readonly EmailAddress[],
+            rejected: [] as readonly EmailAddress[],
+          }
+        : await deps.transport.dispatch(ctx, {
+            from: payload.from,
+            fromName: null,
+            to: payload.to,
+            cc: payload.cc,
+            bcc: payload.bcc,
+            replyTo: payload.replyTo,
+            subject: payload.subject,
+            text: payload.text,
+            html: payload.html,
+            messageId: payload.messageId,
+            inReplyTo: payload.inReplyTo,
+            references: payload.references,
+            headers: payload.headers,
+            attachments,
+          });
 
       if (!result.ok) {
         if (result.retryable) {
+          const requeued = Delivery.retryDispatch(claimed, result.error, now);
+          await deps.deliveries.updateIfStatus(ctx, requeued, "dispatching");
           throw new DomainError("send_rejected", `Transport error: ${result.error}`, {
-            deliveryId: delivery.id,
+            deliveryId: claimed.id,
             retryable: true,
           });
         }
-        const failed = Delivery.fail(delivery, result.error, now);
-        await deps.deliveries.update(ctx, failed);
+        const failed = Delivery.fail(claimed, result.error, now);
+        await deps.deliveries.updateIfStatus(ctx, failed, "dispatching");
+        await deps.deliveries.unstageDispatch(ctx, failed.id);
         await deps.events.publish([
           {
             type: "delivery.rejected",
@@ -584,13 +863,28 @@ export function createDeliveryService(deps: DeliveryDeps) {
         return { outcome: "failed", delivery: failed, error: result.error };
       }
 
-      let dispatched = Delivery.markDispatched(delivery, result.providerMessageId, now);
+      let dispatched = repairingArchive
+        ? delivery
+        : Delivery.markDispatched(claimed, result.providerMessageId, now);
+
+      // Persist the provider hand-off before archive work. Once the external
+      // side effect succeeded, a later MIME/R2/D1 failure must never make a
+      // queue retry send the email again.
+      if (!repairingArchive) {
+        const persisted = await deps.deliveries.updateIfStatus(ctx, dispatched, "dispatching");
+        if (!persisted) {
+          // The external side effect happened, but another recovery path moved
+          // the lease meanwhile. Never resend and never overwrite that newer
+          // decision; the retained outbox row makes the unknown outcome visible.
+          throw new Error(`Delivery ${dispatched.id} changed during provider hand-off.`);
+        }
+      }
 
       // Archive our copy, threaded alongside the message it replies to.
       const candidates = ThreadingPolicy.candidateIds(payload.inReplyTo, payload.references);
       const known =
         candidates.length > 0
-          ? await deps.messages.findThreadIds(ctx, candidates)
+          ? await deps.messages.findThreadIds(ctx, candidates, delivery.inboxId)
           : new Map<string, ThreadId>();
       const thread = ThreadingPolicy.resolve({
         ownMessageId: payload.messageId,
@@ -600,6 +894,18 @@ export function createDeliveryService(deps: DeliveryDeps) {
       });
 
       const messageId = deps.ids.ulid();
+      const archivedAttachments: AttachmentMeta[] = attachments.map((attachment) => {
+        const attachmentId = deps.ids.ulid();
+        return {
+          id: attachmentId,
+          filename: attachment.filename,
+          mime: attachment.mime,
+          contentId: attachment.contentId,
+          size: attachment.content.byteLength,
+          inline: attachment.inline,
+          storageKey: BlobKeys.attachment(ctx.accountId, messageId, attachmentId),
+        };
+      });
       const raw = await deps.mimeBuilder.build({
         from: payload.from,
         fromName: null,
@@ -616,15 +922,17 @@ export function createDeliveryService(deps: DeliveryDeps) {
         attachments,
       });
       const rawKey = BlobKeys.rawMessage(ctx.accountId, messageId);
-      await deps.blobs.put(ctx, rawKey, raw, { contentType: "message/rfc822" });
+      const bodyKey = BlobKeys.messageBody(ctx.accountId, messageId);
 
-      const sentCopy = Message.create({
+      let sentCopy = Message.create({
         id: messageId,
         accountId: ctx.accountId,
         inboxId: delivery.inboxId,
+        identityId: delivery.identityId,
         rfcMessageId: payload.messageId,
         threadId: thread.threadId,
         direction: "outbound",
+        origin: "outbound",
         fromHeader: payload.from,
         from: payload.from,
         toHeader: payload.to.join(", "),
@@ -640,12 +948,81 @@ export function createDeliveryService(deps: DeliveryDeps) {
         autoSubmitted: payload.headers["Auto-Submitted"] ?? null,
         rawKey,
         size: raw.byteLength,
+        attachments: archivedAttachments,
         sentAt: now,
         receivedAt: now,
       });
-      await deps.messages.insert(ctx, sentCopy);
+      const archiveKeys = [
+        rawKey,
+        bodyKey,
+        ...archivedAttachments.map((attachment) => attachment.storageKey),
+      ];
+      let insertAttempted = false;
+      try {
+        await deps.blobs.put(ctx, rawKey, raw, { contentType: "message/rfc822" });
+        await deps.blobs.put(
+          ctx,
+          bodyKey,
+          encodeStoredMessageBody({
+            bodyText: sentCopy.bodyText,
+            bodyHtml: sentCopy.bodyHtml,
+          }),
+          { contentType: "application/json" },
+        );
+        for (const [index, attachment] of archivedAttachments.entries()) {
+          await deps.blobs.put(ctx, attachment.storageKey, attachments[index]!.content, {
+            contentType: attachment.mime ?? "application/octet-stream",
+          });
+        }
+        insertAttempted = true;
+        const { stored } = await deps.messages.insert(ctx, sentCopy, { bodyKey });
+        if (!stored) {
+          await deps.blobs.delete(ctx, archiveKeys);
+          const winner = await deps.messages.findPlacement(
+            ctx,
+            sentCopy.inboxId,
+            null,
+            sentCopy.rfcMessageId,
+          );
+          if (
+            winner === null ||
+            winner.direction !== "outbound" ||
+            winner.inboxId !== sentCopy.inboxId
+          ) {
+            throw new Error(
+              `Outbound archive ${sentCopy.rfcMessageId} deduplicated without a winner.`,
+            );
+          }
+          sentCopy = winner;
+        }
+      } catch (error) {
+        if (!insertAttempted) {
+          await deps.blobs.delete(ctx, archiveKeys);
+        } else {
+          // An insert can commit before its response is lost. Only delete if a
+          // successful verification proves no archive row exists; on a failed
+          // verification retain the objects and let archive repair retry.
+          try {
+            const committed = await deps.messages.findPlacement(
+              ctx,
+              sentCopy.inboxId,
+              null,
+              sentCopy.rfcMessageId,
+            );
+            if (committed === null) await deps.blobs.delete(ctx, archiveKeys);
+          } catch {
+            // Unknown D1 outcome: preserving possible orphans is the safe side.
+          }
+        }
+        throw error;
+      }
 
       dispatched = Delivery.attachSentCopy(dispatched, sentCopy.id, now);
+      // Partial write: a provider event can advance the row to delivered while
+      // MIME/R2 archival is in progress. Rewriting the older aggregate here
+      // would move it backwards to dispatched and the event's unique id means
+      // no retry would repair that regression.
+      await deps.deliveries.attachMessageId(ctx, dispatched.id, sentCopy.id, now);
 
       /**
        * A sandbox environment gets the whole shape of a real send without one
@@ -697,20 +1074,32 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
         await deps.deliveries.appendDeliveryEvent(ctx, {
           id: deps.ids.ulid(),
+          eventId: null,
           deliveryId: dispatched.id,
           providerMessageId: result.providerMessageId,
           recipient: null,
+          sourceDomain: null,
+          sourceZoneId: null,
           type: "delivered",
           terminal: true,
           smtpCode: null,
+          smtpEnhancedCode: null,
           smtpResponse: "Delivered in sandbox — nothing left this deployment.",
+          bounceType: null,
+          bounceClassification: null,
+          bounceReason: null,
           occurredAt: now,
           raw: null,
         });
         dispatched = Delivery.transitionTo(dispatched, "delivered", now);
       }
 
-      await deps.deliveries.update(ctx, dispatched);
+      if (ctx.mode === "sandbox") {
+        // Sandbox synthesized the provider outcome above and has no external
+        // event racing this transition. Live mode already persisted handoff
+        // before archive and uses the partial message-id update above.
+        await deps.deliveries.update(ctx, dispatched);
+      }
       await deps.events.publish([
         {
           type: "delivery.dispatched",
@@ -721,6 +1110,11 @@ export function createDeliveryService(deps: DeliveryDeps) {
           providerMessageId: result.providerMessageId,
         },
       ]);
+
+      // The durable dispatch task is complete only after provider hand-off,
+      // archive attachment and event publication. Until here, a retry is either
+      // a normal queued dispatch or an archive-only repair.
+      await deps.deliveries.unstageDispatch(ctx, dispatched.id);
 
       return { outcome: "dispatched", delivery: dispatched, sentCopy };
     },
@@ -740,78 +1134,136 @@ export function createDeliveryService(deps: DeliveryDeps) {
      *   queue retry forever, and out-of-order arrival is normal at scale.
      */
     async recordEvent(ctx: Caller, event: ProviderDeliveryEvent): Promise<RecordEventOutcome> {
-      const delivery = await deps.deliveries.findByProviderMessageId(
+      let delivery = await deps.deliveries.findByProviderMessageId(
         ctx,
         event.providerMessageId,
       );
 
       await deps.deliveries.appendDeliveryEvent(ctx, {
         id: deps.ids.ulid(),
+        eventId: event.eventId,
         deliveryId: delivery?.id ?? null,
         providerMessageId: event.providerMessageId,
         recipient: event.recipient,
+        sourceDomain: event.sourceDomain,
+        sourceZoneId: event.sourceZoneId,
         type: event.type,
         terminal: event.terminal,
         smtpCode: event.smtpCode ?? null,
+        smtpEnhancedCode: event.smtpEnhancedCode ?? null,
         smtpResponse: event.smtpResponse ?? null,
+        bounceType: event.bounceType ?? null,
+        bounceClassification: event.bounceClassification ?? null,
+        bounceReason: event.bounceReason ?? null,
         occurredAt: event.occurredAt,
         raw: event.raw ?? null,
       });
 
-      // A bounce or complaint must reach the suppression list even if we cannot
-      // match the send — protecting sender reputation matters more than tidy
-      // bookkeeping, and quota is only consumed by attempts we actually make.
-      if (
-        event.recipient !== null &&
-        (event.type === "bounced" || event.type === "complained")
-      ) {
-        await deps.suppressions.add(ctx, {
-          address: event.recipient,
-          reason: event.type === "bounced" ? "hard_bounce" : "complaint",
-          source: "cf_sync",
-          createdAt: event.occurredAt,
+      // The row is the durable idempotency boundary, while the processing claim
+      // makes a crash after the insert retryable. A duplicate whose first
+      // attempt completed is ignored; a duplicate whose attempt released its
+      // claim resumes all remaining idempotent side effects.
+      const claimNow = deps.clock.now();
+      const claim = await deps.deliveries.claimDeliveryEvent(
+        ctx,
+        event.eventId,
+        claimNow,
+        new Date(claimNow.getTime() - 5 * 60 * 1000),
+      );
+      if (claim === "processed") return { outcome: "duplicate" };
+      if (claim === "busy") {
+        // Do not acknowledge an in-flight lease as a duplicate. The current
+        // owner may have hard-crashed after claiming; a retry is what eventually
+        // reaches the stale-lease branch and finishes the durable side effects.
+        throw new Error(`Provider event ${event.eventId} is still being processed.`);
+      }
+
+      try {
+        // A bounce or complaint must reach the suppression list even if we cannot
+        // match the send — protecting sender reputation matters more than tidy
+        // bookkeeping, and quota is only consumed by attempts we actually make.
+        if (
+          event.recipient !== null &&
+          (event.type === "complained" ||
+            (event.type === "bounced" && event.bounceType === "hard"))
+        ) {
+          await deps.suppressions.add(ctx, {
+            address: event.recipient,
+            reason: event.type === "bounced" ? "hard_bounce" : "complaint",
+            source: "cf_sync",
+            createdAt: event.occurredAt,
+          });
+          await deps.events.publish([
+            {
+              type: "suppression.added",
+              accountId: ctx.accountId,
+              occurredAt: event.occurredAt,
+              address: event.recipient,
+              reason: event.type,
+            },
+          ]);
+        }
+
+        if (delivery === null) {
+          await deps.deliveries.completeDeliveryEvent(ctx, event.eventId, deps.clock.now());
+          return { outcome: "unmatched" };
+        }
+
+        // A provider may report a failed attempt that it still intends to retry.
+        // Preserve it in the timeline, but do not freeze the aggregate in the
+        // terminal `failed` status until Cloudflare says the event is terminal.
+        if (event.type === "failed" && !event.terminal) {
+          await deps.deliveries.completeDeliveryEvent(ctx, event.eventId, deps.clock.now());
+          return { outcome: "recorded_only", reason: "non_terminal_failure" };
+        }
+
+        // Re-read after claiming. Different provider events may have advanced
+        // this delivery while the event row was being inserted.
+        delivery = await deps.deliveries.findByProviderMessageId(ctx, event.providerMessageId);
+        if (delivery === null) {
+          await deps.deliveries.completeDeliveryEvent(ctx, event.eventId, deps.clock.now());
+          return { outcome: "unmatched" };
+        }
+        const applied = Delivery.applyDeliveryEvent(delivery, {
+          type: event.type,
+          occurredAt: event.occurredAt,
+          detail: event.smtpResponse ?? null,
         });
+
+        if (!applied.applied) {
+          await deps.deliveries.completeDeliveryEvent(ctx, event.eventId, deps.clock.now());
+          return { outcome: "recorded_only", reason: applied.reason };
+        }
+
+        const updated = await deps.deliveries.updateIfStatus(
+          ctx,
+          applied.delivery,
+          delivery.status,
+        );
+        if (!updated) {
+          // Leave the row pending so queue retry recomputes against the winner.
+          throw new Error(`Delivery ${delivery.id} changed while applying provider event.`);
+        }
         await deps.events.publish([
           {
-            type: "suppression.added",
+            type: "delivery.status_changed",
             accountId: ctx.accountId,
             occurredAt: event.occurredAt,
-            address: event.recipient,
-            reason: event.type,
+            metadata: applied.delivery.metadata,
+            deliveryId: applied.delivery.id,
+            from: delivery.status,
+            to: applied.delivery.status,
+            deliveryEvent: event.type,
+            recipient: event.recipient,
           },
         ]);
+
+        await deps.deliveries.completeDeliveryEvent(ctx, event.eventId, deps.clock.now());
+        return { outcome: "applied", from: delivery.status, to: applied.delivery.status };
+      } catch (error) {
+        await deps.deliveries.releaseDeliveryEvent(ctx, event.eventId);
+        throw error;
       }
-
-      if (delivery === null) {
-        return { outcome: "unmatched" };
-      }
-
-      const applied = Delivery.applyDeliveryEvent(delivery, {
-        type: event.type,
-        occurredAt: event.occurredAt,
-        detail: event.smtpResponse ?? null,
-      });
-
-      if (!applied.applied) {
-        return { outcome: "recorded_only", reason: applied.reason };
-      }
-
-      await deps.deliveries.update(ctx, applied.delivery);
-      await deps.events.publish([
-        {
-          type: "delivery.status_changed",
-          accountId: ctx.accountId,
-          occurredAt: event.occurredAt,
-          metadata: applied.delivery.metadata,
-          deliveryId: applied.delivery.id,
-          from: delivery.status,
-          to: applied.delivery.status,
-          deliveryEvent: event.type,
-          recipient: event.recipient,
-        },
-      ]);
-
-      return { outcome: "applied", from: delivery.status, to: applied.delivery.status };
     },
 
     /**
@@ -829,12 +1281,14 @@ export function createDeliveryService(deps: DeliveryDeps) {
      */
     async approve(ctx: Caller, deliveryId: Ulid): Promise<Delivery> {
       Caller.require(ctx, "message:approve");
+      assertIndependentApprover(ctx);
       const now = deps.clock.now();
 
       const delivery = await deps.deliveries.findById(ctx, deliveryId);
       if (delivery === null) {
         throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
       }
+      assertDeliveryAccess(ctx, delivery);
       if (delivery.status !== "pending_approval") {
         throw new DomainError(
           "invalid_state_transition",
@@ -843,9 +1297,20 @@ export function createDeliveryService(deps: DeliveryDeps) {
         );
       }
 
-      const approved = Delivery.enqueue(Delivery.approve(delivery, ctx.subject, now), now);
-      await deps.deliveries.update(ctx, approved);
-      await deps.dispatchQueue.enqueue(ctx, approved.id);
+      const approved = Delivery.approve(delivery, ctx.subject, now);
+      const updated = await deps.deliveries.approveAndStage(ctx, approved);
+      if (!updated) {
+        // Never remove the row here. The request that created it need not be the
+        // request that won the compare-and-set; deleting it can erase the
+        // winner's only recovery fact if Queue.send failed. Reconciliation
+        // observes the final delivery state and is the sole loser cleanup.
+        throw new DomainError(
+          "invalid_state_transition",
+          `Delivery ${deliveryId} is no longer awaiting approval.`,
+          { deliveryId },
+        );
+      }
+      await publishStagedDispatch(ctx, approved.id);
       await deps.events.publish([
         {
           type: "delivery.status_changed",
@@ -863,6 +1328,90 @@ export function createDeliveryService(deps: DeliveryDeps) {
     },
 
     /**
+     * Repair the D1-to-Queues hand-off.
+     *
+     * A send is accepted into D1 and then published to Queues, two services that
+     * cannot share a transaction. The outbox row is committed with a newly
+     * queued delivery, so a transient queue outage or isolate stop becomes a
+     * delayed hand-off instead of a silently stranded message.
+     */
+    async reconcileDispatchOutbox(
+      ctx: Caller,
+      limit = DEFAULT_DISPATCH_RECONCILE_LIMIT,
+    ): Promise<DispatchReconcileResult> {
+      Caller.require(ctx, "admin");
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+        throw invalidArgument("Dispatch reconciliation limit must be between 1 and 1000.", {
+          limit,
+        });
+      }
+
+      const staged = await deps.deliveries.listStagedDispatches(ctx, limit);
+      const result: DispatchReconcileResult = {
+        examined: staged.length,
+        enqueued: 0,
+        discarded: 0,
+        markedUnknown: 0,
+        failed: 0,
+        backlogRemaining: staged.length >= limit,
+      };
+
+      for (const entry of staged) {
+        try {
+          const delivery = await deps.deliveries.findById(ctx, entry.deliveryId);
+          if (delivery?.status === "dispatching") {
+            if (
+              delivery.statusChangedAt.getTime() >
+              deps.clock.now().getTime() - DISPATCH_LEASE_MS
+            ) {
+              // A live consumer owns the provider hand-off. Keep the durable
+              // task and let the next cron pass decide whether its lease went stale.
+              continue;
+            }
+            const unknown = Delivery.fail(delivery, UNKNOWN_HANDOFF_REASON, deps.clock.now());
+            if (await deps.deliveries.updateIfStatus(ctx, unknown, "dispatching")) {
+              await deps.deliveries.unstageDispatch(ctx, entry.deliveryId);
+              result.markedUnknown += 1;
+            }
+            continue;
+          }
+          if (delivery?.status === "pending_approval") {
+            // Modern approval staging is atomic and only fires when the status
+            // becomes queued. A pending row is therefore legacy debris, never
+            // permission to bypass review.
+            await deps.deliveries.unstageDispatch(ctx, entry.deliveryId);
+            result.discarded += 1;
+            continue;
+          }
+          if (
+            delivery !== null &&
+            delivery.status !== "queued" &&
+            delivery.messageId === null &&
+            hasProviderHandoff(delivery)
+          ) {
+            // Provider hand-off is durable but archive is absent. Re-enqueueing
+            // enters dispatch's archive-only repair path and cannot send twice.
+            await publishStagedDispatch(ctx, entry.deliveryId);
+            result.enqueued += 1;
+            continue;
+          }
+          if (delivery === null || delivery.status !== "queued") {
+            await deps.deliveries.unstageDispatch(ctx, entry.deliveryId);
+            result.discarded += 1;
+            continue;
+          }
+          await publishStagedDispatch(ctx, entry.deliveryId);
+          result.enqueued += 1;
+        } catch {
+          // Leave the row intact. One broken queue binding must not stop the
+          // remaining environments being swept or erase the recovery signal.
+          result.failed += 1;
+        }
+      }
+      return result;
+    },
+
+    /**
      * Decline a held send.
      *
      * The counterpart `approve` was missing, and its absence made the queue a
@@ -876,12 +1425,14 @@ export function createDeliveryService(deps: DeliveryDeps) {
      */
     async reject(ctx: Caller, deliveryId: Ulid, reason: string): Promise<Delivery> {
       Caller.require(ctx, "message:approve");
+      assertIndependentApprover(ctx);
       const now = deps.clock.now();
 
       const delivery = await deps.deliveries.findById(ctx, deliveryId);
       if (delivery === null) {
         throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
       }
+      assertDeliveryAccess(ctx, delivery);
       if (delivery.status !== "pending_approval") {
         throw new DomainError(
           "invalid_state_transition",
@@ -891,7 +1442,14 @@ export function createDeliveryService(deps: DeliveryDeps) {
       }
 
       const rejected = Delivery.reject(delivery, `${reason} (${ctx.subject})`, now);
-      await deps.deliveries.update(ctx, rejected);
+      const updated = await deps.deliveries.updateIfStatus(ctx, rejected, "pending_approval");
+      if (!updated) {
+        throw new DomainError(
+          "invalid_state_transition",
+          `Delivery ${deliveryId} is no longer awaiting approval.`,
+          { deliveryId },
+        );
+      }
       await deps.events.publish([
         {
           type: "delivery.status_changed",
@@ -926,6 +1484,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       if (delivery === null) {
         throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
       }
+      assertDeliveryAccess(ctx, delivery);
       return { delivery, events: await deps.deliveries.listDeliveryEvents(ctx, deliveryId) };
     },
 
@@ -948,6 +1507,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       if (delivery === null) {
         throw notFound("message_not_found", `No delivery ${deliveryId}.`, { deliveryId });
       }
+      assertDeliveryAccess(ctx, delivery);
       if (delivery.payloadKey === null) {
         throw notFound("message_not_found", `Delivery ${deliveryId} has no stored payload.`, {
           deliveryId,
@@ -985,16 +1545,23 @@ export function createDeliveryService(deps: DeliveryDeps) {
 
     async list(ctx: Caller, query: ListDeliveriesQuery = {}): Promise<Page<Delivery>> {
       Caller.require(ctx, "message:read");
-      return await deps.deliveries.list(ctx, query);
+      const identityId = resourceIdentity(ctx);
+      return await deps.deliveries.list(ctx, {
+        ...query,
+        ...(identityId === null ? {} : { identityId }),
+      });
     },
 
     async listSuppressions(ctx: Caller): Promise<SuppressionEntry[]> {
-      Caller.require(ctx, "message:read");
+      // Suppressions are account-wide reputation state, not an identity-owned
+      // mailbox resource. Letting one agent enumerate them leaks other agents'
+      // recipients; letting it add one is a cross-identity denial of service.
+      Caller.require(ctx, "admin");
       return await deps.suppressions.list(ctx);
     },
 
     async suppress(ctx: Caller, entry: Omit<SuppressionEntry, "createdAt">): Promise<void> {
-      Caller.require(ctx, "message:send");
+      Caller.require(ctx, "admin");
       await deps.suppressions.add(ctx, { ...entry, createdAt: deps.clock.now() });
     },
 
@@ -1080,7 +1647,10 @@ export function createDeliveryService(deps: DeliveryDeps) {
             // independently must not be told they received the same delivery.
             messageId: `${eventId}.${subscription.id}`,
             body,
-            timestamp: event.occurredAt,
+            // Signature freshness describes this delivery attempt, not when
+            // the business event happened. A queued retry hours later must not
+            // look like a replay; the original time remains in the JSON body.
+            timestamp: deps.clock.now(),
           }),
         ),
       );
@@ -1149,6 +1719,49 @@ export interface DomainDiagnosis {
 export type DeliveryService = ReturnType<typeof createDeliveryService>;
 
 export const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Existing unbound keys retain account-wide access; identity keys are scoped. */
+function resourceIdentity(ctx: Caller): Ulid | null {
+  return Caller.has(ctx, "admin") ? null : ctx.identityId;
+}
+
+function assertDeliveryAccess(ctx: Caller, delivery: Delivery): void {
+  const identityId = resourceIdentity(ctx);
+  if (identityId !== null && delivery.identityId !== identityId) {
+    throw notFound("message_not_found", `No delivery ${delivery.id}.`, { id: delivery.id });
+  }
+}
+
+function assertIndependentApprover(ctx: Caller): void {
+  if (ctx.identityId !== null) {
+    throw new DomainError(
+      "forbidden",
+      "An identity-bound credential cannot approve or reject agent sends.",
+      { subject: ctx.subject },
+    );
+  }
+}
+
+function hasProviderHandoff(delivery: Delivery): boolean {
+  if (delivery.providerMessageId !== null) return true;
+  return ["dispatched", "deferred", "delivered", "bounced", "complained"].includes(
+    delivery.status,
+  );
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, sortJson(child)]),
+  );
+}
 
 export function encodePayload(payload: DeliveryPayload): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(payload));

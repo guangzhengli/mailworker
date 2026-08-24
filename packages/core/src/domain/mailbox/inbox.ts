@@ -73,6 +73,20 @@ export const Inbox = {
       });
     }
 
+    const metadata = input.metadata ?? null;
+    if (metadata !== null) {
+      const entries = Object.entries(metadata);
+      if (
+        entries.length > 20 ||
+        entries.some(([key, value]) => key.length < 1 || key.length > 64 || value.length > 512)
+      ) {
+        throw invalidArgument("Inbox metadata exceeds its key, value, or count limit.", {
+          keys: entries.length,
+          maxKeys: 20,
+        });
+      }
+    }
+
     return {
       id: input.id,
       accountId: input.accountId,
@@ -82,7 +96,7 @@ export const Inbox = {
       displayName: input.displayName ?? null,
       kind: input.kind,
       identityId: input.identityId ?? null,
-      metadata: input.metadata ? Object.freeze({ ...input.metadata }) : null,
+      metadata: metadata === null ? null : Object.freeze({ ...metadata }),
       expiresAt,
       deletedAt: null,
       createdAt: input.now,

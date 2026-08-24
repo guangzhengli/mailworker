@@ -1,7 +1,10 @@
-import type { AttachmentMeta, Caller, DomainEvent, ThreadId, Ulid } from "@core/domain";
+import type { AttachmentMeta, DomainEvent, ThreadId, Ulid } from "@core/domain";
 import {
   AddressResolutionPolicy,
   BlobKeys,
+  Caller,
+  DomainError,
+  encodeStoredMessageBody,
   Inbox,
   MailboxAddress,
   Message,
@@ -12,6 +15,7 @@ import {
 import type {
   BlobStore,
   Clock,
+  ContentHasher,
   DomainRepository,
   EventBus,
   IdGenerator,
@@ -31,6 +35,7 @@ import type {
 export interface IngestionDeps {
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  readonly contentHasher: ContentHasher;
   readonly inboxes: InboxRepository;
   readonly messages: MessageRepository;
   readonly domains: DomainRepository;
@@ -46,6 +51,8 @@ export interface IngestInboundEmailInput {
   /** Envelope sender. Recorded for diagnostics; the From header is authoritative. */
   readonly envelopeFrom: string;
   readonly raw: Uint8Array;
+  /** Adapter-attested origin; caller payload cannot override this over HTTP. */
+  readonly origin?: "email" | "injected" | "sandbox";
 }
 
 export type IngestResult =
@@ -53,6 +60,9 @@ export type IngestResult =
   | { readonly outcome: "duplicate"; readonly rfcMessageId: string }
   | { readonly outcome: "unroutable"; readonly reason: string }
   | { readonly outcome: "inbox_unavailable"; readonly reason: string };
+
+/** Cloudflare Email Routing rejects anything larger than this at SMTP time. */
+export const MAX_INBOUND_MESSAGE_BYTES = 25 * 1024 * 1024;
 
 export function createIngestionService(deps: IngestionDeps) {
   return {
@@ -69,6 +79,14 @@ export function createIngestionService(deps: IngestionDeps) {
      * would race with itself under concurrent retries.
      */
     async ingest(ctx: Caller, input: IngestInboundEmailInput): Promise<IngestResult> {
+      Caller.require(ctx, "message:inject");
+      if (input.raw.byteLength > MAX_INBOUND_MESSAGE_BYTES) {
+        throw new DomainError(
+          "message_too_large",
+          `Inbound message is ${input.raw.byteLength} bytes, over the ${MAX_INBOUND_MESSAGE_BYTES} byte limit.`,
+          { bytes: input.raw.byteLength, max: MAX_INBOUND_MESSAGE_BYTES },
+        );
+      }
       const now = deps.clock.now();
       const events: DomainEvent[] = [];
 
@@ -105,6 +123,7 @@ export function createIngestionService(deps: IngestionDeps) {
           accountId: ctx.accountId,
           address: resolution.address,
           kind: "ephemeral",
+          identityId: !Caller.has(ctx, "admin") ? ctx.identityId : null,
           expiresAt: Inbox.expiryFromTtl(now, DEFAULT_AUTOCREATE_TTL_MS),
           now,
         });
@@ -154,18 +173,30 @@ export function createIngestionService(deps: IngestionDeps) {
         };
       }
 
+      // The HTTP injection endpoint is agent-facing; Email Routing itself uses
+      // an admin system caller. A bound key may only place fixtures in inboxes
+      // it owns, otherwise it could forge mail into another agent's wait stream.
+      if (
+        !Caller.has(ctx, "admin") &&
+        ctx.identityId !== null &&
+        inbox.identityId !== ctx.identityId
+      ) {
+        return { outcome: "unroutable", reason: "no_such_inbox" };
+      }
+
       const parsed = await deps.mimeParser.parse(input.raw);
       const messageUlid = deps.ids.ulid();
-      // A message with no Message-ID cannot be deduplicated or threaded by anyone,
-      // so we mint one. Synthesising it from our own ULID keeps it stable if the
-      // same bytes are replayed through `inject`.
+      // A missing Message-ID is synthesized from the original bytes. Email
+      // Routing and queue consumers are at-least-once, so a random id would
+      // turn the same delivery into a new message on every retry.
       const rfcMessageId =
-        parsed.rfcMessageId ?? RfcMessageId.parse(`${messageUlid}@${inbox.domain}`);
+        parsed.rfcMessageId ??
+        RfcMessageId.parse(`mw-${await deps.contentHasher.sha256(input.raw)}@${inbox.domain}`);
 
       const candidates = ThreadingPolicy.candidateIds(parsed.inReplyTo, parsed.references);
       const known =
         candidates.length > 0
-          ? await deps.messages.findThreadIds(ctx, candidates)
+          ? await deps.messages.findThreadIds(ctx, candidates, inbox.id)
           : new Map<string, ThreadId>();
       const thread = ThreadingPolicy.resolve({
         ownMessageId: rfcMessageId,
@@ -177,17 +208,11 @@ export function createIngestionService(deps: IngestionDeps) {
       const trust = SenderTrust.assess(parsed.auth);
 
       const rawKey = BlobKeys.rawMessage(ctx.accountId, messageUlid);
-      await deps.blobs.put(ctx, rawKey, input.raw, { contentType: "message/rfc822" });
-
-      const attachments: AttachmentMeta[] = [];
-      for (const attachment of parsed.attachments) {
+      const bodyKey = BlobKeys.messageBody(ctx.accountId, messageUlid);
+      const attachments: AttachmentMeta[] = parsed.attachments.map((attachment) => {
         const attachmentId: Ulid = deps.ids.ulid();
         const key = BlobKeys.attachment(ctx.accountId, messageUlid, attachmentId);
-        await deps.blobs.put(ctx, key, attachment.content, {
-          ...(attachment.mime === null ? {} : { contentType: attachment.mime }),
-          ...(attachment.filename === null ? {} : { filename: attachment.filename }),
-        });
-        attachments.push({
+        return {
           id: attachmentId,
           filename: attachment.filename,
           mime: attachment.mime,
@@ -195,16 +220,22 @@ export function createIngestionService(deps: IngestionDeps) {
           size: attachment.content.byteLength,
           inline: attachment.inline,
           storageKey: key,
-        });
-      }
+        };
+      });
 
       const message = Message.create({
         id: messageUlid,
         accountId: ctx.accountId,
         inboxId: inbox.id,
+        identityId: inbox.identityId,
         rfcMessageId,
+        // SMTP RCPT TO is adapter-attested. The MIME To header can be absent,
+        // spoofed, or name a different address (BCC/forwarding), so it cannot
+        // identify this placement for deduplication.
+        envelopeRecipient: recipient.routeKey,
         threadId: thread.threadId,
         direction: "inbound",
+        origin: input.origin ?? "email",
         fromHeader: parsed.fromHeader,
         from: parsed.from,
         toHeader: parsed.toHeader,
@@ -228,8 +259,52 @@ export function createIngestionService(deps: IngestionDeps) {
         receivedAt: now,
       });
 
-      const { stored } = await deps.messages.insert(ctx, message);
+      // Validate/build the D1 aggregate before creating any object. A hostile
+      // oversized subject must not leak raw/body/attachment blobs on every
+      // Email Routing retry.
+      const writtenKeys: string[] = [];
+      let stored: boolean;
+      try {
+        await deps.blobs.put(ctx, rawKey, input.raw, { contentType: "message/rfc822" });
+        writtenKeys.push(rawKey);
+        await deps.blobs.put(
+          ctx,
+          bodyKey,
+          encodeStoredMessageBody({ bodyText: message.bodyText, bodyHtml: message.bodyHtml }),
+          { contentType: "application/json" },
+        );
+        writtenKeys.push(bodyKey);
+        for (const [index, meta] of message.attachments.entries()) {
+          const attachment = parsed.attachments[index]!;
+          await deps.blobs.put(ctx, meta.storageKey, attachment.content, {
+            ...(meta.mime === null ? {} : { contentType: meta.mime }),
+            ...(meta.filename === null ? {} : { filename: meta.filename }),
+          });
+          writtenKeys.push(meta.storageKey);
+        }
+        ({ stored } = await deps.messages.insert(ctx, message, { bodyKey }));
+      } catch (error) {
+        // D1 may have committed even when the response was lost. Re-read by
+        // the deterministic placement before deleting objects; a possible
+        // orphan is recoverable, a committed row pointing at deleted R2 is not.
+        try {
+          const committed = await deps.messages.findPlacement(
+            ctx,
+            inbox.id,
+            recipient.routeKey,
+            rfcMessageId,
+          );
+          if (committed === null) await deps.blobs.delete(ctx, writtenKeys);
+        } catch {
+          // Unknown commit outcome: preserve blobs for the next retry/sweep.
+        }
+        throw error;
+      }
       if (!stored) {
+        // These keys were minted for this placement, so deleting them cannot
+        // affect the original row that won the uniqueness race. Without this,
+        // every at-least-once redelivery leaks one raw object and every attachment.
+        await deps.blobs.delete(ctx, writtenKeys);
         await deps.events.publish([
           ...events,
           {
@@ -240,6 +315,16 @@ export function createIngestionService(deps: IngestionDeps) {
             inboxId: inbox.id,
           },
         ]);
+        // Storage may have committed but its first notify RPC failed. A
+        // redelivery is our durable chance to wake any listener that completed
+        // its initial look-back just before that commit.
+        const winner = await deps.messages.findPlacement(
+          ctx,
+          inbox.id,
+          recipient.routeKey,
+          rfcMessageId,
+        );
+        if (winner !== null) await deps.waiter.notify(ctx, winner);
         return { outcome: "duplicate", rfcMessageId };
       }
 

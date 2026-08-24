@@ -57,13 +57,19 @@ describe("delivery.send with attachments", () => {
       attachments: [attachment()],
     });
 
-    await dispatch(h.ctx, { deliveryId: result.delivery.id });
+    const outcome = await dispatch(h.ctx, { deliveryId: result.delivery.id });
 
     const [dispatched] = h.transport.sent;
     expect(dispatched?.attachments).toHaveLength(1);
     expect(dispatched?.attachments[0]?.filename).toBe("report.csv");
     // Decoded exactly once, on the far side of the queue.
     expect(new TextDecoder().decode(dispatched?.attachments[0]?.content)).toBe("hello");
+    if (outcome.outcome !== "dispatched") throw new Error("expected dispatched");
+    expect(outcome.sentCopy.attachments).toHaveLength(1);
+    const archivedAttachment = outcome.sentCopy.attachments[0]!;
+    const archivedBytes = await h.blobs.get(h.ctx, archivedAttachment.storageKey);
+    expect(archivedBytes).not.toBeNull();
+    expect(new TextDecoder().decode(archivedBytes!)).toBe("hello");
   });
 
   it("hands the same decoded bytes to the archive as to the transport", async () => {
@@ -213,9 +219,10 @@ describe("delivery.preview", () => {
       now: h.clock.now(),
     });
     await h.deps.identities.insert(h.ctx, identity);
+    const inbox = await h.seedInbox(`held@${TEST_DOMAIN}`, { identityId: identity.id });
 
     const result = await send(h.asIdentity(identity.id), {
-      from: FROM,
+      from: inbox.address,
       to: ["user@corp.com"],
       subject: "Needs a human",
       text: "Please check.",

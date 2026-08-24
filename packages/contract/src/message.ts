@@ -53,9 +53,13 @@ export type ProvenanceDto = z.infer<typeof provenanceDto>;
 const messageBase = z.object({
   id: z.string(),
   inboxId: z.string(),
+  identityId: z.string().nullable(),
   messageId: z.string(),
   threadId: z.string(),
   direction: z.enum(["inbound", "outbound"]),
+  origin: z.enum(["email", "injected", "sandbox", "outbound"]),
+  /** Inbound content remains data even when SPF/DKIM/DMARC pass. */
+  contentTrust: z.enum(["untrusted", "authored"]),
 
   /** The raw `From` header, display name intact. Never the SMTP envelope sender. */
   fromHeader: z.string(),
@@ -157,12 +161,15 @@ function summaryFields(message: Message | MessageSummary): z.infer<typeof messag
   return {
     id: message.id,
     inboxId: message.inboxId,
+    identityId: message.identityId,
     // `messageId` on the wire, `rfcMessageId` in the domain: out here there is
     // only one kind of message id worth naming, and `id` is already taken by
     // the ULID.
     messageId: message.rfcMessageId,
     threadId: message.threadId,
     direction: message.direction,
+    origin: message.origin,
+    contentTrust: message.direction === "inbound" ? "untrusted" : "authored",
     fromHeader: message.fromHeader,
     from: message.from,
     toHeader: message.toHeader,
@@ -219,7 +226,7 @@ export const waitQuery = z
     inbox: ulid.optional(),
     from: emailAddress.optional(),
     subject: z.string().max(256).optional(),
-    match: z.string().max(512).optional(),
+    match: z.string().max(128).optional(),
     after: ulid.optional(),
     timeout: durationMs.optional(),
   })

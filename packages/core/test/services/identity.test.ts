@@ -15,6 +15,14 @@ beforeEach(() => {
   h = createHarness();
 });
 
+describe("listEnvironments", () => {
+  it("is control-plane data and requires admin", async () => {
+    await expect(
+      h.services.identity.listEnvironments(h.withScopes(["message:read"])),
+    ).rejects.toMatchObject({ code: "forbidden", details: { required: "admin" } });
+  });
+});
+
 describe("createIdentity", () => {
   it("needs admin, so an agent cannot widen its own limits", async () => {
     // The credential that declares limits has to be a different one from the
@@ -79,6 +87,17 @@ describe("createKey", () => {
       h.services.identity.createKey(h.ctx, {
         name: "oops",
         scopes: ["admin"],
+        identityName: "bot",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("refuses to let an identity approve its own sends", async () => {
+    await h.services.identity.createIdentity(h.ctx, { name: "bot", requireApproval: true });
+    await expect(
+      h.services.identity.createKey(h.ctx, {
+        name: "self approver",
+        scopes: ["message:approve"],
         identityName: "bot",
       }),
     ).rejects.toMatchObject({ code: "invalid_argument" });

@@ -286,6 +286,7 @@ export function runRepositoryConformance(
           bodyText: "Your verification code is 483920.",
           bodyHtml: "<p>Your verification code is 483920.</p>",
           to: [EmailAddress.parse(`agent@${CONFORMANCE_DOMAIN}`)],
+          envelopeRecipient: EmailAddress.parse(`catch-all-target+run42@${CONFORMANCE_DOMAIN}`),
           cc: [EmailAddress.parse("cc@corp.com")],
           bcc: [],
           replyTo: EmailAddress.parse("support@corp.com"),
@@ -320,12 +321,55 @@ export function runRepositoryConformance(
         const first = aMessage({ subject: "original" });
         expect(await s.messages.insert(ALICE, first)).toEqual({ stored: true });
 
-        const replay = aMessage({ subject: "tampered", rfcMessageId: first.rfcMessageId });
+        const replay = aMessage({
+          subject: "tampered",
+          inboxId: first.inboxId,
+          rfcMessageId: first.rfcMessageId,
+        });
         expect(await s.messages.insert(ALICE, replay)).toEqual({ stored: false });
 
         // The first one stands. A redelivery must not be able to rewrite history.
         expect((await s.messages.findById(ALICE, first.id))?.subject).toBe("original");
         expect(await s.messages.findById(ALICE, replay.id)).toBeNull();
+      });
+
+      it("stores the same Message-ID when it targets a different inbox", async () => {
+        const first = aMessage();
+        const second = aMessage({ rfcMessageId: first.rfcMessageId });
+
+        expect(await s.messages.insert(ALICE, first)).toEqual({ stored: true });
+        expect(await s.messages.insert(ALICE, second)).toEqual({ stored: true });
+      });
+
+      it("stores the same Message-ID for two envelope routes into one inbox", async () => {
+        const inboxId = nextId();
+        const rfcMessageId = RfcMessageId.parse("fanout@corp.com");
+        const first = aMessage({
+          inboxId,
+          rfcMessageId,
+          envelopeRecipient: EmailAddress.parse(`first+shared@${CONFORMANCE_DOMAIN}`),
+          tag: "shared",
+        });
+        const second = aMessage({
+          inboxId,
+          rfcMessageId,
+          envelopeRecipient: EmailAddress.parse(`second+shared@${CONFORMANCE_DOMAIN}`),
+          tag: "shared",
+        });
+
+        expect(await s.messages.insert(ALICE, first)).toEqual({ stored: true });
+        expect(await s.messages.insert(ALICE, second)).toEqual({ stored: true });
+      });
+
+      it("deduplicates a replay of the same outbound archive copy", async () => {
+        const inboxId = nextId();
+        const rfcMessageId = RfcMessageId.parse("sent-copy@corp.com");
+        const first = aMessage({ inboxId, rfcMessageId, direction: "outbound" });
+        const replay = aMessage({ inboxId, rfcMessageId, direction: "outbound" });
+
+        expect(first.envelopeRecipient).toBeNull();
+        expect(await s.messages.insert(ALICE, first)).toEqual({ stored: true });
+        expect(await s.messages.insert(ALICE, replay)).toEqual({ stored: false });
       });
 
       it("lets two accounts hold the same Message-ID", async () => {
@@ -349,6 +393,33 @@ export function runRepositoryConformance(
         expect(found.get(root.rfcMessageId)).toBe(root.threadId);
         expect(found.has("never-seen@corp.com")).toBe(false);
         expect(await s.messages.findThreadIds(ALICE, [])).toEqual(new Map());
+      });
+
+      it("scopes inbound ancestor resolution to its destination inbox", async () => {
+        const rfcMessageId = RfcMessageId.parse("shared-parent@corp.com");
+        const firstInbox = nextId();
+        const secondInbox = nextId();
+        const first = aMessage({
+          inboxId: firstInbox,
+          rfcMessageId,
+          threadId: ThreadId.parse("first-thread@corp.com"),
+        });
+        const second = aMessage({
+          inboxId: secondInbox,
+          rfcMessageId,
+          threadId: ThreadId.parse("second-thread@corp.com"),
+        });
+        await s.messages.insert(ALICE, first);
+        await s.messages.insert(ALICE, second);
+
+        expect(
+          (await s.messages.findThreadIds(ALICE, [rfcMessageId], firstInbox)).get(rfcMessageId),
+        ).toBe(first.threadId);
+        expect(
+          (await s.messages.findThreadIds(ALICE, [rfcMessageId], secondInbox)).get(
+            rfcMessageId,
+          ),
+        ).toBe(second.threadId);
       });
 
       it("summarizes without the bodies", async () => {
@@ -548,13 +619,19 @@ export function runRepositoryConformance(
         });
         const plain = aMessage({ inboxId, rawKey: "raw/alice/two.eml" });
         const elsewhere = aMessage({ rawKey: "raw/alice/three.eml" });
-        for (const m of [withAttachment, plain, elsewhere]) await s.messages.insert(ALICE, m);
+        await s.messages.insert(ALICE, withAttachment, { bodyKey: "body/alice/one.json" });
+        for (const m of [plain, elsewhere]) await s.messages.insert(ALICE, m);
 
         const { storageKeys } = await s.messages.deleteByInbox(ALICE, inboxId);
         // Missing a key here does not break anything visibly — it just leaves an
         // object paid for forever, which is why it is asserted exactly.
         expect(storageKeys.sort()).toEqual(
-          ["att/alice/one/a", "raw/alice/one.eml", "raw/alice/two.eml"].sort(),
+          [
+            "att/alice/one/a",
+            "body/alice/one.json",
+            "raw/alice/one.eml",
+            "raw/alice/two.eml",
+          ].sort(),
         );
         expect(await s.messages.findById(ALICE, plain.id)).toBeNull();
         expect(await s.messages.findById(ALICE, elsewhere.id)).not.toBeNull();
@@ -575,6 +652,33 @@ export function runRepositoryConformance(
     });
 
     describe("deliveries", () => {
+      it("updates a delivery only from the expected state", async () => {
+        const pending = Delivery.requireApproval(aDelivery(), "review", NOW);
+        await s.deliveries.insert(ALICE, pending);
+        const approved = Delivery.approve(pending, "test:reviewer", NOW);
+
+        expect(await s.deliveries.updateIfStatus(ALICE, approved, "pending_approval")).toBe(
+          true,
+        );
+        expect(await s.deliveries.updateIfStatus(ALICE, approved, "pending_approval")).toBe(
+          false,
+        );
+        expect((await s.deliveries.findById(ALICE, pending.id))?.status).toBe("queued");
+      });
+
+      it("stages and removes a dispatch hand-off", async () => {
+        const delivery = Delivery.enqueue(aDelivery(), NOW);
+        await s.deliveries.insert(ALICE, delivery, { stageDispatch: true });
+
+        expect(await s.deliveries.listStagedDispatches(ALICE, 10)).toEqual([
+          { deliveryId: delivery.id, createdAt: delivery.createdAt },
+        ]);
+        expect(await s.deliveries.listStagedDispatches(BOB, 10)).toEqual([]);
+
+        await s.deliveries.unstageDispatch(ALICE, delivery.id);
+        expect(await s.deliveries.listStagedDispatches(ALICE, 10)).toEqual([]);
+      });
+
       it("round-trips every field and persists a transition", async () => {
         const delivery = aDelivery({
           idempotencyKey: "run-42",
@@ -584,7 +688,11 @@ export function runRepositoryConformance(
         expect(await s.deliveries.findById(ALICE, delivery.id)).toEqual(delivery);
 
         const queued = Delivery.enqueue(delivery, NOW);
-        const dispatched = Delivery.markDispatched(queued, "prov-1", NOW);
+        const dispatched = Delivery.markDispatched(
+          Delivery.beginDispatch(queued, NOW),
+          "prov-1",
+          NOW,
+        );
         await s.deliveries.update(ALICE, dispatched);
 
         const stored = await s.deliveries.findById(ALICE, delivery.id);
@@ -595,7 +703,10 @@ export function runRepositoryConformance(
 
       it("finds a send by its idempotency key and by the provider's id", async () => {
         const delivery = Delivery.markDispatched(
-          Delivery.enqueue(aDelivery({ idempotencyKey: "run-42" }), NOW),
+          Delivery.beginDispatch(
+            Delivery.enqueue(aDelivery({ idempotencyKey: "run-42" }), NOW),
+            NOW,
+          ),
           "prov-9",
           NOW,
         );
@@ -608,6 +719,28 @@ export function runRepositoryConformance(
           delivery.id,
         );
         expect(await s.deliveries.findByIdempotencyKey(ALICE, "never-used")).toBeNull();
+      });
+
+      it("scopes idempotency keys to the sending identity", async () => {
+        const aliceIdentity = nextId();
+        const bobIdentity = nextId();
+        const alice = aDelivery({ idempotencyKey: "run-1", identityId: aliceIdentity });
+        const bob = aDelivery({ idempotencyKey: "run-1", identityId: bobIdentity });
+
+        expect(await s.deliveries.insert(ALICE, alice)).toBe("inserted");
+        expect(await s.deliveries.insert(ALICE, bob)).toBe("inserted");
+        expect(
+          await s.deliveries.insert(
+            ALICE,
+            aDelivery({
+              idempotencyKey: "run-1",
+              identityId: aliceIdentity,
+            }),
+          ),
+        ).toBe("duplicate");
+        expect((await s.deliveries.findByIdempotencyKey(ALICE, "run-1", bobIdentity))?.id).toBe(
+          bob.id,
+        );
       });
 
       it("allows many sends with no idempotency key at all", async () => {
@@ -668,18 +801,27 @@ export function runRepositoryConformance(
           ["a", "deferred", 0],
           ["b", "deferred", 1000],
         ] as const) {
-          await s.deliveries.appendDeliveryEvent(ALICE, {
-            id: `01JEVT${id.toUpperCase().padStart(20, "0")}` as Ulid,
-            deliveryId: delivery.id,
-            providerMessageId: "prov-1",
-            recipient: EmailAddress.parse("human@corp.com"),
-            type,
-            terminal: type === "delivered",
-            smtpCode: "250",
-            smtpResponse: "ok",
-            occurredAt: at(offset),
-            raw: '{"provider":"payload"}',
-          });
+          expect(
+            await s.deliveries.appendDeliveryEvent(ALICE, {
+              id: `01JEVT${id.toUpperCase().padStart(20, "0")}` as Ulid,
+              eventId: `provider-event-${id}`,
+              deliveryId: delivery.id,
+              providerMessageId: "prov-1",
+              recipient: EmailAddress.parse("human@corp.com"),
+              sourceDomain: "mail.example.com",
+              sourceZoneId: "zone-1",
+              type,
+              terminal: type === "delivered",
+              smtpCode: "250",
+              smtpEnhancedCode: "2.0.0",
+              smtpResponse: "ok",
+              bounceType: null,
+              bounceClassification: null,
+              bounceReason: null,
+              occurredAt: at(offset),
+              raw: '{"provider":"payload"}',
+            }),
+          ).toBe(true);
         }
 
         const events = await s.deliveries.listDeliveryEvents(ALICE, delivery.id);
@@ -690,11 +832,92 @@ export function runRepositoryConformance(
         ]);
         expect(events[2]?.terminal).toBe(true);
         expect(events[0]?.raw).toBe('{"provider":"payload"}');
+        expect(events[0]).toMatchObject({
+          eventId: "provider-event-a",
+          sourceDomain: "mail.example.com",
+          sourceZoneId: "zone-1",
+          smtpEnhancedCode: "2.0.0",
+        });
+
+        expect(
+          await s.deliveries.appendDeliveryEvent(ALICE, {
+            ...events[0]!,
+            id: nextId(),
+          }),
+        ).toBe(false);
+        expect(await s.deliveries.listDeliveryEvents(ALICE, delivery.id)).toHaveLength(3);
+      });
+
+      it("distinguishes completed events from live leases and reclaims stale claims", async () => {
+        const delivery = aDelivery();
+        await s.deliveries.insert(ALICE, delivery);
+        const eventId = `provider-event-claim-${nextId()}`;
+        await s.deliveries.appendDeliveryEvent(ALICE, {
+          id: nextId(),
+          eventId,
+          deliveryId: delivery.id,
+          providerMessageId: "prov-claim",
+          recipient: EmailAddress.parse("human@corp.com"),
+          sourceDomain: "mail.example.com",
+          sourceZoneId: "zone-1",
+          type: "delivered",
+          terminal: true,
+          smtpCode: "250",
+          smtpEnhancedCode: "2.0.0",
+          smtpResponse: "ok",
+          bounceType: null,
+          bounceClassification: null,
+          bounceReason: null,
+          occurredAt: NOW,
+          raw: null,
+        });
+
+        expect(
+          await s.deliveries.claimDeliveryEvent(
+            ALICE,
+            eventId,
+            NOW,
+            new Date(NOW.getTime() - 5 * 60 * 1000),
+          ),
+        ).toBe("claimed");
+
+        const oneMinuteLater = new Date(NOW.getTime() + 60 * 1000);
+        expect(
+          await s.deliveries.claimDeliveryEvent(
+            ALICE,
+            eventId,
+            oneMinuteLater,
+            new Date(oneMinuteLater.getTime() - 5 * 60 * 1000),
+          ),
+        ).toBe("busy");
+
+        const sixMinutesLater = new Date(NOW.getTime() + 6 * 60 * 1000);
+        expect(
+          await s.deliveries.claimDeliveryEvent(
+            ALICE,
+            eventId,
+            sixMinutesLater,
+            new Date(sixMinutesLater.getTime() - 5 * 60 * 1000),
+          ),
+        ).toBe("claimed");
+
+        await s.deliveries.completeDeliveryEvent(ALICE, eventId, sixMinutesLater);
+        expect(
+          await s.deliveries.claimDeliveryEvent(
+            ALICE,
+            eventId,
+            new Date(sixMinutesLater.getTime() + 1),
+            sixMinutesLater,
+          ),
+        ).toBe("processed");
       });
 
       it("shows one account nothing belonging to another", async () => {
         const delivery = Delivery.markDispatched(
-          Delivery.enqueue(aDelivery({ idempotencyKey: "k" }), NOW),
+          Delivery.beginDispatch(
+            Delivery.enqueue(aDelivery({ idempotencyKey: "k" }), NOW),
+            NOW,
+          ),
           "prov-1",
           NOW,
         );

@@ -1,5 +1,5 @@
-import type { IngestionService } from "@core/application";
-import { eventsOfType } from "@core/domain";
+import { type IngestionService, MAX_INBOUND_MESSAGE_BYTES } from "@core/application";
+import { BlobKeys, decodeStoredMessageBody, eventsOfType } from "@core/domain";
 import type { Harness } from "@core/testing";
 import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,49 @@ beforeEach(() => {
 const PASSING_AUTH = "mx.cloudflare.net; spf=pass; dkim=pass; dmarc=pass";
 
 describe("ingestion.ingest", () => {
+  it("rejects a message larger than the inbound transport limit before parsing", async () => {
+    await expect(
+      ingest(h.ctx, {
+        recipient: `support@${TEST_DOMAIN}`,
+        envelopeFrom: "sender@corp.com",
+        raw: new Uint8Array(MAX_INBOUND_MESSAGE_BYTES + 1),
+      }),
+    ).rejects.toMatchObject({
+      code: "message_too_large",
+      details: { max: MAX_INBOUND_MESSAGE_BYTES },
+    });
+    expect(h.blobs.objects.size).toBe(0);
+  });
+
+  it("requires the dedicated injection scope", async () => {
+    await expect(
+      ingest(h.withScopes(["message:read"]), {
+        recipient: `support@${TEST_DOMAIN}`,
+        envelopeFrom: "sender@corp.com",
+        raw: rawEmail({
+          from: "sender@corp.com",
+          to: `support@${TEST_DOMAIN}`,
+          subject: "Forged",
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "forbidden", details: { required: "message:inject" } });
+  });
+
+  it("does not let one identity inject into another identity's inbox", async () => {
+    const alice = await h.services.identity.createIdentity(h.ctx, { name: "alice" });
+    const bob = await h.services.identity.createIdentity(h.ctx, { name: "bob" });
+    const inbox = await h.seedInbox(`alice@${TEST_DOMAIN}`, { identityId: alice.id });
+
+    const result = await ingest(h.asIdentity(bob.id, ["message:inject"]), {
+      recipient: inbox.address,
+      envelopeFrom: "sender@corp.com",
+      raw: rawEmail({ from: "sender@corp.com", to: inbox.address, messageId: "forged@x" }),
+    });
+
+    expect(result).toEqual({ outcome: "unroutable", reason: "no_such_inbox" });
+    expect(h.messages.rows.get(h.ctx.accountId) ?? []).toEqual([]);
+  });
+
   it("stores a message into the addressed inbox", async () => {
     const inbox = await h.seedInbox(`support@${TEST_DOMAIN}`);
     const result = await ingest(h.ctx, {
@@ -54,6 +97,61 @@ describe("ingestion.ingest", () => {
     if (result.outcome !== "stored") throw new Error(`expected stored, got ${result.outcome}`);
     expect(result.message.inboxId).toBe(inbox.id);
     expect(result.message.tag).toBe("run42");
+    expect(result.message.envelopeRecipient).toBe(`agent-7+run42@${TEST_DOMAIN}`);
+  });
+
+  it("keeps +tag routes distinct while deduplicating a retry to the same tag", async () => {
+    const inbox = await h.seedInbox(`agent-7@${TEST_DOMAIN}`);
+    // Keep the MIME bytes identical on purpose. Deduplication must use SMTP
+    // RCPT TO, not the spoofable/possibly unrelated To header.
+    const raw = rawEmail({
+      from: "x@corp.com",
+      to: inbox.address,
+      messageId: "tag-fanout@x",
+    });
+    const deliver = (recipient: string) =>
+      ingest(h.ctx, { recipient, envelopeFrom: "x@corp.com", raw });
+
+    expect((await deliver(`agent-7+run-one@${TEST_DOMAIN}`)).outcome).toBe("stored");
+    expect((await deliver(`agent-7+run-two@${TEST_DOMAIN}`)).outcome).toBe("stored");
+    expect((await deliver(`Agent-7+RUN-ONE@${TEST_DOMAIN}`)).outcome).toBe("duplicate");
+
+    const rows = h.messages.rows.get(h.ctx.accountId) ?? [];
+    expect(rows.map((row) => row.envelopeRecipient).sort()).toEqual([
+      `agent-7+run-one@${TEST_DOMAIN}`,
+      `agent-7+run-two@${TEST_DOMAIN}`,
+    ]);
+  });
+
+  it("keeps distinct catch-all recipients that share one quarantine inbox", async () => {
+    const quarantine = await h.seedInbox(`quarantine@${TEST_DOMAIN}`);
+    h.domains.routings = [
+      {
+        domain: TEST_DOMAIN,
+        catchAllMode: "store",
+        catchAllInboxId: quarantine.id,
+        autocreatePattern: null,
+        sendingStatus: "verified",
+        dkimSelector: null,
+      },
+    ];
+    const raw = rawEmail({
+      from: "x@corp.com",
+      to: "undisclosed@corp.com",
+      messageId: "catch-all-fanout@x",
+    });
+    const deliver = (recipient: string) =>
+      ingest(h.ctx, { recipient, envelopeFrom: "x@corp.com", raw });
+
+    expect((await deliver(`first@${TEST_DOMAIN}`)).outcome).toBe("stored");
+    expect((await deliver(`second@${TEST_DOMAIN}`)).outcome).toBe("stored");
+    expect((await deliver(`FIRST@${TEST_DOMAIN}`)).outcome).toBe("duplicate");
+
+    const rows = h.messages.rows.get(h.ctx.accountId) ?? [];
+    expect(rows.map((row) => row.envelopeRecipient).sort()).toEqual([
+      `first@${TEST_DOMAIN}`,
+      `second@${TEST_DOMAIN}`,
+    ]);
   });
 
   it("archives the raw MIME before the row exists", async () => {
@@ -76,6 +174,68 @@ describe("ingestion.ingest", () => {
     expect(stored).toEqual(raw);
   });
 
+  it("stores the complete decoded body separately for D1-backed repositories", async () => {
+    await h.seedInbox(`support@${TEST_DOMAIN}`);
+    const body = "The complete body stays outside D1.";
+    const result = await ingest(h.ctx, {
+      recipient: `support@${TEST_DOMAIN}`,
+      envelopeFrom: "a@corp.com",
+      raw: rawEmail({
+        from: "a@corp.com",
+        to: `support@${TEST_DOMAIN}`,
+        messageId: "body-r2@x",
+        body,
+      }),
+    });
+
+    if (result.outcome !== "stored") throw new Error("expected stored");
+    const key = BlobKeys.messageBody(h.ctx.accountId, result.message.id);
+    const bytes = await h.blobs.get(h.ctx, key);
+    expect(bytes).not.toBeNull();
+    expect(decodeStoredMessageBody(bytes!)).toEqual({ bodyText: body, bodyHtml: null });
+  });
+
+  it("cleans already-written objects when a later R2 write fails", async () => {
+    await h.seedInbox(`support@${TEST_DOMAIN}`);
+    const put = h.blobs.put.bind(h.blobs);
+    let calls = 0;
+    h.blobs.put = async (...args: Parameters<typeof h.blobs.put>) => {
+      calls += 1;
+      if (calls === 2) throw new Error("body R2 unavailable");
+      await put(...args);
+    };
+
+    await expect(
+      ingest(h.ctx, {
+        recipient: `support@${TEST_DOMAIN}`,
+        envelopeFrom: "a@corp.com",
+        raw: rawEmail({
+          from: "a@corp.com",
+          to: `support@${TEST_DOMAIN}`,
+          messageId: "r2-failure@x",
+        }),
+      }),
+    ).rejects.toThrow("body R2 unavailable");
+    expect(h.blobs.objects.size).toBe(0);
+  });
+
+  it("validates oversized metadata before writing any blobs", async () => {
+    await h.seedInbox(`support@${TEST_DOMAIN}`);
+    await expect(
+      ingest(h.ctx, {
+        recipient: `support@${TEST_DOMAIN}`,
+        envelopeFrom: "a@corp.com",
+        raw: rawEmail({
+          from: "a@corp.com",
+          to: `support@${TEST_DOMAIN}`,
+          messageId: "oversized-subject@x",
+          subject: "x".repeat(2001),
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_argument" });
+    expect(h.blobs.objects.size).toBe(0);
+  });
+
   it("deduplicates a redelivered message instead of storing it twice", async () => {
     await h.seedInbox(`support@${TEST_DOMAIN}`);
     const raw = rawEmail({
@@ -86,7 +246,9 @@ describe("ingestion.ingest", () => {
     const input = { recipient: `support@${TEST_DOMAIN}`, envelopeFrom: "a@corp.com", raw };
 
     expect((await ingest(h.ctx, input)).outcome).toBe("stored");
+    const storedObjects = h.blobs.objects.size;
     expect((await ingest(h.ctx, input)).outcome).toBe("duplicate");
+    expect(h.blobs.objects.size).toBe(storedObjects);
     expect(eventsOfType(h.events.published, "message.duplicate")).toHaveLength(1);
   });
 
@@ -211,5 +373,28 @@ describe("ingestion.ingest", () => {
     if (result.outcome !== "stored") throw new Error("expected stored");
     // Without an id it could be neither deduplicated nor threaded by anyone.
     expect(result.message.rfcMessageId).toContain(`@${TEST_DOMAIN}`);
+  });
+
+  it("deduplicates a redelivery that omitted Message-ID", async () => {
+    await h.seedInbox(`support@${TEST_DOMAIN}`);
+    const raw = new TextEncoder().encode(
+      [`From: a@corp.com`, `To: support@${TEST_DOMAIN}`, `Subject: no id`, "", "body"].join(
+        "\r\n",
+      ),
+    );
+    const input = {
+      recipient: `support@${TEST_DOMAIN}`,
+      envelopeFrom: "a@corp.com",
+      raw,
+    };
+
+    const first = await ingest(h.ctx, input);
+    const replay = await ingest(h.ctx, input);
+
+    expect(first.outcome).toBe("stored");
+    expect(replay.outcome).toBe("duplicate");
+    if (first.outcome === "stored" && replay.outcome === "duplicate") {
+      expect(replay.rfcMessageId).toBe(first.message.rfcMessageId);
+    }
   });
 });

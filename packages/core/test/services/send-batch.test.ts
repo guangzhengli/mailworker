@@ -83,8 +83,12 @@ describe("delivery.sendBatch", () => {
     // read the same pre-batch count of 0 and a quota of 2 would admit all five.
     const identity = await seedIdentity({ dailySendQuota: 2 });
     const ctx = h.asIdentity(identity.id);
+    const inbox = await h.seedInbox(`metered@${TEST_DOMAIN}`, { identityId: identity.id });
 
-    const items = await sendBatch(ctx, [message(), message(), message(), message(), message()]);
+    const items = await sendBatch(
+      ctx,
+      Array.from({ length: 5 }, () => message({ from: inbox.address })),
+    );
 
     expect(items.filter((item) => item.outcome === "queued")).toHaveLength(2);
     const refused = items.filter((item) => item.outcome === "error");
@@ -107,7 +111,11 @@ describe("delivery.sendBatch", () => {
 
   it("holds an approval-gated message as its own item", async () => {
     const identity = await seedIdentity({ requireApproval: true });
-    const items = await sendBatch(h.asIdentity(identity.id), [message(), message()]);
+    const inbox = await h.seedInbox(`reviewed@${TEST_DOMAIN}`, { identityId: identity.id });
+    const items = await sendBatch(h.asIdentity(identity.id), [
+      message({ from: inbox.address }),
+      message({ from: inbox.address }),
+    ]);
 
     expect(items.every((item) => item.outcome === "pending_approval")).toBe(true);
     expect(h.dispatchQueue.enqueued).toHaveLength(0);
@@ -152,11 +160,15 @@ describe("delivery metadata", () => {
     // The one that matters: a bounce arriving days later, on a webhook, still
     // carries enough to route it without a lookup.
     await h.services.delivery.recordEvent(h.ctx, {
+      eventId: "evt-metadata-bounce",
       type: "bounced",
       providerMessageId: "prov-1",
       recipient: "user@corp.com" as never,
+      sourceDomain: TEST_DOMAIN,
+      sourceZoneId: "zone-1",
       occurredAt: h.clock.now(),
       terminal: true,
+      bounceType: "hard",
     });
     expect(eventsOfType(h.events.published, "delivery.status_changed")[0]?.metadata).toEqual(
       metadata,

@@ -69,13 +69,14 @@ describe("MailboxAddress", () => {
     expect(parsed.localPart).toBe("agent-7");
     expect(parsed.tag).toBe("run42");
     expect(parsed.matchKey).toBe("agent-7@mail.example.com");
+    expect(parsed.routeKey).toBe("agent-7+run42@mail.example.com");
     expect(parsed.original).toBe("agent-7+run42@mail.example.com");
   });
 
   it("lowercases the local part for OUR inboxes so near-duplicates collapse", () => {
-    expect(MailboxAddress.parse("Agent-7@mail.example.com").matchKey).toBe(
-      "agent-7@mail.example.com",
-    );
+    const parsed = MailboxAddress.parse("Agent-7+Run42@mail.example.com");
+    expect(parsed.matchKey).toBe("agent-7@mail.example.com");
+    expect(parsed.routeKey).toBe("agent-7+run42@mail.example.com");
   });
 
   it("treats an empty tag as no tag", () => {

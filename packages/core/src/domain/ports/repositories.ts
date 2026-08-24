@@ -55,6 +55,8 @@ export interface InboxRepository {
 export interface ListInboxesQuery extends PageRequest {
   readonly kind?: "ephemeral" | "persistent";
   readonly domain?: string;
+  /** Internal resource grant attached by the service, never a public query field. */
+  readonly identityId?: Ulid;
   /**
    * Exclude inboxes already expired at this instant. Soft-deleted ones are
    * always excluded.
@@ -69,13 +71,25 @@ export interface ListInboxesQuery extends PageRequest {
 
 export interface MessageRepository {
   /**
-   * Insert, relying on the `(account_id, rfc_message_id)` unique constraint for
-   * deduplication. Returns `stored: false` on a duplicate instead of throwing —
-   * a retried inbound delivery is normal traffic, not an error.
+   * Insert, relying on the
+   * `(account_id, inbox_id, envelope_recipient, rfc_message_id)` unique
+   * constraint for deduplication. One RFC message may legitimately target two
+   * local inboxes, two +tags, or two catch-all recipients; only a retry of the
+   * same envelope placement is a duplicate.
    */
-  insert(ctx: Caller, message: Message): Promise<{ stored: boolean }>;
+  insert(
+    ctx: Caller,
+    message: Message,
+    options?: { readonly bodyKey?: string | null },
+  ): Promise<{ stored: boolean }>;
   findById(ctx: Caller, id: Ulid): Promise<Message | null>;
   findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null>;
+  findPlacement(
+    ctx: Caller,
+    inboxId: Ulid,
+    envelopeRecipient: EmailAddress | null,
+    rfcId: RfcMessageId,
+  ): Promise<Message | null>;
   /**
    * Thread ids for whichever of `rfcIds` we already have. One query for the whole
    * candidate set, so `ThreadingPolicy` can stay pure.
@@ -83,6 +97,8 @@ export interface MessageRepository {
   findThreadIds(
     ctx: Caller,
     rfcIds: readonly RfcMessageId[],
+    /** Inbound resolution must not borrow a same-id placement from another inbox. */
+    inboxId?: Ulid,
   ): Promise<ReadonlyMap<string, ThreadId>>;
   list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>>;
   listThread(ctx: Caller, threadId: ThreadId): Promise<Message[]>;
@@ -110,13 +126,33 @@ export interface ListMessagesQuery extends PageRequest {
   readonly q?: string;
   /** Only messages with an id greater than this — used by `wait`. */
   readonly after?: Ulid;
+  /** Internal resource grant attached by the service, never a public query field. */
+  readonly identityId?: Ulid;
 }
 
 export interface DeliveryRepository {
-  insert(ctx: Caller, delivery: Delivery): Promise<void>;
+  /**
+   * Persist a delivery, optionally staging its queue hand-off atomically.
+   * Returns false when its idempotency key already belongs to another row.
+   */
+  insert(
+    ctx: Caller,
+    delivery: Delivery,
+    options?: DeliveryInsertOptions,
+  ): Promise<DeliveryInsertResult>;
   update(ctx: Caller, delivery: Delivery): Promise<void>;
+  /** Attach archive provenance without overwriting a newer provider status. */
+  attachMessageId(ctx: Caller, deliveryId: Ulid, messageId: Ulid, at: Date): Promise<void>;
+  /** Compare-and-set used by approval so two reviewers cannot both release one send. */
+  updateIfStatus(ctx: Caller, delivery: Delivery, expected: DeliveryStatus): Promise<boolean>;
+  /** Approval CAS; D1's queued-status trigger stages the outbox atomically. */
+  approveAndStage(ctx: Caller, delivery: Delivery): Promise<boolean>;
   findById(ctx: Caller, id: Ulid): Promise<Delivery | null>;
-  findByIdempotencyKey(ctx: Caller, key: string): Promise<Delivery | null>;
+  findByIdempotencyKey(
+    ctx: Caller,
+    key: string,
+    identityId?: Ulid | null,
+  ): Promise<Delivery | null>;
   /** Correlates an inbound provider delivery event back to its send. */
   findByProviderMessageId(ctx: Caller, providerId: string): Promise<Delivery | null>;
   /**
@@ -130,8 +166,61 @@ export interface DeliveryRepository {
   resolveAccount(providerId: string): Promise<AccountId | null>;
   list(ctx: Caller, query: ListDeliveriesQuery): Promise<Page<Delivery>>;
   countSince(ctx: Caller, identityId: Ulid | null, since: Date): Promise<number>;
-  appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<void>;
+  /** Durable dispatch outbox. Queue publication may fail after D1 accepted a send. */
+  /** Returns true when this call created the recovery row. */
+  stageDispatch(ctx: Caller, deliveryId: Ulid, now: Date): Promise<boolean>;
+  listStagedDispatches(ctx: Caller, limit: number): Promise<DispatchOutboxEntry[]>;
+  unstageDispatch(ctx: Caller, deliveryId: Ulid): Promise<void>;
+  /**
+   * Append one provider fact. Returns false when the provider event id was
+   * already recorded, which is normal for an at-least-once queue.
+   */
+  appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<boolean>;
+  /**
+   * Claim an event's remaining side effects.
+   *
+   * `processed` is the only state an at-least-once queue may acknowledge as a
+   * duplicate. `busy` means another attempt still owns a live lease, so the
+   * queue must retry instead of silently losing the event if that owner dies.
+   */
+  claimDeliveryEvent(
+    ctx: Caller,
+    eventId: string,
+    now: Date,
+    staleBefore: Date,
+  ): Promise<DeliveryEventClaim>;
+  completeDeliveryEvent(ctx: Caller, eventId: string, at: Date): Promise<void>;
+  releaseDeliveryEvent(ctx: Caller, eventId: string): Promise<void>;
   listDeliveryEvents(ctx: Caller, deliveryId: Ulid): Promise<DeliveryEvent[]>;
+}
+
+export type DeliveryEventClaim = "claimed" | "processed" | "busy";
+
+export interface DeliveryInsertOptions {
+  readonly stageDispatch?: boolean;
+  /** Atomic reservation checked with the insert, never as a separate read. */
+  readonly quota?: {
+    readonly identityId: Ulid;
+    readonly since: Date;
+    readonly maximum: number;
+  };
+  readonly exchange?: {
+    readonly from: EmailAddress;
+    readonly recipients: readonly EmailAddress[];
+    readonly since: Date;
+    readonly maximum: number;
+  };
+}
+
+export type DeliveryInsertResult =
+  | "inserted"
+  | "duplicate"
+  | "quota_exceeded"
+  | "exchange_limit_exceeded";
+
+export interface DispatchOutboxEntry {
+  readonly deliveryId: Ulid;
+  readonly createdAt: Date;
 }
 
 export interface ListDeliveriesQuery extends PageRequest {
@@ -154,13 +243,21 @@ export interface ListDeliveriesQuery extends PageRequest {
 /** Append-only delivery event row. The timeline `mailworker status` prints. */
 export interface DeliveryEvent {
   readonly id: Ulid;
+  /** Cloudflare's globally unique event id; null for locally synthesized events. */
+  readonly eventId: string | null;
   readonly deliveryId: Ulid | null;
   readonly providerMessageId: string | null;
   readonly recipient: EmailAddress | null;
+  readonly sourceDomain: string | null;
+  readonly sourceZoneId: string | null;
   readonly type: string;
   readonly terminal: boolean;
   readonly smtpCode: string | null;
+  readonly smtpEnhancedCode: string | null;
   readonly smtpResponse: string | null;
+  readonly bounceType: "hard" | "soft" | null;
+  readonly bounceClassification: string | null;
+  readonly bounceReason: string | null;
   readonly occurredAt: Date;
   /** Original provider payload, kept verbatim for forensics. */
   readonly raw: string | null;
@@ -185,6 +282,8 @@ export interface ApiKeyRepository {
   findByPrefix(prefix: string): Promise<ApiKey | null>;
   insert(ctx: Caller, key: ApiKey): Promise<void>;
   update(ctx: Caller, key: ApiKey): Promise<void>;
+  /** Telemetry-only write; never rewrites scopes, expiry or revocation state. */
+  touchLastUsed(ctx: Caller, keyId: Ulid, at: Date): Promise<void>;
   list(ctx: Caller): Promise<ApiKey[]>;
 }
 

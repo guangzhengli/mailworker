@@ -1,5 +1,5 @@
 import type { RfcMessageId, ThreadId } from "@core/domain";
-import { RfcMessageId as Id, ThreadingPolicy } from "@core/domain";
+import { RfcMessageId as Id, MAX_STORED_REFERENCES, ThreadingPolicy } from "@core/domain";
 import { describe, expect, it } from "vitest";
 
 const id = (value: string): RfcMessageId => Id.parse(value);
@@ -60,6 +60,14 @@ describe("ThreadingPolicy", () => {
     ]);
     // In-Reply-To first, then References reversed (nearest ancestor first).
     expect(candidates).toEqual(["p@x.com", "b@x.com", "a@x.com"]);
+  });
+
+  it("bounds hostile References chains before a D1 IN query is built", () => {
+    const references = Array.from({ length: 500 }, (_, index) => id(`ref-${index}@x.com`));
+    const candidates = ThreadingPolicy.candidateIds(id("parent@x.com"), references);
+    expect(candidates).toHaveLength(MAX_STORED_REFERENCES + 1);
+    expect(candidates[0]).toBe("parent@x.com");
+    expect(candidates[1]).toBe("ref-499@x.com");
   });
 
   it("normalizes angle brackets so ids from different headers compare equal", () => {

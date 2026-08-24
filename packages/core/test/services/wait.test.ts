@@ -41,9 +41,9 @@ describe("mailbox.wait", () => {
     expect(result.outcome).toBe("matched");
   });
 
-  it("matches on a regular expression over subject and body", async () => {
+  it("matches a fixed-width regular expression over subject and body", async () => {
     await deliver("Your code is 483920.");
-    const result = await wait(h.ctx, { match: "code is \\d+", timeoutMs: 1000 });
+    const result = await wait(h.ctx, { match: "code is \\d{6}", timeoutMs: 1000 });
     expect(result.outcome).toBe("matched");
   });
 
@@ -51,6 +51,42 @@ describe("mailbox.wait", () => {
     await expect(wait(h.ctx, { match: "([unclosed", timeoutMs: 1000 })).rejects.toMatchObject({
       code: "invalid_argument",
     });
+  });
+
+  it("rejects regex constructs that can backtrack catastrophically", async () => {
+    await expect(wait(h.ctx, { match: "(a+)+$", timeoutMs: 1000 })).rejects.toMatchObject({
+      code: "invalid_argument",
+    });
+    await expect(
+      wait(h.ctx, { match: ".*token.*value", timeoutMs: 1000 }),
+    ).rejects.toMatchObject({
+      code: "invalid_argument",
+    });
+    await expect(wait(h.ctx, { match: "a+b", timeoutMs: 1000 })).rejects.toMatchObject({
+      code: "invalid_argument",
+    });
+    // Two slashes mean the second is escaped; the `+` is therefore syntax,
+    // not a literal. A one-character look-behind validator misses this and the
+    // resulting `/\\\\+b/` is quadratic on a long non-match.
+    await expect(wait(h.ctx, { match: "\\\\+b", timeoutMs: 1000 })).rejects.toMatchObject({
+      code: "invalid_argument",
+    });
+  });
+
+  it("allows multiple small fixed repetitions for dates", async () => {
+    await deliver("Expires 2026-08");
+    await expect(
+      wait(h.ctx, { match: "\\d{4}-\\d{2}", timeoutMs: 1000 }),
+    ).resolves.toMatchObject({ outcome: "matched" });
+  });
+
+  it("bounds regex matching to the documented body prefix", async () => {
+    await deliver(`${"x".repeat(70 * 1024)}SECRET-CODE`);
+    await expect(wait(h.ctx, { match: "SECRET-CODE", timeoutMs: 1000 })).resolves.toMatchObject(
+      {
+        outcome: "timeout",
+      },
+    );
   });
 
   it("refuses a timeout beyond the ceiling", async () => {

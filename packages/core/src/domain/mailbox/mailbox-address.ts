@@ -17,6 +17,12 @@ export interface MailboxAddress {
   readonly domain: string;
   /** Tag-stripped, lowercased. The inbox lookup key. */
   readonly matchKey: EmailAddress;
+  /**
+   * Full envelope recipient, normalized according to our local routing policy.
+   * Unlike `matchKey`, this keeps the `+tag`: it is the stable identity of the
+   * SMTP RCPT TO placement, used to distinguish two routes into one inbox.
+   */
+  readonly routeKey: EmailAddress;
   /** The address exactly as it arrived (tag included, original case). */
   readonly original: EmailAddress;
 }
@@ -45,6 +51,7 @@ export const MailboxAddress = {
       tag: tag === null || tag.length === 0 ? null : tag,
       domain,
       matchKey: `${localPart.toLowerCase()}@${domain}` as EmailAddress,
+      routeKey: `${rawLocal.toLowerCase()}@${domain}` as EmailAddress,
       original: address,
     };
   },

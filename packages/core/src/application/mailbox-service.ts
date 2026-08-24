@@ -6,7 +6,6 @@ import type {
   MessageSummary,
   Page,
   ThreadId,
-  WaitCriteria,
 } from "@core/domain";
 import {
   Caller,
@@ -16,6 +15,7 @@ import {
   notFound,
   RetentionPolicy,
   Ulid,
+  WaitCriteria,
 } from "@core/domain";
 import type {
   BlobStore,
@@ -135,13 +135,28 @@ export function createMailboxService(deps: MailboxDeps) {
           : Inbox.expiryFromTtl(now, input.ttlMs ?? DEFAULT_EPHEMERAL_TTL_MS);
 
       let identityId = null;
-      if (input.identityName !== undefined) {
+      const restrictedIdentityId = resourceIdentity(ctx);
+      if (restrictedIdentityId !== null && input.identityName === undefined) {
+        // An identity-bound key owns what it creates. Leaving this null would
+        // create an account-wide inbox that the same key should not be able to
+        // read, and would let it choose an unmetered sending identity later.
+        identityId = restrictedIdentityId;
+      } else if (input.identityName !== undefined) {
         const identity = await deps.identities.findByName(ctx, input.identityName);
         if (identity === null) {
           throw new DomainError(
             "invalid_argument",
             `No agent identity named "${input.identityName}".`,
             { identityName: input.identityName },
+          );
+        }
+        if (restrictedIdentityId !== null && identity.id !== restrictedIdentityId) {
+          throw new DomainError(
+            "forbidden",
+            "This credential cannot create an inbox for another identity.",
+            {
+              subject: ctx.subject,
+            },
           );
         }
         identityId = identity.id;
@@ -204,6 +219,7 @@ export function createMailboxService(deps: MailboxDeps) {
       const { includeExpired, ...page } = query;
       return await deps.inboxes.list(ctx, {
         ...page,
+        ...(resourceIdentity(ctx) === null ? {} : { identityId: resourceIdentity(ctx)! }),
         ...(includeExpired === true ? {} : { activeAt: deps.clock.now() }),
       });
     },
@@ -222,6 +238,7 @@ export function createMailboxService(deps: MailboxDeps) {
       if (inbox === null || Inbox.isDeleted(inbox)) {
         throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
       }
+      assertInboxAccess(ctx, inbox);
       return inbox;
     },
 
@@ -242,6 +259,7 @@ export function createMailboxService(deps: MailboxDeps) {
       if (inbox === null || Inbox.isDeleted(inbox)) {
         throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
       }
+      assertInboxAccess(ctx, inbox);
 
       const { storageKeys } = await deps.messages.deleteByInbox(ctx, id);
       if (storageKeys.length > 0) await deps.blobs.delete(ctx, storageKeys);
@@ -253,13 +271,18 @@ export function createMailboxService(deps: MailboxDeps) {
       query: ListMessagesQuery = {},
     ): Promise<Page<MessageSummary>> {
       Caller.require(ctx, "message:read");
-      return await deps.messages.list(ctx, query);
+      const identityId = resourceIdentity(ctx);
+      return await deps.messages.list(ctx, {
+        ...query,
+        ...(identityId === null ? {} : { identityId }),
+      });
     },
 
     async getMessage(ctx: Caller, id: Ulid): Promise<Message> {
       Caller.require(ctx, "message:read");
       const message = await deps.messages.findById(ctx, id);
       if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+      assertMessageAccess(ctx, message);
       return message;
     },
 
@@ -275,6 +298,7 @@ export function createMailboxService(deps: MailboxDeps) {
       Caller.require(ctx, "message:read");
       const message = await deps.messages.findById(ctx, id);
       if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+      assertMessageAccess(ctx, message);
 
       // Null for a message we composed but have not archived: an outbound send
       // gets its `.eml` written when it is dispatched, not when it is queued.
@@ -301,6 +325,7 @@ export function createMailboxService(deps: MailboxDeps) {
       if (message === null) {
         throw notFound("message_not_found", `No message ${messageId}.`, { messageId });
       }
+      assertMessageAccess(ctx, message);
 
       const meta = message.attachments.find((a) => a.id === attachmentId);
       if (meta === undefined) {
@@ -328,6 +353,7 @@ export function createMailboxService(deps: MailboxDeps) {
       Caller.require(ctx, "message:read");
       const message = await deps.messages.findById(ctx, id);
       if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+      assertMessageAccess(ctx, message);
       await deps.messages.setSeen(ctx, id, seen);
     },
 
@@ -340,7 +366,10 @@ export function createMailboxService(deps: MailboxDeps) {
      */
     async getThread(ctx: Caller, threadId: ThreadId): Promise<Message[]> {
       Caller.require(ctx, "message:read");
-      const messages = await deps.messages.listThread(ctx, threadId);
+      const identityId = resourceIdentity(ctx);
+      const messages = (await deps.messages.listThread(ctx, threadId)).filter(
+        (message) => identityId === null || message.identityId === identityId,
+      );
       if (messages.length === 0) {
         throw notFound("message_not_found", `No thread ${threadId}.`, { threadId });
       }
@@ -370,15 +399,9 @@ export function createMailboxService(deps: MailboxDeps) {
         );
       }
       if (input.match !== undefined) {
-        // Compile once, here, so a bad pattern is a clear 400 rather than an
-        // exception from inside the waiter after the caller has already blocked.
-        try {
-          new RegExp(input.match);
-        } catch {
-          throw invalidArgument(`\`match\` is not a valid regular expression: ${input.match}`, {
-            match: input.match,
-          });
-        }
+        // Refuse unsafe patterns before registering the waiter. JavaScript
+        // regex evaluation has no deadline and the body is attacker-authored.
+        WaitCriteria.assertSafeMatch(input.match);
       }
 
       const startedAt = deps.clock.now();
@@ -388,6 +411,7 @@ export function createMailboxService(deps: MailboxDeps) {
         ...(input.subject === undefined ? {} : { subject: input.subject }),
         ...(input.match === undefined ? {} : { match: input.match }),
         ...(input.after === undefined ? {} : { after: Ulid.parse(input.after) }),
+        ...(resourceIdentity(ctx) === null ? {} : { identityId: resourceIdentity(ctx)! }),
       };
 
       const message = await deps.waiter.wait(ctx, criteria, timeoutMs);
@@ -484,6 +508,26 @@ export function createMailboxService(deps: MailboxDeps) {
       return result;
     },
   };
+}
+
+/** Existing unbound keys retain account-wide access; identity keys are scoped. */
+function resourceIdentity(ctx: Caller): Ulid | null {
+  return Caller.has(ctx, "admin") ? null : ctx.identityId;
+}
+
+function assertInboxAccess(ctx: Caller, inbox: Inbox): void {
+  const identityId = resourceIdentity(ctx);
+  if (identityId !== null && inbox.identityId !== identityId) {
+    // 404 rather than 403: the caller must not learn which other identity owns it.
+    throw notFound("inbox_not_found", `No inbox ${inbox.id}.`, { id: inbox.id });
+  }
+}
+
+function assertMessageAccess(ctx: Caller, message: Message): void {
+  const identityId = resourceIdentity(ctx);
+  if (identityId !== null && message.identityId !== identityId) {
+    throw notFound("message_not_found", `No message ${message.id}.`, { id: message.id });
+  }
 }
 
 export type MailboxService = ReturnType<typeof createMailboxService>;

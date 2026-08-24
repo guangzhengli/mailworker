@@ -48,7 +48,11 @@ export const threadId = domainScalar<ThreadId>((v) => ThreadId.parse(v), "thread
 export const scope = domainScalar<Scope>((v) => Scope.parse(v), "scope");
 
 /** Opaque caller-supplied labels: a test run id, a ticket number. */
-export const metadata = z.record(z.string().min(1).max(64), z.string().max(512));
+export const metadata = z
+  .record(z.string().min(1).max(64), z.string().max(512))
+  .refine((value) => Object.keys(value).length <= 20, {
+    message: "At most 20 metadata keys.",
+  });
 
 const DURATION = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/;
 const DURATION_UNIT_MS: Readonly<Record<string, number>> = {
@@ -91,7 +95,7 @@ export const durationMs = z
  * Keyset pagination. The cursor is the ULID of the last item seen, so it
  * stays a valid position even after rows around it are deleted.
  */
-export const pageQuery = z.object({
+export const pageQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
   cursor: ulid.optional(),
   order: z.enum(["asc", "desc"]).optional(),

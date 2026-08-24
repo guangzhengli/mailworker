@@ -1,3 +1,4 @@
+import { MAX_STORED_REFERENCES } from "@core/domain/mailbox/message";
 import type { RfcMessageId } from "@core/domain/mailbox/message-id";
 import { ThreadId } from "@core/domain/mailbox/message-id";
 
@@ -40,7 +41,8 @@ export const ThreadingPolicy = {
   ): RfcMessageId[] {
     const ordered: RfcMessageId[] = [];
     if (inReplyTo !== null) ordered.push(inReplyTo);
-    for (let i = references.length - 1; i >= 0; i--) {
+    const oldestCandidate = Math.max(0, references.length - MAX_STORED_REFERENCES);
+    for (let i = references.length - 1; i >= oldestCandidate; i--) {
       ordered.push(references[i]!);
     }
     return [...new Set(ordered)];
@@ -54,7 +56,8 @@ export const ThreadingPolicy = {
       }
     }
 
-    for (let i = input.references.length - 1; i >= 0; i--) {
+    const oldestCandidate = Math.max(0, input.references.length - MAX_STORED_REFERENCES);
+    for (let i = input.references.length - 1; i >= oldestCandidate; i--) {
       const referenced = input.known.get(input.references[i]!);
       if (referenced !== undefined) {
         return { threadId: referenced, via: "references" };

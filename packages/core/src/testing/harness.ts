@@ -5,6 +5,7 @@ import { AccountId, Inbox, ProjectId } from "@core/domain";
 import {
   DeterministicIds,
   FakeClock,
+  FakeContentHasher,
   FakeSecrets,
   InMemoryAccounts,
   InMemoryApiKeys,
@@ -114,6 +115,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const deps: CoreDeps = {
     clock,
     ids,
+    contentHasher: new FakeContentHasher(),
     secrets: new FakeSecrets(),
     inboxes,
     messages,

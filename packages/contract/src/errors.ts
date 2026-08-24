@@ -34,6 +34,7 @@ export const ERROR_CODES = [
   "invalid_ulid",
   "invalid_message_id",
   "invalid_argument",
+  "idempotency_conflict",
   "inbox_not_found",
   "inbox_expired",
   "address_taken",
@@ -53,6 +54,7 @@ export const ERROR_CODES = [
   "unauthorized",
   "forbidden",
   "wait_timeout",
+  "wait_capacity_exceeded",
   ...TRANSPORT_ONLY_CODES,
 ] as const;
 
@@ -95,6 +97,7 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
   invalid_ulid: 400,
   invalid_message_id: 400,
   invalid_argument: 400,
+  idempotency_conflict: 409,
 
   inbox_not_found: 404,
   message_not_found: 404,
@@ -129,6 +132,7 @@ const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
   forbidden: 403,
 
   wait_timeout: 408,
+  wait_capacity_exceeded: 429,
 
   not_found: 404,
   method_not_allowed: 405,
@@ -169,6 +173,7 @@ const EXIT_CODE: Readonly<Record<ErrorCode, ExitCode>> = {
   invalid_ulid: ExitCode.USAGE,
   invalid_message_id: ExitCode.USAGE,
   invalid_argument: ExitCode.USAGE,
+  idempotency_conflict: ExitCode.USAGE,
   // Not REJECTED: no policy refused this. The caller attached too much, and the
   // fix is in the call rather than in the account's configuration.
   message_too_large: ExitCode.USAGE,
@@ -195,6 +200,7 @@ const EXIT_CODE: Readonly<Record<ErrorCode, ExitCode>> = {
   forbidden: ExitCode.AUTH,
 
   wait_timeout: ExitCode.TIMEOUT,
+  wait_capacity_exceeded: ExitCode.QUOTA,
 
   not_found: ExitCode.ERROR,
   method_not_allowed: ExitCode.ERROR,

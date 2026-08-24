@@ -1,12 +1,15 @@
-import type { EmailAddress } from "@core/domain/email-address";
+import { EmailAddress } from "@core/domain/email-address";
 import { invalidArgument } from "@core/domain/errors";
 import type { AccountId } from "@core/domain/identity/account-id";
+import { MailboxAddress } from "@core/domain/mailbox/mailbox-address";
+import { truncateUtf8 } from "@core/domain/mailbox/message-body";
 import type { RfcMessageId, ThreadId } from "@core/domain/mailbox/message-id";
 import type { SenderAuth, TrustReason } from "@core/domain/mailbox/sender-auth";
 import { UNKNOWN_SENDER_AUTH } from "@core/domain/mailbox/sender-auth";
 import type { Ulid } from "@core/domain/ulid";
 
 export type Direction = "inbound" | "outbound";
+export type MessageOrigin = "email" | "injected" | "sandbox" | "outbound";
 
 export interface AttachmentMeta {
   readonly id: Ulid;
@@ -30,10 +33,21 @@ export interface Message {
   readonly id: Ulid;
   readonly accountId: AccountId;
   readonly inboxId: Ulid;
+  /** Identity owning the inbox when this placement was created. */
+  readonly identityId: Ulid | null;
 
   readonly rfcMessageId: RfcMessageId;
+  /**
+   * Normalized SMTP RCPT TO for this inbound placement. This is deliberately
+   * separate from the untrusted MIME `To:` header: catch-all routes and +tags
+   * can place the same RFC message in one inbox more than once legitimately.
+   * Outbound archive copies have no single envelope recipient and store null.
+   */
+  readonly envelopeRecipient: EmailAddress | null;
   readonly threadId: ThreadId;
   readonly direction: Direction;
+  /** How these bytes entered the runtime. Never inferred from their content. */
+  readonly origin: MessageOrigin;
 
   /**
    * The raw `From` header, display name preserved
@@ -99,9 +113,12 @@ export interface CreateMessageInput {
   readonly id: Ulid;
   readonly accountId: AccountId;
   readonly inboxId: Ulid;
+  readonly identityId?: Ulid | null;
   readonly rfcMessageId: RfcMessageId;
+  readonly envelopeRecipient?: EmailAddress | null;
   readonly threadId: ThreadId;
   readonly direction: Direction;
+  readonly origin?: MessageOrigin;
   readonly fromHeader: string;
   readonly from: EmailAddress | null;
   readonly toHeader: string;
@@ -140,6 +157,14 @@ export const PREVIEW_LENGTH = 160;
  * the two implementations stay interchangeable.
  */
 export const PREVIEW_SOURCE_LENGTH = 4000;
+/** Bounds decoded header metadata retained beside the byte-exact raw MIME. */
+export const MAX_STORED_HEADER_BYTES = 8 * 1024;
+export const MAX_STORED_ADDRESSES_PER_HEADER = 100;
+export const MAX_STORED_REFERENCES = 50;
+export const MAX_STORED_ATTACHMENTS = 100;
+export const MAX_ATTACHMENT_FILENAME_BYTES = 1024;
+export const MAX_ATTACHMENT_MIME_BYTES = 255;
+export const MAX_ATTACHMENT_CONTENT_ID_BYTES = 998;
 
 export const Message = {
   create(input: CreateMessageInput): Message {
@@ -152,29 +177,37 @@ export const Message = {
       id: input.id,
       accountId: input.accountId,
       inboxId: input.inboxId,
+      identityId: input.identityId ?? null,
       rfcMessageId: input.rfcMessageId,
+      envelopeRecipient: inferEnvelopeRecipient(input),
       threadId: input.threadId,
       direction: input.direction,
-      fromHeader: input.fromHeader,
+      origin: input.origin ?? (input.direction === "outbound" ? "outbound" : "email"),
+      fromHeader: truncateUtf8(input.fromHeader, MAX_STORED_HEADER_BYTES) ?? "",
       from: input.from,
-      toHeader: input.toHeader,
-      to: input.to ?? [],
-      cc: input.cc ?? [],
-      bcc: input.bcc ?? [],
+      toHeader: truncateUtf8(input.toHeader, MAX_STORED_HEADER_BYTES) ?? "",
+      to: (input.to ?? []).slice(0, MAX_STORED_ADDRESSES_PER_HEADER),
+      cc: (input.cc ?? []).slice(0, MAX_STORED_ADDRESSES_PER_HEADER),
+      bcc: (input.bcc ?? []).slice(0, MAX_STORED_ADDRESSES_PER_HEADER),
       replyTo: input.replyTo ?? null,
       subject: input.subject ?? "",
       bodyText: input.bodyText ?? null,
       bodyHtml: input.bodyHtml ?? null,
       inReplyTo: input.inReplyTo ?? null,
-      references: input.references ?? [],
+      references: (input.references ?? []).slice(-MAX_STORED_REFERENCES),
       auth: input.auth ?? UNKNOWN_SENDER_AUTH,
       trusted: input.trusted ?? false,
       trustReasons: input.trustReasons ?? [],
       tag: input.tag ?? null,
-      autoSubmitted: input.autoSubmitted ?? null,
+      autoSubmitted: truncateUtf8(input.autoSubmitted ?? null, MAX_STORED_HEADER_BYTES),
       rawKey: input.rawKey ?? null,
       size: input.size ?? 0,
-      attachments: input.attachments ?? [],
+      attachments: (input.attachments ?? []).slice(0, MAX_STORED_ATTACHMENTS).map((item) => ({
+        ...item,
+        filename: truncateUtf8(item.filename, MAX_ATTACHMENT_FILENAME_BYTES),
+        mime: truncateUtf8(item.mime, MAX_ATTACHMENT_MIME_BYTES),
+        contentId: truncateUtf8(item.contentId, MAX_ATTACHMENT_CONTENT_ID_BYTES),
+      })),
       // Inbound arrives unread; our own sent copy is already read.
       seen: input.seen ?? input.direction === "outbound",
       sentAt: input.sentAt ?? null,
@@ -227,3 +260,16 @@ export const Message = {
     return result;
   },
 } as const;
+
+/**
+ * Compatibility fallback for fixtures and pre-route-aware callers. Production
+ * ingestion always supplies the authenticated envelope value explicitly.
+ */
+function inferEnvelopeRecipient(input: CreateMessageInput): EmailAddress | null {
+  if (input.direction === "outbound") return null;
+  const candidate =
+    input.envelopeRecipient ?? input.to?.[0] ?? EmailAddress.fromHeader(input.toHeader);
+  return candidate === null
+    ? null
+    : (MailboxAddress.tryParse(candidate)?.routeKey ?? candidate);
+}

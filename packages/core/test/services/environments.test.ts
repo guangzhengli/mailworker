@@ -118,11 +118,12 @@ describe("test environments", () => {
   it("refuses an identity with no recipient allowlist", async () => {
     const identity = await seedIdentity({ recipientAllowlist: null });
     const ctx = { ...inMode("test"), identityId: identity.id };
+    const inbox = await h.seedInbox(`test-agent@${TEST_DOMAIN}`, { identityId: identity.id });
 
     // `test` sends for real, so an unrestricted identity here is a development
     // agent that can mail a customer.
     await expect(
-      send(ctx, { from: FROM, to: ["user@corp.com"], subject: "Hi", text: "Hi" }),
+      send(ctx, { from: inbox.address, to: ["user@corp.com"], subject: "Hi", text: "Hi" }),
     ).rejects.toSatisfy(
       (error: unknown) => isDomainError(error) && error.code === "send_rejected",
     );
@@ -131,9 +132,12 @@ describe("test environments", () => {
   it("allows one that has an allowlist covering the recipient", async () => {
     const identity = await seedIdentity({ recipientAllowlist: ["*@corp.com"] });
     const ctx = { ...inMode("test"), identityId: identity.id };
+    const inbox = await h.seedInbox(`allowed-agent@${TEST_DOMAIN}`, {
+      identityId: identity.id,
+    });
 
     const result = await send(ctx, {
-      from: FROM,
+      from: inbox.address,
       to: ["user@corp.com"],
       subject: "Hi",
       text: "Hi",
@@ -144,9 +148,12 @@ describe("test environments", () => {
   it("does not impose an allowlist on a sandbox environment", async () => {
     const identity = await seedIdentity({ recipientAllowlist: null });
     const ctx = { ...inMode("sandbox"), identityId: identity.id };
+    const inbox = await h.seedInbox(`sandbox-agent@${TEST_DOMAIN}`, {
+      identityId: identity.id,
+    });
 
     const result = await send(ctx, {
-      from: FROM,
+      from: inbox.address,
       to: ["user@corp.com"],
       subject: "Hi",
       text: "Hi",
@@ -159,9 +166,12 @@ describe("console sends", () => {
   it("skips the approval hold, because the sender is the approver", async () => {
     const identity = await seedIdentity({ requireApproval: true });
     const ctx = { ...h.ctx, identityId: identity.id };
+    const inbox = await h.seedInbox(`console-review@${TEST_DOMAIN}`, {
+      identityId: identity.id,
+    });
 
     const agent = await send(ctx, {
-      from: FROM,
+      from: inbox.address,
       to: ["user@corp.com"],
       subject: "From an agent",
       text: "Hi",
@@ -169,7 +179,7 @@ describe("console sends", () => {
     expect(agent.outcome).toBe("pending_approval");
 
     const console = await send(ctx, {
-      from: FROM,
+      from: inbox.address,
       to: ["user@corp.com"],
       subject: "From a human",
       text: "Hi",
@@ -187,10 +197,19 @@ describe("console sends", () => {
     // Provisioned once, not on every send.
     const again = await h.services.identity.ensureConsoleIdentity(h.ctx);
     expect(again.id).toBe(identity.id);
+    const inbox = await h.seedInbox(`console-metered@${TEST_DOMAIN}`, {
+      identityId: identity.id,
+    });
 
     const result = await send(
       { ...h.ctx, identityId: identity.id },
-      { from: FROM, to: ["user@corp.com"], subject: "Hi", text: "Hi", source: "console" },
+      {
+        from: inbox.address,
+        to: ["user@corp.com"],
+        subject: "Hi",
+        text: "Hi",
+        source: "console",
+      },
     );
 
     // The delivery names an identity, so "who sent this" survives the audit.
@@ -201,11 +220,14 @@ describe("console sends", () => {
   it("still runs every rejecting gate", async () => {
     const identity = await seedIdentity({ recipientAllowlist: ["*@allowed.com"] });
     const ctx = { ...h.ctx, identityId: identity.id };
+    const inbox = await h.seedInbox(`console-policy@${TEST_DOMAIN}`, {
+      identityId: identity.id,
+    });
 
     // A console send is not a way around the gates — only around the hold.
     await expect(
       send(ctx, {
-        from: FROM,
+        from: inbox.address,
         to: ["user@corp.com"],
         subject: "Hi",
         text: "Hi",

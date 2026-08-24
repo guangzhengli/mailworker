@@ -14,6 +14,7 @@ export const deliveryStatus = z.enum([
   "draft",
   "pending_approval",
   "queued",
+  "dispatching",
   "dispatched",
   "deferred",
   "delivered",
@@ -77,6 +78,9 @@ export const metadataInput = z
     message: "At most 20 metadata keys.",
   });
 
+/** Shared validation for the body field and the `Idempotency-Key` header. */
+export const idempotencyKey = z.string().min(1).max(255);
+
 /**
  * `POST /v1/send`.
  *
@@ -103,7 +107,7 @@ export const sendBody = z
      * present. The header suits a proxy or an SDK retry wrapper; the body field
      * suits whoever is building the request by hand.
      */
-    idempotencyKey: z.string().min(1).max(255).optional(),
+    idempotencyKey: idempotencyKey.optional(),
     /**
      * True when a machine, not a human, triggered this. Feeds the loop breaker
      * and sets `Auto-Submitted`, so honesty here is what keeps two agents from
@@ -184,11 +188,18 @@ export function toDeliveryDto(delivery: Delivery): DeliveryDto {
  */
 export const deliveryEventDto = z.object({
   id: z.string(),
+  eventId: z.string().nullable(),
   type: z.string(),
   recipient: z.string().nullable(),
+  sourceDomain: z.string().nullable(),
+  sourceZoneId: z.string().nullable(),
   terminal: z.boolean(),
   smtpCode: z.string().nullable(),
+  smtpEnhancedCode: z.string().nullable(),
   smtpResponse: z.string().nullable(),
+  bounceType: z.enum(["hard", "soft"]).nullable(),
+  bounceClassification: z.string().nullable(),
+  bounceReason: z.string().nullable(),
   occurredAt: z.string(),
   raw: z.string().nullable(),
 });
@@ -198,11 +209,18 @@ export type DeliveryEventDto = z.infer<typeof deliveryEventDto>;
 export function toDeliveryEventDto(event: DeliveryEvent): DeliveryEventDto {
   return {
     id: event.id,
+    eventId: event.eventId,
     type: event.type,
     recipient: event.recipient,
+    sourceDomain: event.sourceDomain,
+    sourceZoneId: event.sourceZoneId,
     terminal: event.terminal,
     smtpCode: event.smtpCode,
+    smtpEnhancedCode: event.smtpEnhancedCode,
     smtpResponse: event.smtpResponse,
+    bounceType: event.bounceType,
+    bounceClassification: event.bounceClassification,
+    bounceReason: event.bounceReason,
     occurredAt: toIso(event.occurredAt),
     raw: event.raw,
   };
@@ -303,9 +321,17 @@ export const listDeliveriesQuery = z.object({
   q: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: ulid.optional(),
+  order: z.enum(["asc", "desc"]).optional(),
 });
 
 export type ListDeliveriesQuery = z.infer<typeof listDeliveriesQuery>;
+
+/** A human reviewer explicitly declines a held send. */
+export const rejectDeliveryBody = z.strictObject({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+
+export type RejectDeliveryBody = z.infer<typeof rejectDeliveryBody>;
 
 /**
  * `GET /v1/diagnostics` — what `mailworker doctor` prints.

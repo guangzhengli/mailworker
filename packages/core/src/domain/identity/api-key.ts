@@ -57,7 +57,7 @@ export const API_KEY_PREFIX = "mw";
  * by the prefix stored on its row rather than by re-deriving one.
  */
 export const ApiKeyToken = {
-  PATTERN: /^(mw_(?:live|sbx|test)_[0-9a-f]{6})_([0-9a-f]{32,128})$/,
+  PATTERN: /^(mw_(?:live|sbx|test)_(?:[0-9a-f]{6}|[0-9a-f]{16}))_([0-9a-f]{32,128})$/,
 
   format(keyPrefix: KeyPrefix, publicId: string, secret: string): string {
     return `${keyPrefix}_${publicId}_${secret}`;

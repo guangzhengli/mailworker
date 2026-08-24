@@ -7,12 +7,17 @@ import { invalidArgument } from "@core/domain/errors";
  * Kept coarse on purpose: an agent should be handed the narrowest useful set
  * (typically `inbox:write` + `message:read` + `message:send`) and never
  * `message:approve`, so that a human stays in the approval loop.
+ *
+ * Fixture injection is deliberately separate from inbox creation. It creates
+ * attacker-controlled inbound state without going through SMTP, so a key that
+ * may mint an address must not automatically be able to forge mail into it.
  */
 export type Scope =
   | "inbox:read"
   | "inbox:write"
   | "message:read"
   | "message:send"
+  | "message:inject"
   | "message:approve"
   | "admin";
 
@@ -21,6 +26,7 @@ export const ALL_SCOPES: readonly Scope[] = [
   "inbox:write",
   "message:read",
   "message:send",
+  "message:inject",
   "message:approve",
   "admin",
 ];
