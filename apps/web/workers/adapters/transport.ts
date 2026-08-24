@@ -161,10 +161,16 @@ function destinationsOf(message: DispatchRequest): EmailDestinations {
  */
 interface RetryVerdict {
   readonly retryable: boolean;
-  readonly decidedBy: "smtp" | "http" | "prose";
+  readonly decidedBy: "binding" | "smtp" | "http" | "prose";
 }
 
 export function classifyFailure(error: unknown, reason: string): RetryVerdict {
+  const bindingCode = errorCode(error);
+  if (bindingCode !== null) {
+    const retryable = BINDING_ERROR_RETRYABLE[bindingCode];
+    if (retryable !== undefined) return { retryable, decidedBy: "binding" };
+  }
+
   const smtp = statusField(error, ["smtpCode", "smtp_code"]);
   if (smtp !== null) return { retryable: smtp < 500, decidedBy: "smtp" };
 
@@ -172,6 +178,41 @@ export function classifyFailure(error: unknown, reason: string): RetryVerdict {
   if (http !== null) return { retryable: RETRYABLE_HTTP.has(http), decidedBy: "http" };
 
   return { retryable: TRANSIENT_WORDING.test(reason), decidedBy: "prose" };
+}
+
+/**
+ * Documented `send_email` binding errors, classified before SMTP/HTTP/prose.
+ * A daily quota is deliberately permanent for this queue attempt: retrying the
+ * same message three times over the next minute cannot make a daily budget
+ * replenish, while rate limits and provider/internal failures can clear within
+ * the queue's retry window.
+ */
+const BINDING_ERROR_RETRYABLE: Readonly<Record<string, boolean>> = {
+  E_VALIDATION_ERROR: false,
+  E_FIELD_MISSING: false,
+  E_TOO_MANY_RECIPIENTS: false,
+  E_SENDER_NOT_VERIFIED: false,
+  E_RECIPIENT_NOT_ALLOWED: false,
+  E_RECIPIENT_SUPPRESSED: false,
+  E_SENDER_DOMAIN_NOT_AVAILABLE: false,
+  E_CONTENT_TOO_LARGE: false,
+  E_RATE_LIMIT_EXCEEDED: true,
+  E_DAILY_LIMIT_EXCEEDED: false,
+  E_DELIVERY_FAILED: true,
+  E_INTERNAL_SERVER_ERROR: true,
+  E_HEADER_NOT_ALLOWED: false,
+  E_HEADER_USE_API_FIELD: false,
+  E_HEADER_VALUE_INVALID: false,
+  E_HEADER_VALUE_TOO_LONG: false,
+  E_HEADER_NAME_INVALID: false,
+  E_HEADERS_TOO_LARGE: false,
+  E_HEADERS_TOO_MANY: false,
+};
+
+function errorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = (error as Record<string, unknown>)["code"];
+  return typeof value === "string" ? value : null;
 }
 
 /**

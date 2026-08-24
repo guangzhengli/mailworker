@@ -1,3 +1,4 @@
+import { MAX_INBOUND_MESSAGE_BYTES } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
 import { systemCaller } from "@web/workers/environment";
 
@@ -13,6 +14,14 @@ import { systemCaller } from "@web/workers/environment";
  * message lives in `ingestion.ingest`, where it can be tested without workerd.
  */
 export async function email(message: ForwardableEmailMessage, env: Env): Promise<void> {
+  // Reject before buffering. Email Routing supplies the exact raw byte count,
+  // and a 25 MiB message can otherwise be copied several times by MIME parsing
+  // inside a Worker with a finite memory budget.
+  if (message.rawSize > MAX_INBOUND_MESSAGE_BYTES) {
+    message.setReject(`Message exceeds the ${MAX_INBOUND_MESSAGE_BYTES} byte limit.`);
+    return;
+  }
+
   const container = createContainer(env);
 
   // The recipient's domain is what decides the environment: `dev.mail.example.com`
@@ -27,12 +36,34 @@ export async function email(message: ForwardableEmailMessage, env: Env): Promise
   const { services } = container;
   const ctx = await systemCaller(container, accountId, "system:email");
 
-  const raw = new Uint8Array(await new Response(message.raw).arrayBuffer());
+  const raw = new Uint8Array(message.rawSize);
+  const reader = message.raw.getReader();
+  let offset = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.byteLength > raw.byteLength) {
+        message.setReject("Raw message size did not match the routing envelope.");
+        await reader.cancel("raw size mismatch");
+        return;
+      }
+      raw.set(value, offset);
+      offset += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (offset !== raw.byteLength) {
+    message.setReject("Raw message size did not match the routing envelope.");
+    return;
+  }
 
   const result = await services.ingestion.ingest(ctx, {
     recipient: message.to,
     envelopeFrom: message.from,
     raw,
+    origin: "email",
   });
 
   switch (result.outcome) {

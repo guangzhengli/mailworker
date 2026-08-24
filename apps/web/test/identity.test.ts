@@ -22,6 +22,7 @@ const db = createDb(env.DB);
 beforeEach(async () => {
   await db.batch([
     db.delete(schema.messages),
+    db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
     db.delete(schema.inboxes),
     db.delete(schema.apiKeys),
@@ -69,6 +70,11 @@ describe("api keys", () => {
 
     const response = await api("/v1/inboxes", token);
     expect(response.status).toBe(200);
+
+    const listed = (await (await api("/v1/keys", ADMIN_KEY)).json()) as {
+      items: ApiKeyDto[];
+    };
+    expect(listed.items.find((key) => key.name === "test key")?.lastUsedAt).not.toBeNull();
   });
 
   it("bounds the key to the scopes it was given", async () => {
@@ -84,6 +90,12 @@ describe("api keys", () => {
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
       "forbidden",
     );
+  });
+
+  it("does not let an ordinary valid key enumerate environments", async () => {
+    const token = await mintKey(["message:read"]);
+    const response = await api("/v1/environments", token);
+    expect(response.status).toBe(403);
   });
 
   it("refuses a revoked key", async () => {

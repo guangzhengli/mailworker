@@ -1,5 +1,6 @@
 import type {
   AttachmentMeta,
+  BlobStore,
   Caller,
   EmailAddress,
   ListMessagesQuery,
@@ -10,19 +11,31 @@ import type {
   ThreadId,
   Ulid,
 } from "@mailworker/core";
-import { Message, PREVIEW_SOURCE_LENGTH } from "@mailworker/core";
+import {
+  decodeStoredMessageBody,
+  MESSAGE_INDEX_TEXT_BYTES,
+  Message,
+  PREVIEW_SOURCE_LENGTH,
+  truncateUtf8,
+} from "@mailworker/core";
 import type { Db } from "@web/workers/adapters/d1";
 import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
 import type { AttachmentRow, MessageRow } from "@web/workers/adapters/schema";
 import { attachments, messages } from "@web/workers/adapters/schema";
 import type { SQL } from "drizzle-orm";
-import { and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 
 export class D1Messages implements MessageRepository {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly blobs?: BlobStore,
+  ) {}
 
   /**
-   * Insert, letting `UNIQUE(account_id, rfc_message_id)` do the deduplication.
+   * Insert, letting
+   * `UNIQUE(account_id, inbox_id, envelope_recipient, rfc_message_id)`
+   * deduplicate retries without dropping two +tags or catch-all recipients that
+   * legitimately route the same RFC message into one inbox.
    *
    * `ON CONFLICT DO NOTHING ... RETURNING id` collapses "is it already there"
    * and "put it there" into one statement. A read-then-write would race itself:
@@ -31,27 +44,31 @@ export class D1Messages implements MessageRepository {
    *
    * A duplicate is not an error. It is ordinary traffic.
    */
-  async insert(ctx: Caller, message: Message): Promise<{ stored: boolean }> {
-    const inserted = await this.db
+  async insert(
+    ctx: Caller,
+    message: Message,
+    options: { readonly bodyKey?: string | null } = {},
+  ): Promise<{ stored: boolean }> {
+    const insertMessage = this.db
       .insert(messages)
-      .values(toRow(ctx, message))
+      .values(toRow(ctx, message, options.bodyKey ?? null))
       .onConflictDoNothing()
       .returning({ id: messages.id });
 
-    if (inserted.length === 0) return { stored: false };
-
-    // Sequential rather than batched with the insert above, because the
-    // attachment rows must NOT be written when the message turned out to be a
-    // duplicate — a batch has no way to make the second statement depend on the
-    // first one's result. The window where the message row exists and its
-    // attachment rows do not is real but small, and it degrades to a message
-    // whose attachments are missing from the list, not a corrupt one.
-    if (message.attachments.length > 0) {
-      await this.db
-        .insert(attachments)
-        .values(message.attachments.map((a) => toAttachmentRow(ctx, message.id, a)));
+    // Native D1 batch is transactional. Every attachment statement includes an
+    // EXISTS guard on THIS newly minted message id: when a concurrent duplicate
+    // wins, our INSERT OR IGNORE returns no row and no loser attachment can be
+    // written. Ten rows × nine values + two guard values = 92 parameters, under
+    // D1's hard 100-bound-parameter ceiling for each statement.
+    const messageQuery = insertMessage.toSQL();
+    const statements: D1PreparedStatement[] = [
+      this.db.$client.prepare(messageQuery.sql).bind(...toD1Values(messageQuery.params)),
+    ];
+    for (const group of chunks(message.attachments, ATTACHMENTS_PER_STATEMENT)) {
+      statements.push(attachmentInsert(this.db.$client, ctx, message.id, group));
     }
-    return { stored: true };
+    const [inserted] = await this.db.$client.batch(statements);
+    return { stored: (inserted?.results.length ?? 0) > 0 };
   }
 
   async findById(ctx: Caller, id: Ulid): Promise<Message | null> {
@@ -61,7 +78,7 @@ export class D1Messages implements MessageRepository {
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.id, id)))
       .limit(1);
     if (row === undefined) return null;
-    return toMessage(row, await this.attachmentsFor(ctx, [id]));
+    return await this.toHydratedMessage(ctx, row, await this.attachmentsFor(ctx, [id]));
   }
 
   async findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null> {
@@ -71,7 +88,39 @@ export class D1Messages implements MessageRepository {
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.rfcMessageId, rfcId)))
       .limit(1);
     if (row === undefined) return null;
-    return toMessage(row, await this.attachmentsFor(ctx, [row.id as Ulid]));
+    return await this.toHydratedMessage(
+      ctx,
+      row,
+      await this.attachmentsFor(ctx, [row.id as Ulid]),
+    );
+  }
+
+  async findPlacement(
+    ctx: Caller,
+    inboxId: Ulid,
+    envelopeRecipient: EmailAddress | null,
+    rfcId: RfcMessageId,
+  ): Promise<Message | null> {
+    const [row] = await this.db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.accountId, ctx.accountId),
+          eq(messages.inboxId, inboxId),
+          envelopeRecipient === null
+            ? isNull(messages.envelopeRecipient)
+            : eq(messages.envelopeRecipient, envelopeRecipient),
+          eq(messages.rfcMessageId, rfcId),
+        ),
+      )
+      .limit(1);
+    if (row === undefined) return null;
+    return await this.toHydratedMessage(
+      ctx,
+      row,
+      await this.attachmentsFor(ctx, [row.id as Ulid]),
+    );
   }
 
   /**
@@ -84,15 +133,24 @@ export class D1Messages implements MessageRepository {
   async findThreadIds(
     ctx: Caller,
     rfcIds: readonly RfcMessageId[],
+    inboxId?: Ulid,
   ): Promise<ReadonlyMap<string, ThreadId>> {
     if (rfcIds.length === 0) return new Map();
-    const rows = await this.db
-      .select({ rfcMessageId: messages.rfcMessageId, threadId: messages.threadId })
-      .from(messages)
-      .where(
-        and(eq(messages.accountId, ctx.accountId), inArray(messages.rfcMessageId, [...rfcIds])),
-      );
-    return new Map(rows.map((row) => [row.rfcMessageId, row.threadId as ThreadId]));
+    const found = new Map<string, ThreadId>();
+    for (const group of chunks(rfcIds, MESSAGE_IDS_PER_QUERY)) {
+      const rows = await this.db
+        .select({ rfcMessageId: messages.rfcMessageId, threadId: messages.threadId })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.accountId, ctx.accountId),
+            inboxId === undefined ? undefined : eq(messages.inboxId, inboxId),
+            inArray(messages.rfcMessageId, group),
+          ),
+        );
+      for (const row of rows) found.set(row.rfcMessageId, row.threadId as ThreadId);
+    }
+    return found;
   }
 
   /**
@@ -107,7 +165,7 @@ export class D1Messages implements MessageRepository {
     const limit = pageLimit(query);
     const rows = await this.db
       .select({
-        row: messages,
+        row: summaryProjection(),
         previewSource: sql<
           string | null
         >`substr(${messages.bodyText}, 1, ${PREVIEW_SOURCE_LENGTH})`,
@@ -157,7 +215,15 @@ export class D1Messages implements MessageRepository {
       ctx,
       rows.map((row) => row.id as Ulid),
     );
-    return rows.map((row) => toMessage(row, byMessage));
+    const hydrated: Message[] = [];
+    // Workers allow six simultaneous outbound connections. R2 reads use those
+    // slots, so hydrate five at a time rather than Promise.all over a long thread.
+    for (const group of chunks(rows, BODY_HYDRATION_CONCURRENCY)) {
+      hydrated.push(
+        ...(await Promise.all(group.map((row) => this.toHydratedMessage(ctx, row, byMessage)))),
+      );
+    }
+    return hydrated;
   }
 
   async setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void> {
@@ -204,25 +270,33 @@ export class D1Messages implements MessageRepository {
    */
   async deleteByInbox(ctx: Caller, inboxId: Ulid): Promise<{ storageKeys: string[] }> {
     const doomed = await this.db
-      .select({ id: messages.id, rawKey: messages.rawKey })
+      .select({ rawKey: messages.rawKey, bodyKey: messages.bodyKey })
       .from(messages)
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.inboxId, inboxId)));
     if (doomed.length === 0) return { storageKeys: [] };
 
-    const ids = doomed.map((row) => row.id);
-    const attachmentRows = await this.db
-      .select({ r2Key: attachments.r2Key })
-      .from(attachments)
-      .where(
-        and(eq(attachments.accountId, ctx.accountId), inArray(attachments.messageId, ids)),
-      );
+    // Keep bound parameters constant. Expanding every id into IN (?, ?, ...)
+    // made deleting an inbox with 100 messages exceed D1's query limit.
+    const attachmentRows = await this.db.$client
+      .prepare(
+        `SELECT a.r2_key FROM attachments a
+         WHERE a.account_id = ? AND a.message_id IN (
+           SELECT id FROM messages WHERE account_id = ? AND inbox_id = ?
+         )`,
+      )
+      .bind(ctx.accountId, ctx.accountId, inboxId)
+      .all<{ r2_key: string }>();
 
     await this.db.batch([
-      this.db
-        .delete(attachments)
-        .where(
-          and(eq(attachments.accountId, ctx.accountId), inArray(attachments.messageId, ids)),
+      this.db.delete(attachments).where(
+        and(
+          eq(attachments.accountId, ctx.accountId),
+          sql`${attachments.messageId} IN (
+              SELECT id FROM messages
+              WHERE account_id = ${ctx.accountId} AND inbox_id = ${inboxId}
+            )`,
         ),
+      ),
       this.db
         .delete(messages)
         .where(and(eq(messages.accountId, ctx.accountId), eq(messages.inboxId, inboxId))),
@@ -231,9 +305,25 @@ export class D1Messages implements MessageRepository {
     return {
       storageKeys: [
         ...doomed.flatMap((row) => (row.rawKey === null ? [] : [row.rawKey])),
-        ...attachmentRows.map((row) => row.r2Key),
+        ...doomed.flatMap((row) => (row.bodyKey === null ? [] : [row.bodyKey])),
+        ...attachmentRows.results.map((row) => row.r2_key),
       ],
     };
+  }
+
+  private async toHydratedMessage(
+    ctx: Caller,
+    row: MessageRow,
+    byMessage: Map<string, AttachmentMeta[]>,
+  ): Promise<Message> {
+    const indexed = toMessage(row, byMessage);
+    if (row.bodyKey === null) return indexed;
+    if (this.blobs === undefined) {
+      throw new Error("D1Messages needs a BlobStore to hydrate R2-backed message bodies.");
+    }
+    const bytes = await this.blobs.get(ctx, row.bodyKey);
+    if (bytes === null) throw new Error(`Message ${row.id} body blob is missing.`);
+    return { ...indexed, ...decodeStoredMessageBody(bytes) };
   }
 
   private async attachmentsFor(
@@ -242,19 +332,20 @@ export class D1Messages implements MessageRepository {
   ): Promise<Map<string, AttachmentMeta[]>> {
     const byMessage = new Map<string, AttachmentMeta[]>();
     if (messageIds.length === 0) return byMessage;
-    const rows = await this.db
-      .select()
-      .from(attachments)
-      .where(
-        and(
-          eq(attachments.accountId, ctx.accountId),
-          inArray(attachments.messageId, [...messageIds]),
-        ),
-      );
-    for (const row of rows) {
-      const list = byMessage.get(row.messageId) ?? [];
-      list.push(toAttachmentMeta(row));
-      byMessage.set(row.messageId, list);
+    // One account binding plus at most 90 ids keeps each query under D1's 100
+    // bound-parameter limit even for very long threads.
+    for (const group of chunks(messageIds, MESSAGE_IDS_PER_QUERY)) {
+      const rows = await this.db
+        .select()
+        .from(attachments)
+        .where(
+          and(eq(attachments.accountId, ctx.accountId), inArray(attachments.messageId, group)),
+        );
+      for (const row of rows) {
+        const list = byMessage.get(row.messageId) ?? [];
+        list.push(toAttachmentMeta(row));
+        byMessage.set(row.messageId, list);
+      }
     }
     return byMessage;
   }
@@ -263,6 +354,7 @@ export class D1Messages implements MessageRepository {
 function listFilters(query: ListMessagesQuery): (SQL | undefined)[] {
   return [
     query.inboxId === undefined ? undefined : eq(messages.inboxId, query.inboxId),
+    query.identityId === undefined ? undefined : eq(messages.identityId, query.identityId),
     query.threadId === undefined ? undefined : eq(messages.threadId, query.threadId),
     query.direction === undefined ? undefined : eq(messages.direction, query.direction),
     query.from === undefined ? undefined : eq(messages.fromAddr, query.from),
@@ -343,14 +435,21 @@ export function fullTextFilter(q: string): SQL {
   return sql`${messages.id} IN ${matching}`;
 }
 
-function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {
+function toRow(
+  ctx: Caller,
+  message: Message,
+  bodyKey: string | null,
+): typeof messages.$inferInsert {
   return {
     id: message.id,
     accountId: ctx.accountId,
     inboxId: message.inboxId,
+    identityId: message.identityId,
     rfcMessageId: message.rfcMessageId,
+    envelopeRecipient: message.envelopeRecipient,
     threadId: message.threadId,
     direction: message.direction,
+    origin: message.origin,
     fromHeader: message.fromHeader,
     fromAddr: message.from,
     toHeader: message.toHeader,
@@ -359,8 +458,9 @@ function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {
     bccAddrs: [...message.bcc],
     replyTo: message.replyTo,
     subject: message.subject,
-    bodyText: message.bodyText,
-    bodyHtml: message.bodyHtml,
+    bodyKey,
+    bodyText: truncateUtf8(message.bodyText, MESSAGE_INDEX_TEXT_BYTES),
+    bodyHtml: truncateUtf8(message.bodyHtml, MESSAGE_INDEX_TEXT_BYTES),
     inReplyTo: message.inReplyTo,
     referencesIds: [...message.references],
     spf: message.auth.spf,
@@ -378,16 +478,76 @@ function toRow(ctx: Caller, message: Message): typeof messages.$inferInsert {
   };
 }
 
+const ATTACHMENT_BOUND_PARAMETERS = 9;
+const ATTACHMENTS_PER_STATEMENT = Math.floor((100 - 2) / ATTACHMENT_BOUND_PARAMETERS);
+const MESSAGE_IDS_PER_QUERY = 90;
+const BODY_HYDRATION_CONCURRENCY = 5;
+
+function attachmentInsert(
+  db: D1Database,
+  ctx: Caller,
+  messageId: Ulid,
+  group: readonly AttachmentMeta[],
+): D1PreparedStatement {
+  const row = "(?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  const sqlText = `INSERT INTO attachments
+    (id, account_id, message_id, filename, mime, content_id, size, inline, r2_key)
+    SELECT column1, column2, column3, column4, column5, column6, column7, column8, column9
+    FROM (VALUES ${group.map(() => row).join(", ")})
+    WHERE EXISTS (SELECT 1 FROM messages WHERE account_id = ? AND id = ?)`;
+  const params: unknown[] = group.flatMap((attachment) => [
+    attachment.id,
+    ctx.accountId,
+    messageId,
+    attachment.filename,
+    attachment.mime,
+    attachment.contentId,
+    attachment.size,
+    attachment.inline ? 1 : 0,
+    attachment.storageKey,
+  ]);
+  params.push(ctx.accountId, messageId);
+  return db.prepare(sqlText).bind(...params);
+}
+
+function toD1Values(values: readonly unknown[]): unknown[] {
+  return values.map((value) => {
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "number" ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value)
+    ) {
+      return value;
+    }
+    throw new Error(`Unsupported D1 bind value: ${typeof value}`);
+  });
+}
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
+
+type SummaryRow = Omit<MessageRow, "bodyKey" | "bodyText" | "bodyHtml">;
+
 function summaryFields(
-  row: MessageRow,
+  row: SummaryRow,
 ): Omit<MessageSummary, "attachmentCount" | "hasText" | "hasHtml" | "preview"> {
   return {
     id: row.id as Ulid,
     accountId: row.accountId as Message["accountId"],
     inboxId: row.inboxId as Ulid,
+    identityId: row.identityId as Ulid | null,
     rfcMessageId: row.rfcMessageId as RfcMessageId,
+    envelopeRecipient: row.envelopeRecipient as EmailAddress | null,
     threadId: row.threadId as ThreadId,
     direction: row.direction as Message["direction"],
+    origin: row.origin as Message["origin"],
     fromHeader: row.fromHeader,
     from: row.fromAddr as EmailAddress | null,
     toHeader: row.toHeader,
@@ -415,30 +575,49 @@ function summaryFields(
   };
 }
 
+/** Every summary column except body/body_key; keeps list memory proportional to page size. */
+function summaryProjection() {
+  return {
+    id: messages.id,
+    accountId: messages.accountId,
+    inboxId: messages.inboxId,
+    identityId: messages.identityId,
+    rfcMessageId: messages.rfcMessageId,
+    envelopeRecipient: messages.envelopeRecipient,
+    threadId: messages.threadId,
+    direction: messages.direction,
+    origin: messages.origin,
+    fromHeader: messages.fromHeader,
+    fromAddr: messages.fromAddr,
+    toHeader: messages.toHeader,
+    toAddrs: messages.toAddrs,
+    ccAddrs: messages.ccAddrs,
+    bccAddrs: messages.bccAddrs,
+    replyTo: messages.replyTo,
+    subject: messages.subject,
+    inReplyTo: messages.inReplyTo,
+    referencesIds: messages.referencesIds,
+    spf: messages.spf,
+    dkim: messages.dkim,
+    dmarc: messages.dmarc,
+    trusted: messages.trusted,
+    trustReasons: messages.trustReasons,
+    tag: messages.tag,
+    autoSubmitted: messages.autoSubmitted,
+    rawKey: messages.rawKey,
+    size: messages.size,
+    seen: messages.seen,
+    sentAt: messages.sentAt,
+    receivedAt: messages.receivedAt,
+  };
+}
+
 export function toMessage(row: MessageRow, byMessage: Map<string, AttachmentMeta[]>): Message {
   return {
     ...summaryFields(row),
     bodyText: row.bodyText,
     bodyHtml: row.bodyHtml,
     attachments: byMessage.get(row.id) ?? [],
-  };
-}
-
-function toAttachmentRow(
-  ctx: Caller,
-  messageId: Ulid,
-  attachment: AttachmentMeta,
-): typeof attachments.$inferInsert {
-  return {
-    id: attachment.id,
-    accountId: ctx.accountId,
-    messageId,
-    filename: attachment.filename,
-    mime: attachment.mime,
-    contentId: attachment.contentId,
-    size: attachment.size,
-    inline: attachment.inline,
-    r2Key: attachment.storageKey,
   };
 }
 

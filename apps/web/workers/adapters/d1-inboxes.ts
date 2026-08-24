@@ -86,6 +86,7 @@ export class D1Inboxes implements InboxRepository {
           isNull(inboxes.deletedAt),
           query.kind === undefined ? undefined : eq(inboxes.kind, query.kind),
           query.domain === undefined ? undefined : eq(inboxes.domain, query.domain),
+          query.identityId === undefined ? undefined : eq(inboxes.identityId, query.identityId),
           // The comparison is on ISO text, which sorts chronologically — and the
           // instant comes from the caller, because a repository that read the
           // clock would make "list what was live at 09:00" impossible to ask.

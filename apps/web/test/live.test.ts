@@ -1,9 +1,10 @@
 import { env, SELF } from "cloudflare:test";
-import type { InboxDto } from "@mailworker/contract";
+import type { AgentIdentityDto, ApiKeyDto, InboxDto } from "@mailworker/contract";
+import { AccountId } from "@mailworker/core";
 import { createDb, schema } from "@web/workers/adapters";
 import entry from "@web/workers/entry";
 import { seal } from "@web/workers/http/session";
-import type { LiveEvent } from "@web/workers/waiter";
+import { type LiveEvent, waiterFor } from "@web/workers/waiter";
 import { beforeEach, describe, expect, it } from "vitest";
 
 /**
@@ -32,6 +33,8 @@ beforeEach(async () => {
     db.delete(schema.attachments),
     db.delete(schema.messages),
     db.delete(schema.inboxes),
+    db.delete(schema.apiKeys),
+    db.delete(schema.agentIdentities),
     db.delete(schema.domains),
   ]);
 
@@ -49,10 +52,39 @@ beforeEach(async () => {
   });
 });
 
-async function createInbox(prefix: string): Promise<InboxDto> {
+async function api(path: string, token: string, init: RequestInit = {}): Promise<Response> {
+  return await SELF.fetch(`${ORIGIN}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+  });
+}
+
+async function createIdentity(name: string): Promise<AgentIdentityDto> {
+  const response = await api("/v1/identities", ADMIN_KEY, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  expect(response.status).toBe(201);
+  return (await response.json()) as AgentIdentityDto;
+}
+
+async function mintBoundKey(identityName: string): Promise<string> {
+  const response = await api("/v1/keys", ADMIN_KEY, {
+    method: "POST",
+    body: JSON.stringify({
+      name: `${identityName} live-test`,
+      identityName,
+      scopes: ["inbox:read", "inbox:write", "message:read"],
+    }),
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as ApiKeyDto & { token: string }).token;
+}
+
+async function createInbox(prefix: string, token = ADMIN_KEY): Promise<InboxDto> {
   const response = await SELF.fetch(`${ORIGIN}/v1/inboxes`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+    headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ prefix, domain: DOMAIN }),
   });
   expect(response.status).toBe(201);
@@ -87,14 +119,17 @@ async function deliver(to: string, subject: string): Promise<void> {
 }
 
 async function connect(
-  options: { inbox?: string; cookie?: boolean; origin?: string | null } = {},
+  options: { inbox?: string; cookie?: boolean; origin?: string | null; token?: string } = {},
 ): Promise<Response> {
   const url = new URL("/events", ORIGIN);
   if (options.inbox !== undefined) url.searchParams.set("inbox", options.inbox);
 
   const headers = new Headers({ Upgrade: "websocket" });
   if (options.cookie !== false) {
-    headers.set("Cookie", `mw_session=${await seal(env, ADMIN_KEY, new Date())}`);
+    headers.set(
+      "Cookie",
+      `mw_session=${await seal(env, options.token ?? ADMIN_KEY, new Date())}`,
+    );
   }
   if (options.origin !== null) headers.set("Origin", options.origin ?? ORIGIN);
 
@@ -113,6 +148,13 @@ function nextEvent(socket: WebSocket): Promise<LiveEvent> {
 }
 
 describe("who may open a live connection", () => {
+  it("fails closed when an old forwarder supplies no visibility marker", async () => {
+    const response = await waiterFor(env.WAITER, AccountId.parse("default")).fetch(
+      new Request("https://waiter.internal/", { headers: { Upgrade: "websocket" } }),
+    );
+    expect(response.status).toBe(403);
+  });
+
   it("refuses a request that is not an upgrade", async () => {
     const response = await SELF.fetch(`${ORIGIN}/events`, {
       headers: { Cookie: `mw_session=${await seal(env, ADMIN_KEY, new Date())}` },
@@ -189,6 +231,44 @@ describe("what it says", () => {
 
     expect((await event).inboxId).toBe(inbox.id);
     socket.close();
+  });
+
+  it("keeps an identity-bound connection inside its identity", async () => {
+    await createIdentity("alice-live");
+    await createIdentity("bob-live");
+    const aliceToken = await mintBoundKey("alice-live");
+    const bobToken = await mintBoundKey("bob-live");
+    const aliceInbox = await createInbox("alice-live", aliceToken);
+    const bobInbox = await createInbox("bob-live", bobToken);
+
+    const socket = (await connect({ token: aliceToken })).webSocket!;
+    socket.accept();
+    const event = nextEvent(socket);
+
+    // Ordered instead of timed: a missing identity filter makes Bob's event
+    // resolve this promise first and names the leaked inbox in the failure.
+    await deliver(bobInbox.address, "Bob only");
+    await deliver(aliceInbox.address, "Alice only");
+
+    expect((await event).inboxId).toBe(aliceInbox.id);
+    socket.close();
+  });
+
+  it("refuses another identity's requested inbox", async () => {
+    await createIdentity("alice-filter");
+    await createIdentity("bob-filter");
+    const aliceToken = await mintBoundKey("alice-filter");
+    const bobToken = await mintBoundKey("bob-filter");
+    const aliceInbox = await createInbox("alice-filter", aliceToken);
+    const bobInbox = await createInbox("bob-filter", bobToken);
+
+    const refused = await connect({ token: aliceToken, inbox: bobInbox.id });
+    expect(refused.status).toBe(404);
+
+    const accepted = await connect({ token: aliceToken, inbox: aliceInbox.id });
+    expect(accepted.status).toBe(101);
+    accepted.webSocket?.accept();
+    accepted.webSocket?.close();
   });
 
   it("answers a keepalive without waking the object", async () => {

@@ -11,6 +11,7 @@ import {
   R2Blobs,
   schema,
 } from "@web/workers/adapters";
+import { beforeEach, describe, expect, it } from "vitest";
 
 /**
  * The same suite `packages/core` runs against the in-memory adapters, run here
@@ -40,6 +41,7 @@ async function reset(): Promise<void> {
     db.delete(schema.attachments),
     db.delete(schema.messages),
     db.delete(schema.deliveryEvents),
+    db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
     db.delete(schema.inboxes),
     db.delete(schema.agentIdentities),
@@ -69,4 +71,52 @@ runRepositoryConformance("D1 + R2", async () => {
     suppressions: new D1Suppressions(db),
     blobs: new R2Blobs(env.BLOBS),
   };
+});
+
+describe("0010 rolling Worker compatibility", () => {
+  beforeEach(reset);
+
+  it("derives and persists a route key when an older INSERT omits the new column", async () => {
+    await env.DB.prepare(
+      `INSERT INTO inboxes (
+        id, account_id, address, local_part, domain, kind, created_at
+      ) VALUES (
+        'legacy-inbox', 'alice', 'agent@mail.example.com', 'agent',
+        'mail.example.com', 'persistent', '2026-07-01T12:00:00.000Z'
+      )`,
+    ).run();
+    const insertAsOldWorker = async (id: string, tag: string) => {
+      const mimeRecipient = "agent@mail.example.com";
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO messages (
+          id, account_id, inbox_id, rfc_message_id, thread_id, direction,
+          from_header, to_header, to_addrs, cc_addrs, bcc_addrs,
+          references_ids, trust_reasons, tag, received_at
+        ) VALUES (?, 'alice', 'legacy-inbox', 'same@sender.test',
+          'same@sender.test', 'inbound', 'sender@sender.test', ?, ?, '[]',
+          '[]', '[]', '[]', ?, '2026-07-01T12:00:00.000Z')`,
+      )
+        .bind(id, mimeRecipient, JSON.stringify([mimeRecipient]), tag)
+        .run();
+    };
+
+    await insertAsOldWorker("01J00000000000000000000001", "one");
+    await insertAsOldWorker("01J00000000000000000000002", "ONE");
+    await insertAsOldWorker("01J00000000000000000000003", "two");
+
+    const { results } = await env.DB.prepare(
+      `SELECT id, envelope_recipient
+       FROM messages WHERE account_id = 'alice' ORDER BY id`,
+    ).all<{ id: string; envelope_recipient: string }>();
+    expect(results).toEqual([
+      {
+        id: "01J00000000000000000000001",
+        envelope_recipient: "agent+one@mail.example.com",
+      },
+      {
+        id: "01J00000000000000000000003",
+        envelope_recipient: "agent+two@mail.example.com",
+      },
+    ]);
+  });
 });

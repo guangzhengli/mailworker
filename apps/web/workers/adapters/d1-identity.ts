@@ -14,7 +14,9 @@ import type { Db } from "@web/workers/adapters/d1";
 import { toDate, toIsoText } from "@web/workers/adapters/d1";
 import type { AgentIdentityRow, ApiKeyRow, DomainRow } from "@web/workers/adapters/schema";
 import { agentIdentities, apiKeys, domains } from "@web/workers/adapters/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, or } from "drizzle-orm";
+
+const API_KEY_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * The three identity-side repositories, together because they are one concept —
@@ -101,6 +103,20 @@ export class D1ApiKeys implements ApiKeyRepository {
       .update(apiKeys)
       .set(mutable)
       .where(and(eq(apiKeys.accountId, ctx.accountId), eq(apiKeys.id, key.id)));
+  }
+
+  async touchLastUsed(ctx: Caller, keyId: Ulid, at: Date): Promise<void> {
+    const cutoff = new Date(at.getTime() - API_KEY_TOUCH_INTERVAL_MS);
+    await this.db
+      .update(apiKeys)
+      .set({ lastUsedAt: toIsoText(at) })
+      .where(
+        and(
+          eq(apiKeys.accountId, ctx.accountId),
+          eq(apiKeys.id, keyId),
+          or(isNull(apiKeys.lastUsedAt), lte(apiKeys.lastUsedAt, toIsoText(cutoff))),
+        ),
+      );
   }
 
   async list(ctx: Caller): Promise<ApiKey[]> {

@@ -99,6 +99,7 @@ describe("sent search", () => {
       db.delete(schema.attachments),
       db.delete(schema.messages),
       db.delete(schema.deliveryEvents),
+      db.delete(schema.dispatchOutbox),
       db.delete(schema.deliveries),
     ]);
   });

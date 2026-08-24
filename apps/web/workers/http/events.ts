@@ -1,4 +1,4 @@
-import { Caller } from "@mailworker/core";
+import { Caller, isDomainError, Ulid } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
 import { callerForRequest } from "@web/workers/http/session";
 import { waiterFor } from "@web/workers/waiter";
@@ -59,7 +59,38 @@ export async function liveEvents(request: Request, env: Env): Promise<Response> 
   const url = new URL(request.url);
   const inbox = url.searchParams.get("inbox");
   const forwarded = new URL("https://waiter.internal/");
-  if (inbox !== null) forwarded.searchParams.set("inbox", inbox);
+  if (inbox !== null) {
+    if (!Caller.has(caller, "inbox:read")) {
+      return new Response("This credential cannot read inboxes.", { status: 403 });
+    }
+
+    const inboxId = Ulid.tryParse(inbox);
+    if (inboxId === null) return new Response("Invalid inbox id.", { status: 400 });
+
+    try {
+      await container.services.mailbox.getInbox(caller, inboxId);
+    } catch (error) {
+      // A caller must not be able to distinguish another identity's inbox from
+      // one that does not exist. Both are outside the connection's visibility.
+      if (
+        isDomainError(error) &&
+        (error.code === "forbidden" || error.code === "inbox_not_found")
+      ) {
+        return new Response("Inbox not found.", { status: 404 });
+      }
+      throw error;
+    }
+    forwarded.searchParams.set("inbox", inboxId);
+  }
+
+  // This value is derived from the authenticated caller, never from the URL.
+  // Admin and legacy unbound credentials retain their account-wide view.
+  if (!Caller.has(caller, "admin") && caller.identityId !== null) {
+    forwarded.searchParams.set("visibility", "identity");
+    forwarded.searchParams.set("identity", caller.identityId);
+  } else {
+    forwarded.searchParams.set("visibility", "account");
+  }
 
   return await waiterFor(env.WAITER, caller.accountId).fetch(
     new Request(forwarded, { headers: request.headers }),

@@ -3,7 +3,10 @@ import type {
   Caller,
   Delivery,
   DeliveryEvent,
+  DeliveryInsertOptions,
+  DeliveryInsertResult,
   DeliveryRepository,
+  DeliveryStatus,
   EmailAddress,
   ListDeliveriesQuery,
   Page,
@@ -13,15 +16,36 @@ import type { Db } from "@web/workers/adapters/d1";
 import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
 import { matchingMessageIds } from "@web/workers/adapters/d1-messages";
 import type { DeliveryEventRow, DeliveryRow } from "@web/workers/adapters/schema";
-import { deliveries, deliveryEvents } from "@web/workers/adapters/schema";
+import { deliveries, deliveryEvents, dispatchOutbox } from "@web/workers/adapters/schema";
 import type { SQL } from "drizzle-orm";
 import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
 
 export class D1Deliveries implements DeliveryRepository {
   constructor(private readonly db: Db) {}
 
-  async insert(ctx: Caller, delivery: Delivery): Promise<void> {
-    await this.db.insert(deliveries).values(toRow(ctx, delivery));
+  async insert(
+    ctx: Caller,
+    delivery: Delivery,
+    _options: DeliveryInsertOptions = {},
+  ): Promise<DeliveryInsertResult> {
+    const insertDelivery = this.db.insert(deliveries).values(toRow(ctx, delivery));
+    try {
+      // 0009 installs a permanent AFTER INSERT trigger that stages every queued
+      // row in the same D1 transaction. 0012's BEFORE INSERT trigger reserves
+      // identity quota in this statement, so concurrent requests cannot all
+      // pass a stale count. `stageDispatch` remains in the port for the in-memory
+      // implementation and to state the intended durability at the call site.
+      const inserted = await insertDelivery
+        .onConflictDoNothing()
+        .returning({ id: deliveries.id });
+      return inserted.length > 0 ? "inserted" : "duplicate";
+    } catch (error) {
+      if (errorText(error).includes("mailworker_quota_exceeded")) return "quota_exceeded";
+      if (errorText(error).includes("mailworker_exchange_limit")) {
+        return "exchange_limit_exceeded";
+      }
+      throw error;
+    }
   }
 
   async update(ctx: Caller, delivery: Delivery): Promise<void> {
@@ -30,6 +54,45 @@ export class D1Deliveries implements DeliveryRepository {
       .update(deliveries)
       .set(mutable)
       .where(and(eq(deliveries.accountId, ctx.accountId), eq(deliveries.id, delivery.id)));
+  }
+
+  async attachMessageId(
+    ctx: Caller,
+    deliveryId: Ulid,
+    messageId: Ulid,
+    at: Date,
+  ): Promise<void> {
+    await this.db
+      .update(deliveries)
+      .set({ messageId, updatedAt: toIsoText(at) })
+      .where(and(eq(deliveries.accountId, ctx.accountId), eq(deliveries.id, deliveryId)));
+  }
+
+  async updateIfStatus(
+    ctx: Caller,
+    delivery: Delivery,
+    expected: DeliveryStatus,
+  ): Promise<boolean> {
+    const { id: _id, accountId: _accountId, ...mutable } = toRow(ctx, delivery);
+    const updated = await this.db
+      .update(deliveries)
+      .set(mutable)
+      .where(
+        and(
+          eq(deliveries.accountId, ctx.accountId),
+          eq(deliveries.id, delivery.id),
+          eq(deliveries.status, expected),
+        ),
+      )
+      .returning({ id: deliveries.id });
+    return updated.length > 0;
+  }
+
+  async approveAndStage(ctx: Caller, delivery: Delivery): Promise<boolean> {
+    // Migration 0009's AFTER UPDATE trigger inserts the outbox row in the same
+    // statement that wins this CAS. There is no pending row to strand and no
+    // stage-before-CAS head-of-line blocker.
+    return await this.updateIfStatus(ctx, delivery, "pending_approval");
   }
 
   async findById(ctx: Caller, id: Ulid): Promise<Delivery | null> {
@@ -41,9 +104,21 @@ export class D1Deliveries implements DeliveryRepository {
    * here, before any policy gate runs — re-running the gates on a retry would be
    * wasted work at best, and a second send at worst.
    */
-  async findByIdempotencyKey(ctx: Caller, key: string): Promise<Delivery | null> {
+  async findByIdempotencyKey(
+    ctx: Caller,
+    key: string,
+    identityId?: Ulid | null,
+  ): Promise<Delivery | null> {
     return this.findOne(
-      and(eq(deliveries.accountId, ctx.accountId), eq(deliveries.idempotencyKey, key)),
+      and(
+        eq(deliveries.accountId, ctx.accountId),
+        eq(deliveries.idempotencyKey, key),
+        identityId === undefined
+          ? undefined
+          : identityId === null
+            ? isNull(deliveries.identityId)
+            : eq(deliveries.identityId, identityId),
+      ),
     );
   }
 
@@ -114,20 +189,130 @@ export class D1Deliveries implements DeliveryRepository {
     return row?.value ?? 0;
   }
 
-  async appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<void> {
-    await this.db.insert(deliveryEvents).values({
-      id: event.id,
-      accountId: ctx.accountId,
-      deliveryId: event.deliveryId,
-      providerMsgId: event.providerMessageId,
-      recipient: event.recipient,
-      type: event.type,
-      terminal: event.terminal,
-      smtpCode: event.smtpCode,
-      smtpResponse: event.smtpResponse,
-      occurredAt: toIsoText(event.occurredAt),
-      raw: event.raw,
-    });
+  async stageDispatch(ctx: Caller, deliveryId: Ulid, now: Date): Promise<boolean> {
+    const inserted = await this.db
+      .insert(dispatchOutbox)
+      .values({ accountId: ctx.accountId, deliveryId, createdAt: toIsoText(now)! })
+      .onConflictDoNothing()
+      .returning({ deliveryId: dispatchOutbox.deliveryId });
+    return inserted.length > 0;
+  }
+
+  async listStagedDispatches(
+    ctx: Caller,
+    limit: number,
+  ): Promise<Array<{ deliveryId: Ulid; createdAt: Date }>> {
+    const rows = await this.db
+      .select()
+      .from(dispatchOutbox)
+      .where(eq(dispatchOutbox.accountId, ctx.accountId))
+      .orderBy(asc(dispatchOutbox.createdAt))
+      .limit(limit);
+    return rows.map((row) => ({
+      deliveryId: row.deliveryId as Ulid,
+      createdAt: toDate(row.createdAt)!,
+    }));
+  }
+
+  async unstageDispatch(ctx: Caller, deliveryId: Ulid): Promise<void> {
+    await this.db
+      .delete(dispatchOutbox)
+      .where(
+        and(
+          eq(dispatchOutbox.accountId, ctx.accountId),
+          eq(dispatchOutbox.deliveryId, deliveryId),
+        ),
+      );
+  }
+
+  async appendDeliveryEvent(ctx: Caller, event: DeliveryEvent): Promise<boolean> {
+    const inserted = await this.db
+      .insert(deliveryEvents)
+      .values({
+        id: event.id,
+        accountId: ctx.accountId,
+        eventId: event.eventId,
+        deliveryId: event.deliveryId,
+        providerMsgId: event.providerMessageId,
+        recipient: event.recipient,
+        sourceDomain: event.sourceDomain,
+        sourceZoneId: event.sourceZoneId,
+        type: event.type,
+        terminal: event.terminal,
+        smtpCode: event.smtpCode,
+        smtpEnhancedCode: event.smtpEnhancedCode,
+        smtpResponse: event.smtpResponse,
+        bounceType: event.bounceType,
+        bounceClassification: event.bounceClassification,
+        bounceReason: event.bounceReason,
+        occurredAt: toIsoText(event.occurredAt),
+        processingAt: null,
+        processedAt: null,
+        raw: event.raw,
+      })
+      .onConflictDoNothing()
+      .returning({ id: deliveryEvents.id });
+    return inserted.length > 0;
+  }
+
+  async claimDeliveryEvent(
+    ctx: Caller,
+    eventId: string,
+    now: Date,
+    staleBefore: Date,
+  ): Promise<"claimed" | "processed" | "busy"> {
+    const claimed = await this.db
+      .update(deliveryEvents)
+      .set({ processingAt: toIsoText(now) })
+      .where(
+        and(
+          eq(deliveryEvents.accountId, ctx.accountId),
+          eq(deliveryEvents.eventId, eventId),
+          or(
+            isNull(deliveryEvents.processingAt),
+            sql`${deliveryEvents.processingAt} < ${toIsoText(staleBefore)}`,
+          ),
+          isNull(deliveryEvents.processedAt),
+        ),
+      )
+      .returning({ id: deliveryEvents.id });
+    if (claimed.length > 0) return "claimed";
+
+    // An UPDATE miss has two very different meanings to an at-least-once
+    // consumer. A completed event is a harmless duplicate; an unprocessed row
+    // still under lease must be retried, because its owner may have crashed.
+    // Treat a missing scoped row as busy too: acknowledging it would hide a
+    // routing or global-id collision rather than repair one.
+    const [state] = await this.db
+      .select({ processedAt: deliveryEvents.processedAt })
+      .from(deliveryEvents)
+      .where(
+        and(eq(deliveryEvents.accountId, ctx.accountId), eq(deliveryEvents.eventId, eventId)),
+      )
+      .limit(1);
+    return state?.processedAt != null ? "processed" : "busy";
+  }
+
+  async completeDeliveryEvent(ctx: Caller, eventId: string, at: Date): Promise<void> {
+    await this.db
+      .update(deliveryEvents)
+      .set({ processedAt: toIsoText(at), processingAt: null })
+      .where(
+        and(eq(deliveryEvents.accountId, ctx.accountId), eq(deliveryEvents.eventId, eventId)),
+      );
+  }
+
+  async releaseDeliveryEvent(ctx: Caller, eventId: string): Promise<void> {
+    await this.db
+      .update(deliveryEvents)
+      .set({ processingAt: null })
+      .where(
+        and(
+          eq(deliveryEvents.accountId, ctx.accountId),
+          eq(deliveryEvents.eventId, eventId),
+          isNull(deliveryEvents.processedAt),
+        ),
+      );
   }
 
   async listDeliveryEvents(ctx: Caller, deliveryId: Ulid): Promise<DeliveryEvent[]> {
@@ -148,6 +333,21 @@ export class D1Deliveries implements DeliveryRepository {
     const [row] = await this.db.select().from(deliveries).where(where).limit(1);
     return row === undefined ? null : toDelivery(row);
   }
+}
+
+function errorText(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current !== null && current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    parts.push(String(current));
+    current =
+      typeof current === "object" && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : undefined;
+  }
+  return parts.join("\n");
 }
 
 /**
@@ -222,13 +422,20 @@ export function toDelivery(row: DeliveryRow): Delivery {
 export function toDeliveryEvent(row: DeliveryEventRow): DeliveryEvent {
   return {
     id: row.id as Ulid,
+    eventId: row.eventId,
     deliveryId: row.deliveryId as Ulid | null,
     providerMessageId: row.providerMsgId,
     recipient: row.recipient as EmailAddress | null,
+    sourceDomain: row.sourceDomain,
+    sourceZoneId: row.sourceZoneId,
     type: row.type,
     terminal: row.terminal,
     smtpCode: row.smtpCode,
+    smtpEnhancedCode: row.smtpEnhancedCode,
     smtpResponse: row.smtpResponse,
+    bounceType: row.bounceType as DeliveryEvent["bounceType"],
+    bounceClassification: row.bounceClassification,
+    bounceReason: row.bounceReason,
     occurredAt: toDate(row.occurredAt),
     raw: row.raw,
   };

@@ -4,6 +4,7 @@ import { WebCryptoSecrets } from "@web/workers/adapters";
 import type { Container } from "@web/workers/container";
 
 const secrets = new WebCryptoSecrets();
+const KEY_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Turn a bearer token into a `Caller`, or refuse.
@@ -86,18 +87,32 @@ export async function callerForToken(
   }
 
   const account = await resolveAccount(container, key.accountId);
-  return await inTargetEnvironment(
-    container,
-    {
-      accountId: account.id,
-      projectId: account.projectId,
-      mode: account.mode,
-      identityId: key.identityId,
-      scopes: key.scopes,
-      subject: `key:${key.prefix}`,
-    },
-    targetAccountId,
-  );
+  const caller: Caller = {
+    accountId: account.id,
+    projectId: account.projectId,
+    mode: account.mode,
+    identityId: key.identityId,
+    scopes: key.scopes,
+    subject: `key:${key.prefix}`,
+  };
+
+  // Keep the key inventory useful without turning every authenticated request
+  // into a D1 write. The first use is recorded immediately; active keys are
+  // refreshed at most once every five minutes.
+  if (
+    key.lastUsedAt === null ||
+    now.getTime() - key.lastUsedAt.getTime() >= KEY_TOUCH_INTERVAL_MS
+  ) {
+    // Telemetry must never block a valid request, and it must not race a revoke
+    // by rewriting the full key row from this stale authentication snapshot.
+    try {
+      await container.apiKeys.touchLastUsed(caller, key.id, now);
+    } catch (error) {
+      console.error("API key last-used timestamp could not be recorded", error);
+    }
+  }
+
+  return await inTargetEnvironment(container, caller, targetAccountId);
 }
 
 /**

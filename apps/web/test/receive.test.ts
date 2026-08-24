@@ -150,6 +150,23 @@ describe("inbound mail", () => {
     expect(((await listed.json()) as { items: MessageDto[] }).items).toHaveLength(1);
   });
 
+  it("stores one RFC message delivered to two +tags in the same inbox", async () => {
+    const inbox = await createInbox("tagged");
+    const at = inbox.address.lastIndexOf("@");
+    const one = `${inbox.address.slice(0, at)}+run-one@${DOMAIN}`;
+    const two = `${inbox.address.slice(0, at)}+run-two@${DOMAIN}`;
+    // MIME To deliberately stays at the base address: SMTP RCPT TO is the
+    // authoritative route identity, and the two can differ for BCC/forwarding.
+    const raw = rawEmail(inbox.address, { id: "tagged-fanout@sender.test" });
+
+    expect(await deliver(one, raw)).toEqual([]);
+    expect(await deliver(two, raw)).toEqual([]);
+    expect(await deliver(one.toUpperCase(), raw)).toEqual([]);
+
+    const listed = await api(`/v1/messages?inbox=${inbox.id}`);
+    expect(((await listed.json()) as { items: MessageDto[] }).items).toHaveLength(2);
+  });
+
   it("rejects mail for an address no inbox claims", async () => {
     const unknown = `nobody@${DOMAIN}`;
     const rejections = await deliver(unknown, rawEmail(unknown));
@@ -284,5 +301,47 @@ describe("the API surface", () => {
     const body = (await response.json()) as { outcome: string; message: MessageDto };
     expect(body.outcome).toBe("stored");
     expect(body.message.subject).toBe("Injected");
+  });
+
+  it("rejects an oversized raw fixture before reading its body", async () => {
+    const response = await api(`/v1/ingest/raw?to=agent%40${DOMAIN}`, {
+      method: "POST",
+      body: "not read",
+      headers: {
+        "Content-Type": "message/rfc822",
+        "Content-Length": String(25 * 1024 * 1024 + 1),
+      },
+    });
+
+    expect(response.status).toBe(413);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "payload_too_large",
+    );
+  });
+
+  it("does not let a read-only key forge inbound mail", async () => {
+    const keyResponse = await api("/v1/keys", {
+      method: "POST",
+      body: JSON.stringify({ name: "reader", scopes: ["message:read"] }),
+    });
+    const { token } = (await keyResponse.json()) as { token: string };
+    const inbox = await createInbox();
+
+    const response = await SELF.fetch(
+      `https://mailworker.test/v1/ingest/raw?to=${encodeURIComponent(inbox.address)}`,
+      {
+        method: "POST",
+        body: rawEmail(inbox.address, { subject: "Forged" }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "message/rfc822",
+        },
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "forbidden",
+    );
   });
 });

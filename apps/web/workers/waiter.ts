@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AccountId, Caller, Message, MessageRepository, Waiter } from "@mailworker/core";
-import { WaitCriteria } from "@mailworker/core";
+import { DomainError, WaitCriteria } from "@mailworker/core";
 
 /**
  * How far back a wait looks through already-stored messages.
@@ -11,6 +11,7 @@ import { WaitCriteria } from "@mailworker/core";
  * no bound at all.
  */
 const LOOKBACK_LIMIT = 50;
+const MAX_PENDING_WAITS = 50;
 
 /**
  * The rendezvous point for `wait`, one Durable Object per account.
@@ -58,19 +59,34 @@ export class MessageWaiter extends DurableObject<Env> {
    * `acceptWebSocket` rather than `server.accept()`: the hibernatable form lets
    * the object be evicted while the socket stays open, so a tab left open
    * overnight costs storage of the socket rather than duration of an isolate.
-   * The `inboxId` filter rides along in the socket's attachment for the same
-   * reason — instance fields do not survive hibernation, and a filter that
-   * silently emptied itself would turn one inbox's page into a firehose.
+   * The inbox and identity filters ride along in the socket's attachment for
+   * the same reason — instance fields do not survive hibernation, and a filter
+   * that silently emptied itself would turn one identity's page into a
+   * firehose.
    */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected a WebSocket upgrade.", { status: 426 });
     }
 
-    const inboxId = new URL(request.url).searchParams.get("inbox");
+    const url = new URL(request.url);
+    const visibility = url.searchParams.get("visibility");
+    const inboxId = url.searchParams.get("inbox");
+    const identity = url.searchParams.get("identity");
+    if (
+      (visibility !== "account" && visibility !== "identity") ||
+      (visibility === "identity" && identity === null) ||
+      (visibility === "account" && identity !== null)
+    ) {
+      // The DO is reached through an internal binding, but rolling deployments
+      // can briefly pair this new code with an old forwarding Worker. Missing
+      // provenance must never be interpreted as account-wide visibility.
+      return new Response("Missing authenticated visibility marker.", { status: 403 });
+    }
+    const identityId = visibility === "identity" ? identity : null;
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ inboxId } satisfies SocketFilter);
+    server.serializeAttachment({ inboxId, identityId } satisfies SocketFilter);
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -86,6 +102,9 @@ export class MessageWaiter extends DurableObject<Env> {
     criteria: WaitCriteria,
     timeoutMs: number,
   ): Promise<Message | null> {
+    if (this.#pending.size >= MAX_PENDING_WAITS && !this.#pending.has(waitId)) {
+      throw new Error(`Too many concurrent waits (maximum ${MAX_PENDING_WAITS}).`);
+    }
     return await new Promise<Message | null>((resolve) => {
       const timer = setTimeout(() => {
         this.#pending.delete(waitId);
@@ -151,6 +170,14 @@ export class MessageWaiter extends DurableObject<Env> {
 
     for (const socket of sockets) {
       const filter = socket.deserializeAttachment() as SocketFilter | null;
+      // A socket accepted by a pre-identity-filter deployment has no marker
+      // proving its visibility. Fail closed across a rolling deploy instead of
+      // treating that old attachment as account-wide.
+      if (filter === null || !("identityId" in filter)) {
+        socket.close(1012, "Reconnect to refresh authorization.");
+        continue;
+      }
+      if (filter.identityId !== null && filter.identityId !== message.identityId) continue;
       if (filter?.inboxId != null && filter.inboxId !== message.inboxId) continue;
       try {
         socket.send(payload);
@@ -174,6 +201,7 @@ interface Pending {
 /** What a socket asked to hear about, kept where hibernation cannot lose it. */
 interface SocketFilter {
   readonly inboxId: string | null;
+  readonly identityId: string | null;
 }
 
 /**
@@ -222,10 +250,21 @@ export class DurableWaiter implements Waiter {
     const stub = this.stubFor(ctx);
     const waitId = crypto.randomUUID();
 
+    if ((await stub.pendingCount()) >= MAX_PENDING_WAITS) {
+      throw new DomainError(
+        "wait_capacity_exceeded",
+        `This environment already has ${MAX_PENDING_WAITS} concurrent waits.`,
+        { maximum: MAX_PENDING_WAITS },
+      );
+    }
+
     // Attached now, not later: if the look-back wins the race we return without
     // awaiting this, and an unobserved rejection would surface as an unhandled
     // error in the isolate rather than anywhere a caller could act on it.
-    const listening = stub.listen(waitId, criteria, timeoutMs).catch(() => null);
+    const listening = stub.listen(waitId, criteria, timeoutMs).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
 
     const stored = await this.lookBack(ctx, criteria);
     if (stored !== null) {
@@ -233,7 +272,12 @@ export class DurableWaiter implements Waiter {
       return stored;
     }
 
-    return await listening;
+    const notified = await listening;
+    if (!notified.ok) throw notified.error;
+    if (notified.value !== null) return notified.value;
+    // Close the insert→notify failure window: if the DO RPC was lost after D1
+    // committed, the listener can time out even though the answer exists.
+    return await this.lookBack(ctx, criteria);
   }
 
   async notify(ctx: Caller, message: Message): Promise<void> {
@@ -261,6 +305,7 @@ export class DurableWaiter implements Waiter {
       ...(criteria.inboxId === undefined ? {} : { inboxId: criteria.inboxId }),
       ...(criteria.from === undefined ? {} : { from: criteria.from }),
       ...(criteria.after === undefined ? {} : { after: criteria.after }),
+      ...(criteria.identityId === undefined ? {} : { identityId: criteria.identityId }),
     });
 
     for (const summary of page.items) {

@@ -10,7 +10,8 @@ import { scheduled } from "@web/workers/scheduled";
  *
  * `fetch` serves the `/v1` API and the dashboard, `email` receives inbound mail
  * from Email Routing, `queue` dispatches sends and folds in delivery events,
- * and `scheduled` sweeps expired inboxes. One `wrangler deploy`, one URL, one
+ * and `scheduled` sweeps retention plus the durable dispatch outbox. One
+ * `wrangler deploy`, one URL, one
  * origin — which is what makes `mailworker deploy` a single command and the CLI
  * a single base URL rather than a service map.
  *

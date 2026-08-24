@@ -15,6 +15,12 @@
 export type { Db } from "@web/workers/adapters/d1";
 export { createDb, toDate, toIsoText } from "@web/workers/adapters/d1";
 export { D1Accounts } from "@web/workers/adapters/d1-accounts";
+export {
+  D1DashboardQueries,
+  type DashboardAgentPulse,
+  type DashboardReadiness,
+  type DashboardSummary,
+} from "@web/workers/adapters/d1-dashboard";
 export { D1Deliveries } from "@web/workers/adapters/d1-deliveries";
 export {
   D1ApiKeys,
@@ -41,7 +47,12 @@ export {
   SandboxTransport,
 } from "@web/workers/adapters/sandbox";
 export * as schema from "@web/workers/adapters/schema";
-export { SystemClock, UlidGenerator, WebCryptoSecrets } from "@web/workers/adapters/system";
+export {
+  SystemClock,
+  UlidGenerator,
+  WebCryptoContentHasher,
+  WebCryptoSecrets,
+} from "@web/workers/adapters/system";
 export {
   CloudflareTransport,
   UnconfiguredTransport,

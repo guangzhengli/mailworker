@@ -16,17 +16,14 @@
   // handling inbound mail.
   "assets": { "directory": "./build/client" },
 
-  // A stable origin for the CLI, the SDK and bookmarks, instead of the
-  // workers.dev name that changes if the Worker is ever renamed. Cloudflare
-  // provisions the proxied hostname record itself; it is orthogonal to MX, so
-  // this shares nextdevkit.com with Lark's mailboxes without touching them.
-  "routes": [{ "pattern": "mailworker.nextdevkit.com", "custom_domain": true }],
+  // A custom domain is deployment-specific. Add a `routes` entry locally when
+  // provisioning one, and keep that account-specific edit out of public commits.
 
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "mailworker",
-      "database_id": "24ed88fc-b204-4dbb-b776-f689a4166457",
+      "database_id": "PLACEHOLDER_RUN_MAILWORKER_DEPLOY",
       "migrations_dir": "migrations"
     }
   ],
@@ -97,16 +94,16 @@
     ]
   },
 
-  // Retention. Nothing else in the deployment deletes an expired inbox, so
+  // Retention and durable queue hand-off reconciliation. Nothing else in the
+  // deployment deletes an expired inbox, so
   // without this an ephemeral inbox is only ephemeral in the sense that it stops
   // answering — the rows and the R2 objects stay forever.
   //
-  // Hourly, not per-minute: the grace period is 24h (RetentionPolicy), so the
-  // sweep is never racing anything, and each run is capped at 200 inboxes.
-  // An hour of drift on erasing something that expired a day ago costs nothing;
-  // a per-minute cron on an account with no expiries costs 1,440 invocations
-  // a day to log a zero.
-  "triggers": { "crons": ["0 * * * *"] },
+  // Every fifteen minutes bounds how long a send can remain stranded after a
+  // transient Queue.send failure without creating unnecessary scheduled work.
+  // The handler still runs retention only at minute zero, since its 24h grace
+  // has no need for four scans per hour.
+  "triggers": { "crons": ["*/15 * * * *"] },
 
   "durable_objects": {
     "bindings": [

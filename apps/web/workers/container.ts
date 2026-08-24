@@ -4,6 +4,7 @@ import type {
   CoreDeps,
   DeliveryRepository,
   DomainRepository,
+  IdentityRepository,
   Services,
 } from "@mailworker/core";
 import { AccountId, createServices, ProjectId } from "@mailworker/core";
@@ -14,6 +15,7 @@ import {
   createDb,
   D1Accounts,
   D1ApiKeys,
+  D1DashboardQueries,
   D1Deliveries,
   D1Domains,
   D1Identities,
@@ -33,6 +35,7 @@ import {
   UlidGenerator,
   UnavailableDispatchQueue,
   UnconfiguredTransport,
+  WebCryptoContentHasher,
   WebCryptoSecrets,
 } from "@web/workers/adapters";
 import { DurableWaiter } from "@web/workers/waiter";
@@ -54,11 +57,15 @@ import { DurableWaiter } from "@web/workers/waiter";
  */
 export interface Container {
   readonly services: Services;
+  /** Cross-aggregate, read-only projections used only by the human control plane. */
+  readonly dashboard: D1DashboardQueries;
   /**
    * Not part of `CoreDeps`: authentication happens before there is a `Caller` to
    * pass, so it cannot go through a service that requires one.
    */
   readonly apiKeys: ApiKeyRepository;
+  /** Capability discovery reads only the identity bound to the authenticated key. */
+  readonly identities: IdentityRepository;
   readonly accounts: AccountRepository;
   /** Also outside `CoreDeps`: inbound mail resolves its environment by hostname. */
   readonly domains: DomainRepository;
@@ -70,9 +77,11 @@ export interface Container {
 
 export function createContainer(env: Env): Container {
   const db = createDb(env.DB);
-  const messages = new D1Messages(db);
+  const blobs = new R2Blobs(env.BLOBS);
+  const messages = new D1Messages(db, blobs);
   const apiKeys = new D1ApiKeys(db);
   const accounts = new D1Accounts(db);
+  const identities = new D1Identities(db);
 
   // `wrangler types` marks every declared binding as present, which is true of
   // a deployment and false of the test environment, where neither is bound.
@@ -89,18 +98,19 @@ export function createContainer(env: Env): Container {
   const deps: CoreDeps = {
     clock: new SystemClock(),
     ids: new UlidGenerator(),
+    contentHasher: new WebCryptoContentHasher(),
     secrets: new WebCryptoSecrets(),
 
     inboxes: new D1Inboxes(db),
     messages,
     deliveries: deliveryRepo,
-    identities: new D1Identities(db),
+    identities,
     domains: domainRepo,
     webhooks: new D1Webhooks(db),
     apiKeys,
     accounts,
     suppressions: new D1Suppressions(db),
-    blobs: new R2Blobs(env.BLOBS),
+    blobs,
 
     dns: new DohResolver(),
     webhookSender: new SigningWebhookSender(),
@@ -135,12 +145,15 @@ export function createContainer(env: Env): Container {
       recipient: message.recipient,
       envelopeFrom: message.envelopeFrom,
       raw: message.raw,
+      origin: "sandbox",
     });
   });
 
   return {
     services,
+    dashboard: new D1DashboardQueries(db),
     apiKeys,
+    identities,
     accounts,
     domains: domainRepo,
     deliveries: deliveryRepo,

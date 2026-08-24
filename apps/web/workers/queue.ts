@@ -1,10 +1,5 @@
-import type {
-  AccountId,
-  DeliveryEventType,
-  DomainEvent,
-  ProviderDeliveryEvent,
-} from "@mailworker/core";
-import { EmailAddress } from "@mailworker/core";
+import type { DeliveryEventType, DomainEvent, ProviderDeliveryEvent } from "@mailworker/core";
+import { AccountId, EmailAddress } from "@mailworker/core";
 import type { QueuedEvent } from "@web/workers/adapters";
 import { toQueuedDispatch } from "@web/workers/adapters";
 import { createContainer } from "@web/workers/container";
@@ -38,7 +33,11 @@ export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<voi
     try {
       if (batch.queue.endsWith("webhooks")) {
         const queued = message.body as QueuedEvent;
-        const ctx = await systemCaller(container, container.defaultAccountId, "system:queue");
+        // Domain events carry the environment that produced them. Using the
+        // deployment default here would deliver sandbox/dev message metadata to
+        // production's webhook subscribers.
+        const eventAccount = AccountId.parse(String(queued.event["accountId"]));
+        const ctx = await systemCaller(container, eventAccount, "system:queue");
         await services.delivery.fanOut(ctx, reviveEvent(queued.event), queued.id);
       } else if (batch.queue.endsWith("events")) {
         const event = toProviderEvent(message.body);
@@ -52,6 +51,7 @@ export async function queue(batch: MessageBatch<unknown>, env: Env): Promise<voi
           // looking for it will think to check.
           const accountId =
             (await container.deliveries.resolveAccount(event.providerMessageId)) ??
+            (await container.domains.resolveAccount(event.sourceDomain)) ??
             container.defaultAccountId;
           const ctx = await systemCaller(container, accountId, "system:queue");
           await services.delivery.recordEvent(ctx, event);
@@ -111,45 +111,153 @@ const EVENT_TYPES: Readonly<Record<string, DeliveryEventType>> = {
  * it is not evidence.
  */
 export function toProviderEvent(body: unknown): ProviderDeliveryEvent | null {
-  if (typeof body !== "object" || body === null) return null;
-  const envelope = body as Record<string, unknown>;
+  if (!isRecord(body)) return null;
+  const envelope = body;
 
   const type = EVENT_TYPES[String(envelope["type"])];
   if (type === undefined) return null;
 
-  const payload = (envelope["payload"] ?? envelope) as Record<string, unknown>;
-  const providerMessageId = firstString(payload, ["messageId", "message_id", "id"]);
-  if (providerMessageId === null) return null;
+  const source = envelope["source"];
+  const payload = envelope["payload"];
+  const metadata = envelope["metadata"];
+  if (!isRecord(source) || !isRecord(payload) || !isRecord(metadata)) return null;
 
-  const recipient = firstString(payload, ["recipient", "to", "rcptTo"]);
-  const occurredAt = firstString(payload, ["occurredAt", "timestamp", "time"]);
+  const sourceType = requiredString(source, "type");
+  const sourceZoneId = requiredString(source, "zoneId");
+  const sourceDomain = requiredString(source, "domain");
+  const eventId = requiredString(payload, "eventId");
+  const providerMessageId = requiredString(payload, "messageId");
+  const sender = requiredString(payload, "sender");
+  const recipientText = requiredString(payload, "recipient");
+  const occurredAtText = requiredString(metadata, "eventTimestamp");
+  const delivery = payload["delivery"];
+  if (
+    sourceType !== "email.sending" ||
+    sourceZoneId === null ||
+    sourceDomain === null ||
+    eventId === null ||
+    providerMessageId === null ||
+    sender === null ||
+    EmailAddress.tryParse(sender) === null ||
+    recipientText === null ||
+    !isRecord(delivery) ||
+    requiredString(delivery, "status") !== type ||
+    typeof payload["terminal"] !== "boolean" ||
+    occurredAtText === null ||
+    requiredString(metadata, "accountId") === null ||
+    requiredString(metadata, "eventSubscriptionId") === null ||
+    metadata["eventSchemaVersion"] !== 1
+  ) {
+    return null;
+  }
+
+  const recipient = EmailAddress.tryParse(recipientText);
+  const occurredAt = parseDate(occurredAtText);
+  if (recipient === null || occurredAt === null) return null;
+
+  // The known v1 fields are type-checked even when Mailworker does not promote
+  // them into columns yet. Unknown additive fields remain allowed so a harmless
+  // provider extension does not poison the queue.
+  if (
+    !optionalString(payload, "subject") ||
+    !optionalString(delivery, "provider") ||
+    !optionalString(delivery, "smtpStatusCode") ||
+    !optionalString(delivery, "smtpEnhancedStatusCode") ||
+    !optionalString(delivery, "smtpResponse") ||
+    !optionalNonNegativeNumber(delivery, "deliveryTimeMs")
+  ) {
+    return null;
+  }
+
+  const terminal = payload["terminal"];
+  if (
+    (type === "deferred" && terminal) ||
+    (type !== "deferred" && type !== "failed" && !terminal)
+  ) {
+    return null;
+  }
+
+  const bounce = parseBounce(payload["bounce"]);
+  if ((type === "deferred" || type === "bounced") && bounce === null) return null;
+  if (payload["bounce"] !== undefined && bounce === null) return null;
+  if (type === "failed" && !hasRequiredStrings(payload["failure"], ["reason"])) return null;
+  if (
+    type === "rejected" &&
+    !hasRequiredStrings(payload["rejection"], ["reason", "party", "detail"])
+  ) {
+    return null;
+  }
+  if (type === "complained" && !hasRequiredStrings(payload["complaint"], ["type"])) {
+    return null;
+  }
 
   return {
+    eventId,
     type,
     providerMessageId,
-    recipient: recipient === null ? null : EmailAddress.tryParse(recipient),
-    occurredAt: occurredAt === null ? new Date() : parseDate(occurredAt),
-    // `delivered`, `bounced`, `complained` and `rejected` end the story;
-    // `deferred` and `failed` may still be followed by another attempt. We
-    // decide this rather than trusting a flag, because the state machine has to
-    // agree with itself even when the payload omits it.
-    terminal: type !== "deferred" && type !== "failed",
-    smtpCode: firstString(payload, ["smtpCode", "smtp_code", "code"]),
-    smtpResponse: firstString(payload, ["smtpResponse", "smtp_response", "response"]),
+    recipient,
+    sourceDomain,
+    sourceZoneId,
+    occurredAt,
+    terminal,
+    smtpCode: stringValue(delivery, "smtpStatusCode"),
+    smtpEnhancedCode: stringValue(delivery, "smtpEnhancedStatusCode"),
+    smtpResponse: stringValue(delivery, "smtpResponse"),
+    bounceType: bounce?.type ?? null,
+    bounceClassification: bounce?.classification ?? null,
+    bounceReason: bounce?.reason ?? null,
     raw: JSON.stringify(body),
   };
 }
 
-function firstString(source: Record<string, unknown>, keys: readonly string[]): string | null {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === "string" && value.length > 0) return value;
-    if (typeof value === "number") return String(value);
-  }
-  return null;
+interface BounceFields {
+  readonly type: "hard" | "soft";
+  readonly classification: string;
+  readonly reason: string;
 }
 
-function parseDate(value: string): Date {
+function parseBounce(value: unknown): BounceFields | null {
+  if (!isRecord(value)) return null;
+  const type = value["type"];
+  const classification = requiredString(value, "classification");
+  const reason = requiredString(value, "reason");
+  if ((type !== "hard" && type !== "soft") || classification === null || reason === null) {
+    return null;
+  }
+  return { type, classification, reason };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredString(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringValue(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  return typeof value === "string" ? value : null;
+}
+
+function optionalString(source: Record<string, unknown>, key: string): boolean {
+  const value = source[key];
+  return value === undefined || typeof value === "string";
+}
+
+function optionalNonNegativeNumber(source: Record<string, unknown>, key: string): boolean {
+  const value = source[key];
+  return (
+    value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)
+  );
+}
+
+function hasRequiredStrings(value: unknown, keys: readonly string[]): boolean {
+  return isRecord(value) && keys.every((key) => requiredString(value, key) !== null);
+}
+
+function parseDate(value: string): Date | null {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

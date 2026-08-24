@@ -1,5 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import type {
+  AgentIdentityDto,
+  ApiKeyDto,
   DeliveryTimelineDto,
   InboxDto,
   SendBatchResponse,
@@ -29,11 +31,16 @@ beforeEach(async () => {
     db.delete(schema.attachments),
     db.delete(schema.messages),
     db.delete(schema.deliveryEvents),
+    db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
     db.delete(schema.inboxes),
+    db.delete(schema.apiKeys),
+    db.delete(schema.agentIdentities),
     db.delete(schema.suppressions),
     db.delete(schema.domains),
   ]);
+  const blobs = await env.BLOBS.list();
+  if (blobs.objects.length > 0) await env.BLOBS.delete(blobs.objects.map((item) => item.key));
   await db.insert(schema.domains).values({
     id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     accountId: "default",
@@ -49,9 +56,13 @@ beforeEach(async () => {
 });
 
 async function api(path: string, init: RequestInit = {}): Promise<Response> {
+  return await apiAs(ADMIN_KEY, path, init);
+}
+
+async function apiAs(token: string, path: string, init: RequestInit = {}): Promise<Response> {
   return await SELF.fetch(`https://mailworker.test${path}`, {
     ...init,
-    headers: { Authorization: `Bearer ${ADMIN_KEY}`, ...(init.headers ?? {}) },
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
   });
 }
 
@@ -99,18 +110,106 @@ describe("POST /v1/send", () => {
   it("returns the original send for a repeated Idempotency-Key", async () => {
     const inbox = await createInbox();
     const first = await post(inbox.address, {}, { "Idempotency-Key": "abc-123" });
-    const second = await post(
-      inbox.address,
-      { subject: "Different subject entirely" },
-      { "Idempotency-Key": "abc-123" },
-    );
+    const second = await post(inbox.address, {}, { "Idempotency-Key": "abc-123" });
 
     // Same delivery, and NOT re-sent — a caller retrying after a timeout gets
     // the first submission back rather than a second message going out. The
-    // changed subject is ignored on purpose: the key identifies the intent.
+    // The same request returns its durable original decision.
     expect(second.body.outcome).toBe("duplicate");
     expect(second.response.status).toBe(200);
     expect(second.body.delivery.id).toBe(first.body.delivery.id);
+  });
+
+  it("collapses concurrent Idempotency-Key requests without orphan rows or blobs", async () => {
+    const inbox = await createInbox();
+    const init: RequestInit = {
+      method: "POST",
+      headers: { "Idempotency-Key": "parallel-http-1" },
+      body: JSON.stringify({
+        from: inbox.address,
+        to: ["someone@elsewhere.test"],
+        subject: "Exactly once",
+        text: "One accepted intent.",
+      }),
+    };
+
+    const responses = await Promise.all([api("/v1/send", init), api("/v1/send", init)]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 202]);
+    const bodies = (await Promise.all(responses.map((response) => response.json()))) as Array<{
+      delivery: { id: string };
+    }>;
+    expect(new Set(bodies.map((body) => body.delivery.id)).size).toBe(1);
+    expect(await db.select().from(schema.deliveries)).toHaveLength(1);
+    // Publication alone is not completion; the durable task stays until the
+    // consumer records provider hand-off and archives the sent copy.
+    expect(await db.select().from(schema.dispatchOutbox)).toHaveLength(1);
+    expect((await env.BLOBS.list({ prefix: "out/default/" })).objects).toHaveLength(1);
+  });
+
+  it("returns 409 when an idempotency key is reused for different mail", async () => {
+    const inbox = await createInbox();
+    const request = (subject: string) => ({
+      method: "POST",
+      headers: { "Idempotency-Key": "http-conflict-1" },
+      body: JSON.stringify({
+        from: inbox.address,
+        to: ["someone@elsewhere.test"],
+        subject,
+        text: subject,
+      }),
+    });
+    expect((await api("/v1/send", request("First"))).status).toBe(202);
+    const conflict = await api("/v1/send", request("Different"));
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      error: { code: "idempotency_conflict" },
+    });
+  });
+
+  it("atomically reserves a one-message identity quota across concurrent requests", async () => {
+    const identityResponse = await api("/v1/identities", {
+      method: "POST",
+      body: JSON.stringify({ name: "limited", dailySendQuota: 1 }),
+    });
+    expect(identityResponse.status).toBe(201);
+    const identity = (await identityResponse.json()) as AgentIdentityDto;
+    const keyResponse = await api("/v1/keys", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "limited key",
+        identityName: identity.name,
+        scopes: ["inbox:write", "message:send"],
+      }),
+    });
+    const token = ((await keyResponse.json()) as ApiKeyDto & { token: string }).token;
+    const inboxResponse = await apiAs(token, "/v1/inboxes", {
+      method: "POST",
+      body: JSON.stringify({ prefix: "limited", domain: DOMAIN, kind: "persistent" }),
+    });
+    const inbox = (await inboxResponse.json()) as InboxDto;
+    const request = (key: string): RequestInit => ({
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: JSON.stringify({
+        from: inbox.address,
+        to: ["someone@elsewhere.test"],
+        subject: key,
+        text: "Only one slot.",
+      }),
+    });
+
+    const responses = await Promise.all([
+      apiAs(token, "/v1/send", request("quota-http-a")),
+      apiAs(token, "/v1/send", request("quota-http-b")),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([202, 429]);
+    const refused = responses.find((response) => response.status === 429)!;
+    expect((await refused.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "quota_exceeded" },
+    });
+    expect(await db.select().from(schema.deliveries)).toHaveLength(1);
+    expect(await db.select().from(schema.dispatchOutbox)).toHaveLength(1);
+    expect((await env.BLOBS.list({ prefix: "out/default/" })).objects).toHaveLength(1);
   });
 
   it("refuses to send from an address no inbox owns", async () => {
@@ -265,6 +364,102 @@ describe("GET /v1/send/:id", () => {
   });
 });
 
+describe("POST /v1/send/:id/approve", () => {
+  async function createPendingSend(): Promise<{ deliveryId: string }> {
+    const name = `reviewed-${crypto.randomUUID()}`;
+    const identityResponse = await api("/v1/identities", {
+      method: "POST",
+      body: JSON.stringify({ name, requireApproval: true }),
+    });
+    expect(identityResponse.status).toBe(201);
+
+    const keyResponse = await api("/v1/keys", {
+      method: "POST",
+      body: JSON.stringify({
+        name: `key-${name}`,
+        scopes: ["inbox:write", "message:send"],
+        identityName: name,
+      }),
+    });
+    expect(keyResponse.status).toBe(201);
+    const token = ((await keyResponse.json()) as { token: string }).token;
+    const withAgentKey = async (path: string, init: RequestInit) =>
+      await SELF.fetch(`https://mailworker.test${path}`, {
+        ...init,
+        headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
+      });
+
+    const inboxResponse = await withAgentKey("/v1/inboxes", {
+      method: "POST",
+      body: JSON.stringify({
+        prefix: `reviewed-${crypto.randomUUID().slice(0, 8)}`,
+        domain: DOMAIN,
+        kind: "persistent",
+      }),
+    });
+    expect(inboxResponse.status).toBe(201);
+    const inbox = (await inboxResponse.json()) as InboxDto;
+
+    const sendResponse = await withAgentKey("/v1/send", {
+      method: "POST",
+      body: JSON.stringify({
+        from: inbox.address,
+        to: ["someone@elsewhere.test"],
+        subject: "Please review",
+        text: "Body",
+      }),
+    });
+    expect(sendResponse.status).toBe(202);
+    const pending = (await sendResponse.json()) as SendResponse;
+    expect(pending.outcome).toBe("pending_approval");
+    return { deliveryId: pending.delivery.id };
+  }
+
+  it("queues a held send after one human approval", async () => {
+    const { deliveryId } = await createPendingSend();
+
+    const response = await api(`/v1/send/${deliveryId}/approve`, { method: "POST" });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()) as SendResponse["delivery"]).toMatchObject({
+      id: deliveryId,
+      status: "queued",
+      approvedBy: "key:bootstrap",
+    });
+  });
+
+  it("returns 409 for a repeated approval and leaves one queued decision", async () => {
+    const { deliveryId } = await createPendingSend();
+    expect((await api(`/v1/send/${deliveryId}/approve`, { method: "POST" })).status).toBe(200);
+
+    const repeated = await api(`/v1/send/${deliveryId}/approve`, { method: "POST" });
+
+    expect(repeated.status).toBe(409);
+    expect((await repeated.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "invalid_state_transition" },
+    });
+    const timeline = (await (
+      await api(`/v1/send/${deliveryId}`)
+    ).json()) as DeliveryTimelineDto;
+    expect(timeline.delivery.status).toBe("queued");
+  });
+
+  it("records a human rejection and cannot later approve it", async () => {
+    const { deliveryId } = await createPendingSend();
+    const response = await api(`/v1/send/${deliveryId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: "Recipient is outside this task" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()) as SendResponse["delivery"]).toMatchObject({
+      id: deliveryId,
+      status: "rejected",
+    });
+    expect((await api(`/v1/send/${deliveryId}/approve`, { method: "POST" })).status).toBe(409);
+  });
+});
+
 describe("suppressions", () => {
   it("round-trips an address through the list", async () => {
     await api("/v1/suppressions", {
@@ -299,56 +494,127 @@ describe("suppressions", () => {
  */
 describe("toProviderEvent", () => {
   it("flattens a delivered event", () => {
-    const event = toProviderEvent({
+    const body = {
       type: "cf.email.sending.message.delivered",
+      source: { type: "email.sending", zoneId: "zone-1", domain: DOMAIN },
       payload: {
+        eventId: "0190d0c4-7e9a-7b3c-9f12-1a2b3c4d5e6f",
         messageId: "cf-abc",
+        sender: `agent@${DOMAIN}`,
         recipient: "someone@elsewhere.test",
-        timestamp: "2026-07-01T12:00:00.000Z",
-        smtpCode: "250",
+        subject: "Hello",
+        terminal: true,
+        delivery: {
+          status: "delivered",
+          provider: "gmail",
+          deliveryTimeMs: 1234,
+          smtpStatusCode: "250",
+          smtpEnhancedStatusCode: "2.0.0",
+          smtpResponse: "250 2.0.0 OK",
+        },
+      },
+      metadata: {
+        accountId: "cf-account",
+        eventSubscriptionId: "subscription-1",
+        eventSchemaVersion: 1,
+        eventTimestamp: "2026-07-01T12:00:00.000Z",
+      },
+    };
+    const event = toProviderEvent(body);
+
+    expect(event).toMatchObject({
+      eventId: "0190d0c4-7e9a-7b3c-9f12-1a2b3c4d5e6f",
+      type: "delivered",
+      providerMessageId: "cf-abc",
+      recipient: "someone@elsewhere.test",
+      sourceDomain: DOMAIN,
+      sourceZoneId: "zone-1",
+      terminal: true,
+      smtpCode: "250",
+      smtpEnhancedCode: "2.0.0",
+      smtpResponse: "250 2.0.0 OK",
+    });
+    expect(event?.occurredAt.toISOString()).toBe("2026-07-01T12:00:00.000Z");
+    expect(event?.raw).toBe(JSON.stringify(body));
+  });
+
+  it("reads bounce classification and nested SMTP fields", () => {
+    const event = toProviderEvent({
+      type: "cf.email.sending.message.bounced",
+      source: { type: "email.sending", zoneId: "zone-1", domain: DOMAIN },
+      payload: {
+        eventId: "event-bounce",
+        messageId: "cf-x",
+        sender: `agent@${DOMAIN}`,
+        recipient: "someone@elsewhere.test",
+        terminal: true,
+        delivery: {
+          status: "bounced",
+          smtpStatusCode: "550",
+          smtpEnhancedStatusCode: "5.1.1",
+          smtpResponse: "550 5.1.1 User unknown",
+        },
+        bounce: {
+          type: "hard",
+          classification: "permanent_failure",
+          reason: "550 5.1.1 User unknown",
+        },
+      },
+      metadata: {
+        accountId: "cf-account",
+        eventSubscriptionId: "subscription-1",
+        eventSchemaVersion: 1,
+        eventTimestamp: "2026-07-01T12:00:00.000Z",
       },
     });
 
     expect(event).toMatchObject({
-      type: "delivered",
-      providerMessageId: "cf-abc",
-      recipient: "someone@elsewhere.test",
-      terminal: true,
-      smtpCode: "250",
+      smtpCode: "550",
+      smtpEnhancedCode: "5.1.1",
+      bounceType: "hard",
+      bounceClassification: "permanent_failure",
+      bounceReason: "550 5.1.1 User unknown",
     });
-    expect(event?.occurredAt.toISOString()).toBe("2026-07-01T12:00:00.000Z");
   });
 
-  it("treats deferred and failed as non-terminal", () => {
-    // A deferral is the receiving host saying "later", and a failure may still
-    // be retried by the provider. Marking either terminal would freeze the
-    // state machine before the real outcome arrived.
-    for (const type of ["deferred", "failed"]) {
-      const event = toProviderEvent({
-        type: `cf.email.sending.message.${type}`,
-        payload: { messageId: "cf-abc" },
+  it("uses payload.terminal for a failed event", () => {
+    const failed = (terminal: boolean) =>
+      toProviderEvent({
+        type: "cf.email.sending.message.failed",
+        source: { type: "email.sending", zoneId: "zone-1", domain: DOMAIN },
+        payload: {
+          eventId: `event-failed-${terminal}`,
+          messageId: "cf-failed",
+          sender: `agent@${DOMAIN}`,
+          recipient: "someone@elsewhere.test",
+          terminal,
+          delivery: { status: "failed" },
+          failure: { reason: "delivery_failed" },
+        },
+        metadata: {
+          accountId: "cf-account",
+          eventSubscriptionId: "subscription-1",
+          eventSchemaVersion: 1,
+          eventTimestamp: "2026-07-01T12:00:00.000Z",
+        },
       });
-      expect(event?.terminal).toBe(false);
-    }
+
+    expect(failed(false)?.terminal).toBe(false);
+    expect(failed(true)?.terminal).toBe(true);
   });
 
-  it("keeps the provider payload verbatim", () => {
-    const body = {
-      type: "cf.email.sending.message.bounced",
-      payload: { messageId: "cf-x", response: "550 5.1.1 no such user" },
-    };
-    // When a bounce happens for a reason our mapping did not anticipate, the
-    // response the receiving host actually gave is the only thing that answers
-    // why. A reconstruction is not evidence.
-    expect(toProviderEvent(body)?.raw).toBe(JSON.stringify(body));
-  });
-
-  it("returns null for anything it does not recognise", () => {
+  it("returns null for unknown or malformed v1 envelopes", () => {
     // Acked rather than retried by the consumer. Cloudflare may add event
     // types, and a message we will never understand would otherwise cycle
     // through every retry and land in the DLQ on every deploy.
     expect(toProviderEvent({ type: "cf.email.sending.message.invented" })).toBeNull();
     expect(toProviderEvent({ type: "cf.email.sending.message.delivered" })).toBeNull();
+    expect(
+      toProviderEvent({
+        type: "cf.email.sending.message.delivered",
+        payload: { messageId: "old-flat-shape", timestamp: "2026-07-01T12:00:00Z" },
+      }),
+    ).toBeNull();
     expect(toProviderEvent("not an object")).toBeNull();
     expect(toProviderEvent(null)).toBeNull();
   });

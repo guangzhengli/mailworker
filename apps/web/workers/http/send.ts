@@ -1,7 +1,9 @@
 import type { SendBatchResponse, SendResponse } from "@mailworker/contract";
 import {
   addSuppressionBody,
+  idempotencyKey,
   listDeliveriesQuery,
+  rejectDeliveryBody,
   sendBatchBody,
   sendBody,
   toDeliveryDto,
@@ -33,6 +35,10 @@ export const send = new Hono<HttpEnv>()
     // disagree the header is the one that came from whoever is doing the
     // retrying.
     const header = c.req.header("Idempotency-Key");
+    if (header !== undefined) {
+      const checked = idempotencyKey.safeParse(header);
+      if (!checked.success) return invalid(c, checked.error);
+    }
     const result = await c.var.services.delivery.send(c.var.caller, {
       ...parsed.data,
       ...(header === undefined ? {} : { idempotencyKey: header }),
@@ -111,6 +117,17 @@ export const send = new Hono<HttpEnv>()
     const delivery = await c.var.services.delivery.approve(
       c.var.caller,
       Ulid.parse(c.req.param("id")),
+    );
+    return c.json(toDeliveryDto(delivery));
+  })
+
+  .post("/:id/reject", async (c) => {
+    const parsed = rejectDeliveryBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return invalid(c, parsed.error);
+    const delivery = await c.var.services.delivery.reject(
+      c.var.caller,
+      Ulid.parse(c.req.param("id")),
+      parsed.data.reason ?? "Declined by reviewer",
     );
     return c.json(toDeliveryDto(delivery));
   });

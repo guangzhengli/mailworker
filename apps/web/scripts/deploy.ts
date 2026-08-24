@@ -22,7 +22,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +54,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const DESTRUCTIVE = [
   /\bDROP\s+TABLE\b/i,
   /\bDROP\s+COLUMN\b/i,
+  /\bDROP\s+(INDEX|TRIGGER)\b/i,
   /\bRENAME\s+(TO|COLUMN)\b/i,
   /__new_/i,
 ];
@@ -197,6 +205,42 @@ function planMigrations(): MigrationPlan {
 }
 
 /**
+ * Apply only the expand side of a mixed plan.
+ *
+ * Wrangler supports one migrations_pattern per D1 binding. A short-lived
+ * sibling config narrows that pattern to the reviewed additive files while
+ * retaining the same database binding and project-relative migrations path.
+ * The normal config is restored for the deploy and the contract pass.
+ */
+function applyBeforeMigrations(plan: MigrationPlan): void {
+  if (plan.after.length === 0) {
+    wrangler(["d1", "migrations", "apply", DB, "--remote"]);
+    return;
+  }
+
+  const scopedConfig = join(WEB_DIR, ".wrangler-predeploy.jsonc");
+  const source = readFileSync(CONFIG, "utf8");
+  const migrationsDir = '"migrations_dir": "migrations"';
+  const pattern = `migrations/{${plan.before.join(",")}}`;
+  const narrowed = source.replace(
+    migrationsDir,
+    `${migrationsDir},\n      "migrations_pattern": ${JSON.stringify(pattern)}`,
+  );
+  if (narrowed === source) {
+    fail("Could not create the scoped pre-deploy migration config.", [
+      `Expected ${migrationsDir} in wrangler.jsonc.`,
+    ]);
+  }
+
+  writeFileSync(scopedConfig, narrowed, { mode: 0o600 });
+  try {
+    wrangler(["d1", "migrations", "apply", DB, "--remote", "--config", scopedConfig]);
+  } finally {
+    if (existsSync(scopedConfig)) unlinkSync(scopedConfig);
+  }
+}
+
+/**
  * The version to roll back to, written down before it stops being obvious.
  *
  * After the deploy it is one entry down a list; before, it is unambiguous.
@@ -293,7 +337,7 @@ async function main(): Promise<void> {
   if (rollbackTo !== null) console.log(`\nRollback target: ${rollbackTo}`);
 
   if (plan.before.length > 0) {
-    wrangler(["d1", "migrations", "apply", DB, "--remote"]);
+    applyBeforeMigrations(plan);
   }
 
   // Never skipped. assets.directory points at build/client, so a deploy without

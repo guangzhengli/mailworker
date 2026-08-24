@@ -1,10 +1,19 @@
-import type { Clock, IdGenerator, Secrets } from "@mailworker/core";
+import type { Clock, ContentHasher, IdGenerator, Secrets } from "@mailworker/core";
 import { RfcMessageId, Ulid } from "@mailworker/core";
 import { monotonicFactory } from "ulid";
 
 export class SystemClock implements Clock {
   now(): Date {
     return new Date();
+  }
+}
+
+export class WebCryptoContentHasher implements ContentHasher {
+  async sha256(content: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(content));
+    return [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
   }
 }
 

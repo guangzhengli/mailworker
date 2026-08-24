@@ -7,7 +7,7 @@ import {
   toMessageSummaryDto,
   waitQuery,
 } from "@mailworker/contract";
-import { ThreadId, Ulid } from "@mailworker/core";
+import { MAX_INBOUND_MESSAGE_BYTES, ThreadId, Ulid } from "@mailworker/core";
 import { sanitizeHtml } from "@mailworker/mime";
 import type { HttpEnv } from "@web/workers/http/env";
 import { compact, failure, invalid } from "@web/workers/http/errors";
@@ -140,7 +140,25 @@ export const ingest = new Hono<HttpEnv>().post("/raw", async (c) => {
   const parsed = ingestRawQuery.safeParse(c.req.query());
   if (!parsed.success) return invalid(c, parsed.error);
 
-  const raw = new Uint8Array(await c.req.arrayBuffer());
+  const declaredLength = Number(c.req.header("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_INBOUND_MESSAGE_BYTES) {
+    return failure(
+      c,
+      "payload_too_large",
+      `Raw message exceeds the ${MAX_INBOUND_MESSAGE_BYTES} byte limit.`,
+      { max: MAX_INBOUND_MESSAGE_BYTES },
+    );
+  }
+
+  const raw = await readBodyUpTo(c.req.raw, MAX_INBOUND_MESSAGE_BYTES);
+  if (raw === null) {
+    return failure(
+      c,
+      "payload_too_large",
+      `Raw message exceeds the ${MAX_INBOUND_MESSAGE_BYTES} byte limit.`,
+      { max: MAX_INBOUND_MESSAGE_BYTES },
+    );
+  }
   if (raw.byteLength === 0) {
     return failure(c, "invalid_argument", "Send the raw message as the request body.");
   }
@@ -149,6 +167,7 @@ export const ingest = new Hono<HttpEnv>().post("/raw", async (c) => {
     recipient: parsed.data.to,
     envelopeFrom: parsed.data.from ?? "inject@localhost",
     raw,
+    origin: "injected",
   });
 
   switch (result.outcome) {
@@ -177,3 +196,40 @@ export const ingest = new Hono<HttpEnv>().post("/raw", async (c) => {
       );
   }
 });
+
+/** Read an untrusted request body without ever accepting more than `limit`. */
+async function readBodyUpTo(request: Request, limit: number): Promise<Uint8Array | null> {
+  if (request.body === null) return new Uint8Array();
+
+  const reader = request.body.getReader();
+  const declared = Number(request.headers.get("content-length"));
+  let buffer = new Uint8Array(
+    Number.isInteger(declared) && declared >= 0 && declared <= limit
+      ? declared
+      : Math.min(64 * 1024, limit),
+  );
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const nextTotal = total + value.byteLength;
+      if (nextTotal > limit) {
+        await reader.cancel("payload too large");
+        return null;
+      }
+      if (nextTotal > buffer.byteLength) {
+        const capacity = Math.min(limit, Math.max(nextTotal, buffer.byteLength * 2));
+        const grown = new Uint8Array(capacity);
+        grown.set(buffer.subarray(0, total));
+        buffer = grown;
+      }
+      buffer.set(value, total);
+      total = nextTotal;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return buffer.subarray(0, total);
+}

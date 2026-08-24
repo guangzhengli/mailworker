@@ -28,6 +28,9 @@ beforeEach(async () => {
   await db.batch([
     db.delete(schema.attachments),
     db.delete(schema.messages),
+    db.delete(schema.deliveryEvents),
+    db.delete(schema.dispatchOutbox),
+    db.delete(schema.deliveries),
     db.delete(schema.inboxes),
     db.delete(schema.domains),
   ]);
@@ -151,7 +154,11 @@ describe("retention, against real D1 and R2", () => {
 
     const execution = createExecutionContext();
     await entry.scheduled!(
-      { cron: "0 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController,
+      {
+        cron: "*/5 * * * *",
+        scheduledTime: Date.parse("2026-08-12T12:00:00.000Z"),
+        noRetry() {},
+      } as ScheduledController,
       env as unknown as Env,
       execution,
     );
@@ -162,5 +169,35 @@ describe("retention, against real D1 and R2", () => {
       items: [],
     });
     expect((await env.BLOBS.list({ prefix: "raw/default/" })).objects).toEqual([]);
+  });
+
+  it("re-publishes a stranded queued delivery from the durable outbox", async () => {
+    const { services, caller } = ctx();
+    const inbox = await services.mailbox.createInbox(caller, {
+      prefix: "outbox",
+      domain: DOMAIN,
+      kind: "persistent",
+    });
+    await services.delivery.send(caller, {
+      from: inbox.address,
+      to: ["recipient@elsewhere.test"],
+      subject: "Recover",
+      text: "Queue publication will be reconciled.",
+    });
+    const execution = createExecutionContext();
+    await entry.scheduled!(
+      {
+        cron: "*/5 * * * *",
+        scheduledTime: Date.parse("2026-08-12T12:05:00.000Z"),
+        noRetry() {},
+      } as ScheduledController,
+      env as unknown as Env,
+      execution,
+    );
+    await waitOnExecutionContext(execution);
+
+    // Cron republishes but retains the task until a queue consumer completes
+    // both hand-off and archive.
+    expect(await db.select().from(schema.dispatchOutbox)).toHaveLength(1);
   });
 });

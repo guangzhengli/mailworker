@@ -24,6 +24,7 @@ const db = createDb(env.DB);
 beforeEach(async () => {
   await db.batch([
     db.delete(schema.messages),
+    db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
     db.delete(schema.inboxes),
     db.delete(schema.domains),

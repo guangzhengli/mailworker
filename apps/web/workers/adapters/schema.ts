@@ -94,10 +94,16 @@ export const messages = sqliteTable(
     id: id(),
     accountId: accountId(),
     inboxId: text("inbox_id").notNull(),
+    /** Denormalized immutable owner for identity-scoped reads and waits. */
+    identityId: text("identity_id"),
     rfcMessageId: text("rfc_message_id").notNull(),
+    /** Normalized SMTP RCPT TO; null for outbound archive copies. */
+    envelopeRecipient: text("envelope_recipient"),
     threadId: text("thread_id").notNull(),
     /** inbound | outbound. Immutable once written. */
     direction: text("direction").notNull(),
+    /** email | injected | sandbox | outbound */
+    origin: text("origin").notNull().default("email"),
 
     fromHeader: text("from_header").notNull(),
     fromAddr: text("from_addr"),
@@ -108,6 +114,9 @@ export const messages = sqliteTable(
     replyTo: text("reply_to"),
 
     subject: text("subject").notNull().default(""),
+    /** R2 JSON containing the complete decoded text/html bodies. */
+    bodyKey: text("body_key"),
+    /** Bounded searchable/index text; never the authoritative full body. */
     bodyText: text("body_text"),
     bodyHtml: text("body_html"),
 
@@ -137,8 +146,24 @@ export const messages = sqliteTable(
   (t) => [
     // Deduplication lives here rather than in a read-then-write: Email Routing
     // can deliver the same message twice, and check-then-insert races itself.
-    uniqueIndex("uq_messages_account_rfc_id").on(t.accountId, t.rfcMessageId),
+    uniqueIndex("uq_messages_account_inbox_envelope_rfc_id").on(
+      t.accountId,
+      t.inboxId,
+      t.envelopeRecipient,
+      t.rfcMessageId,
+    ),
+    // During a rolling deploy an older Worker omits `envelope_recipient`.
+    // Legacy rows remain unique until migration triggers can reconstruct a
+    // direct inbox + tag; using tag alone would corrupt catch-all fan-out where
+    // `foo+x@` and `bar+x@` legitimately share both inbox and tag.
+    uniqueIndex("uq_messages_route_compat").on(
+      t.accountId,
+      t.inboxId,
+      sql`CASE WHEN ${t.direction} = 'inbound' THEN coalesce(${t.envelopeRecipient}, '#legacy-row:' || ${t.id}) ELSE '#outbound' END`,
+      t.rfcMessageId,
+    ),
     index("idx_messages_inbox").on(t.accountId, t.inboxId, t.id),
+    index("idx_messages_identity").on(t.accountId, t.identityId, t.id),
     index("idx_messages_thread").on(t.accountId, t.threadId, t.id),
     index("idx_messages_sent_between").on(t.accountId, t.direction, t.fromAddr, t.receivedAt),
   ],
@@ -191,10 +216,32 @@ export const deliveries = sqliteTable(
     statusChangedAt: timestamp("status_changed_at").notNull(),
   },
   (t) => [
-    uniqueIndex("uq_delivery_idempotency").on(t.accountId, t.idempotencyKey),
+    uniqueIndex("uq_delivery_identity_idempotency").on(
+      t.accountId,
+      sql`coalesce(${t.identityId}, '#unbound')`,
+      t.idempotencyKey,
+    ),
     index("idx_delivery_status").on(t.accountId, t.status, t.createdAt),
     index("idx_delivery_provider_id").on(t.accountId, t.providerMsgId),
     index("idx_delivery_quota").on(t.accountId, t.identityId, t.createdAt),
+  ],
+);
+
+/**
+ * Transactional hand-off between D1 and Queues. A row is written atomically
+ * with every newly queued delivery and retained until provider handoff and local
+ * message archival have both completed.
+ */
+export const dispatchOutbox = sqliteTable(
+  "dispatch_outbox",
+  {
+    accountId: accountId(),
+    deliveryId: text("delivery_id").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.deliveryId] }),
+    index("idx_dispatch_outbox_created").on(t.accountId, t.createdAt),
   ],
 );
 
@@ -208,18 +255,32 @@ export const deliveryEvents = sqliteTable(
   {
     id: id(),
     accountId: accountId(),
+    /** Cloudflare event-subscription id. Null for locally synthesized events. */
+    eventId: text("event_id"),
     deliveryId: text("delivery_id"),
     providerMsgId: text("provider_msg_id"),
     recipient: text("recipient"),
+    sourceDomain: text("source_domain"),
+    sourceZoneId: text("source_zone_id"),
     /** delivered | deferred | bounced | failed | rejected | complained */
     type: text("type").notNull(),
     terminal: bool("terminal"),
     smtpCode: text("smtp_code"),
+    smtpEnhancedCode: text("smtp_enhanced_code"),
     smtpResponse: text("smtp_response"),
+    /** hard | soft, when Cloudflare supplies a bounce object. */
+    bounceType: text("bounce_type"),
+    bounceClassification: text("bounce_classification"),
+    bounceReason: text("bounce_reason"),
     occurredAt: timestamp("occurred_at").notNull(),
+    processingAt: timestamp("processing_at"),
+    processedAt: timestamp("processed_at"),
     raw: text("raw"),
   },
-  (t) => [index("idx_events_delivery").on(t.accountId, t.deliveryId, t.occurredAt)],
+  (t) => [
+    index("idx_events_delivery").on(t.accountId, t.deliveryId, t.occurredAt),
+    uniqueIndex("uq_events_provider_event_id").on(t.eventId).where(sql`event_id IS NOT NULL`),
+  ],
 );
 
 export const suppressions = sqliteTable(

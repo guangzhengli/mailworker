@@ -7,7 +7,7 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { drizzle } from "drizzle-orm/d1";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 
-export type Db = DrizzleD1Database<typeof schema>;
+export type Db = DrizzleD1Database<typeof schema> & { readonly $client: D1Database };
 
 export function createDb(binding: D1Database): Db {
   return drizzle(binding, { schema });

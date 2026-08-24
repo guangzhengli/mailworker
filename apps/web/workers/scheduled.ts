@@ -3,7 +3,7 @@ import { createContainer } from "@web/workers/container";
 import { everyEnvironment, systemCaller } from "@web/workers/environment";
 
 /**
- * Cron. Currently one job: erase inboxes whose grace period has run out.
+ * Cron: erase expired inboxes and repair D1-to-Queues hand-offs.
  *
  * This is the only caller of `mailbox.sweepExpired`, and the only thing in the
  * deployment that ever deletes an expired inbox. Everything else treats expiry
@@ -24,33 +24,42 @@ export async function scheduled(
   // Every environment, not just the default one: a development environment
   // accumulates ephemeral inboxes faster than production does, and a sweep that
   // silently skipped it would grow the bill in the place nobody looks at.
-  ctx.waitUntil(sweepAll(container, event.cron));
+  ctx.waitUntil(maintainAll(container, event.cron, new Date(event.scheduledTime)));
 }
 
-async function sweepAll(
+async function maintainAll(
   container: ReturnType<typeof createContainer>,
   cron: string,
+  scheduledAt: Date,
 ): Promise<void> {
   for (const accountId of await everyEnvironment(container)) {
     // A distinct subject from `system:email` and `system:queue`: when a message
     // is gone, the audit trail has to say which of the three erased it.
     const caller = await systemCaller(container, accountId, "system:cron");
-    const result = await container.services.mailbox.sweepExpired(caller);
+    const dispatch = await container.services.delivery.reconcileDispatchOutbox(caller);
 
-    // One line per environment per run, always — including the zero case. A
-    // sweep that has stopped running and a sweep with nothing to do produce
-    // identical storage graphs, and this is the only thing that tells them apart.
+    // Reconciliation wants five-minute latency; retention does not. Run the
+    // storage sweep only at the top of the hour so empty environments do not
+    // pay for twelve identical D1/R2 scans and log lines.
+    if (scheduledAt.getUTCMinutes() === 0) {
+      const result = await container.services.mailbox.sweepExpired(caller);
+      console.log(
+        JSON.stringify({
+          event: "retention.sweep",
+          cron,
+          accountId,
+          ...result,
+          // A full page means the sweep hit its cap and there is more waiting.
+          backlogRemaining: result.examined >= DEFAULT_SWEEP_LIMIT,
+        }),
+      );
+    }
     console.log(
       JSON.stringify({
-        event: "retention.sweep",
+        event: "dispatch.reconcile",
         cron,
         accountId,
-        ...result,
-        // A full page means the sweep hit its cap and there is more waiting. The
-        // next cron picks it up rather than this run looping: draining an
-        // unbounded backlog in one invocation is how you hit the CPU limit and
-        // commit nothing.
-        backlogRemaining: result.examined >= DEFAULT_SWEEP_LIMIT,
+        ...dispatch,
       }),
     );
   }

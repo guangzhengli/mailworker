@@ -91,6 +91,23 @@ describe("CloudflareTransport", () => {
  * drops mail that would have gone out a minute later.
  */
 describe("classifyFailure", () => {
+  it("uses documented Workers binding error codes before message wording", () => {
+    expect(classifyFailure({ code: "E_RATE_LIMIT_EXCEEDED" }, "invalid recipient")).toEqual({
+      retryable: true,
+      decidedBy: "binding",
+    });
+    expect(
+      classifyFailure({ code: "E_RECIPIENT_SUPPRESSED" }, "temporarily unavailable"),
+    ).toEqual({
+      retryable: false,
+      decidedBy: "binding",
+    });
+    expect(classifyFailure({ code: "E_DAILY_LIMIT_EXCEEDED" }, "try again")).toEqual({
+      retryable: false,
+      decidedBy: "binding",
+    });
+  });
+
   it("reads an SMTP code the RFC 5321 way", () => {
     expect(classifyFailure({ smtpCode: 451 }, "")).toEqual({
       retryable: true,
