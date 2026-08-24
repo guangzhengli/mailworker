@@ -15,6 +15,7 @@ single agent product: point whatever you use at the file that matches the task.
 | Write or review Worker code | [skills/workers-best-practices/SKILL.md](skills/workers-best-practices/SKILL.md) |
 | Work on the `MessageWaiter` Durable Object | [skills/durable-objects/SKILL.md](skills/durable-objects/SKILL.md) |
 | Understand Email Routing / Email Sending | [skills/cloudflare-email-service/SKILL.md](skills/cloudflare-email-service/SKILL.md) |
+| Audit and split changes into safe public commits | [skills/prepare-open-source-commits/SKILL.md](skills/prepare-open-source-commits/SKILL.md) |
 
 Each `SKILL.md` is the entry point and stays short; the detail is split across
 `references/`, loaded only when the phase needs it. Read the SKILL.md first —
@@ -24,9 +25,9 @@ the reference files assume its rules are already in force.
 
 `.agents/skills/` is one of the directories the [`skills`
 CLI](https://github.com/vercel-labs/skills) walks, so without that flag
-`npx skills add guangzhengli/mailworker` would install all seven skills on
-someone who only wanted to *use* Mailworker — six of them about operating a
-deployment they do not have. The flag scopes the default install to
+`npx skills add guangzhengli/mailworker` would install every maintainer skill
+on someone who only wanted to *use* Mailworker. The flag scopes the default
+install to
 [`skills/mailworker`](../skills/mailworker/SKILL.md), which is the one written
 for them.
 

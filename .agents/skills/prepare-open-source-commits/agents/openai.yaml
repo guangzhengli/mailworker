@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Open-Source Commits"
+  short_description: "Audit and split safe public Git commits"
+  default_prompt: "Use $prepare-open-source-commits to audit and split my changes into safe, reviewable commits."
