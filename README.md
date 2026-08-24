@@ -105,6 +105,7 @@ as raw `.eml`, and replay it through the same ingest path later.
 
 | Command | Purpose |
 |---|---|
+| `capabilities` | Discover this key's environment, identity, limits and usable actions |
 | `inbox create` / `inbox ls` / `inbox rm` | Create and manage ephemeral or persistent addresses |
 | `wait` / `tail` | Wait for matching mail or stream new messages |
 | `ls` / `get` / `seen` | Search and read stored mail; `--text` prints just the body, `--raw` exports the original MIME |
@@ -116,6 +117,10 @@ as raw `.eml`, and replay it through the same ingest path later.
 Every command supports `--json`, never prompts in a non-TTY session, and uses
 stable exit codes. In particular, `wait` exits `4` when no matching message
 arrives, so agents and CI jobs can branch without parsing prose.
+
+TypeScript applications can use `@mailworker/sdk`. It validates responses at
+runtime, supports bounded async pagination and cancellation, and automatically
+retries mutations only when an idempotency key makes the retry safe.
 
 ## Connect your products
 
@@ -185,7 +190,7 @@ before deploying.
 ## How it is built
 
 ```text
-Email Routing ─▶ email() ─▶ MIME parse ─▶ D1 metadata + R2 raw mail
+Email Routing ─▶ email() ─▶ MIME parse ─▶ D1 bounded metadata/index + R2 full bodies/raw/attachments
                                             │
 REST API / CLI ─▶ domain services ─▶ Queues ─▶ Email Sending
                          │                    └─▶ signed webhooks + delivery events
@@ -198,6 +203,7 @@ REST API / CLI ─▶ domain services ─▶ Queues ─▶ Email Sending
 | `packages/mime` | MIME parsing/building and safe HTML presentation |
 | `packages/contract` | Shared Zod schemas and API DTOs |
 | `packages/cli` | Published agent-facing CLI |
+| `packages/sdk` | Runtime-validated TypeScript SDK with safe retries and bounded pagination |
 | `apps/web` | Worker entry points, REST API, queues, persistence, and dashboard |
 
 <details>

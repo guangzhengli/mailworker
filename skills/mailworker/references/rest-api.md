@@ -32,12 +32,13 @@ uptime check can call it. It says nothing about the database.
 
 | Method | Path | Notes |
 |---|---|---|
+| `GET` | `/v1/capabilities` | this key's environment, identity, scopes, limits and usable actions |
 | `POST` | `/v1/inboxes` | mint an address; `201` with the inbox DTO |
 | `GET` | `/v1/inboxes` | `{ items, cursor }` |
 | `GET` | `/v1/inboxes/:id` | |
 | `DELETE` | `/v1/inboxes/:id` | `204` |
 | `GET` | `/v1/messages/wait` | **the long poll** — see below |
-| `GET` | `/v1/messages` | filter with `inbox`, `from`, `q`, `unseen`, `limit` |
+| `GET` | `/v1/messages` | filter with `inbox`, `from`, `q`, `seen=false`, `limit` |
 | `GET` | `/v1/messages/:id` | |
 | `GET` | `/v1/messages/:id/raw` | the original MIME bytes, not JSON |
 | `GET` | `/v1/messages/:id/attachments/:attachmentId` | |
@@ -49,6 +50,7 @@ uptime check can call it. It says nothing about the database.
 | `GET` | `/v1/send` | list deliveries |
 | `GET` | `/v1/send/:id` | the delivery timeline |
 | `POST` | `/v1/send/:id/approve` | needs `message:approve` |
+| `POST` | `/v1/send/:id/reject` | needs `message:approve`; optional JSON `reason` |
 | `GET`/`POST`/`DELETE` | `/v1/suppressions[/:address]` | |
 | `GET`/`POST` | `/v1/environments` | |
 | `GET`/`POST` | `/v1/identities` | |
@@ -66,7 +68,7 @@ It is a long poll, and **a timeout is `200`, not an error.** The caller asked
 ```
 
 ```json
-{ "outcome": "matched", "message": { … }, "extracted": "482913" }
+{ "outcome": "matched", "message": { … } }
 ```
 
 So branch on `outcome`, not on the status code. Only the CLI turns a timeout
@@ -74,7 +76,9 @@ into exit code 4, because a shell script wants a branch where an HTTP client
 wants a body.
 
 Query parameters mirror the CLI flags: `inbox`, `from`, `subject`, `match`,
-`after`, `timeout`, `extract`. Pass `after=<last message id you saw>` to close
+`after`, `timeout`. There is no server-side value extraction: the response is
+the full message so the caller can interpret it in context. Pass
+`after=<last message id you saw>` to close
 the race between triggering a message and starting to wait.
 
 ## Errors

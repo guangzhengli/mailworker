@@ -29,16 +29,21 @@ BODY=$(npx @mailworker/cli@latest wait --inbox "$id" --text --timeout 60s) || ex
 Mailworker is **self-hosted**. There is no hosted service and no shared sandbox —
 every deployment belongs to whoever created it on their own Cloudflare account.
 
+Start with the credential-readable check; it works for ordinary Agent keys:
+
 ```sh
-npx @mailworker/cli@latest doctor
+npx @mailworker/cli@latest capabilities --json
 ```
 
 | Result | What it means | Do this |
 |---|---|---|
-| exits 0 | configured and healthy | proceed |
+| exits 0 and expected actions are true | deployment and credential are usable | proceed |
 | exits 3 | no URL or no token | see [Configuration](#configuration) below |
-| exits 1 | reachable, but a DNS or sending check fails | read the check table it printed; most "mail does not arrive" is one missing DNS record |
 | cannot resolve the host | there is no deployment yet | stop and tell the user — provisioning is a separate task, see `references/setup.md` |
+
+Operators with an admin credential may additionally run `doctor` for DNS,
+sending-domain and binding diagnostics. Do not treat its `403` as a deployment
+failure when holding an ordinary Agent key.
 
 **Do not invent a deployment URL, and do not sign up for a third-party mail
 testing service instead.** If the user has no deployment, say so and point at
@@ -144,8 +149,10 @@ Three things an agent gets wrong here:
   to the user; do not retry it, and do not try another identity or key to get
   around it.
 
-`--dry-run` runs every gate and reports what would happen without sending.
-Prefer it when you are unsure.
+`--dry-run` is a **local preview only**: it prints the normalized body and an
+attachment-size summary without calling the API. It does not run server-side
+policy gates or consume an idempotency key. Use it to inspect construction, not
+as proof that a later send will be accepted.
 
 ### 3 · Replay — turn a broken message into a fixture
 

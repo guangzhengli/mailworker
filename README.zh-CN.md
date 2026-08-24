@@ -102,6 +102,7 @@ BODY=$(mailworker wait --inbox "$id" --text --timeout 60s) || exit $?
 
 | 命令 | 用途 |
 |---|---|
+| `capabilities` | 查询当前 Key 的环境、身份、限制和可执行操作 |
 | `inbox create` / `inbox ls` / `inbox rm` | 创建和管理临时或持久邮箱地址 |
 | `wait` / `tail` | 等待匹配邮件，或持续读取新邮件 |
 | `ls` / `get` / `seen` | 搜索和读取邮件；`--text` 只输出正文，`--raw` 导出原始 MIME |
@@ -112,6 +113,9 @@ BODY=$(mailworker wait --inbox "$id" --text --timeout 60s) || exit $?
 
 所有命令都支持 `--json`，在非 TTY 环境中绝不弹出交互，并使用稳定的退出码。例如，
 `wait` 没等到匹配邮件时返回 `4`，Agent 和 CI 无需解析文案即可分支处理。
+
+TypeScript 应用可以使用 `@mailworker/sdk`。它会在运行时校验响应，支持有界异步分页
+和取消请求，并且只有在幂等键能够保证安全时才会自动重试写操作。
 
 ## 让产品接入邮件能力
 
@@ -177,7 +181,7 @@ Paid；Cloudflare 目前每个账号每月包含 3,000 封出站邮件，随后�
 ## 它是如何构建的
 
 ```text
-Email Routing ─▶ email() ─▶ MIME 解析 ─▶ D1 元数据 + R2 原始邮件
+Email Routing ─▶ email() ─▶ MIME 解析 ─▶ D1 有界元数据/索引 + R2 完整正文/原始邮件/附件
                                            │
 REST API / CLI ─▶ 领域服务 ─▶ Queues ──────▶ Email Sending
                        │                    └─▶ 签名 Webhook + 投递事件
@@ -190,6 +194,7 @@ REST API / CLI ─▶ 领域服务 ─▶ Queues ──────▶ Email Sen
 | `packages/mime` | MIME 解析与构建，以及安全的 HTML 展示 |
 | `packages/contract` | 共享 Zod Schema 与 API DTO |
 | `packages/cli` | 已发布、面向 Agent 的 CLI |
+| `packages/sdk` | 带运行时校验、安全重试和有界分页的 TypeScript SDK |
 | `apps/web` | Worker 入口、REST API、队列、持久化和 Dashboard |
 
 <details>
