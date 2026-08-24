@@ -15,8 +15,8 @@ import { Button } from "@web/app/components/ui/button";
 import { Card, CardContent } from "@web/app/components/ui/card";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { localeFromRequest } from "@web/app/i18n/locale.server";
-import { Callout, Empty, Mono, PageHeader, Pager, When } from "@web/app/ui";
-import { ArrowRightIcon } from "lucide-react";
+import { Callout, Empty, Mono, PageHeader, Relative, Tag } from "@web/app/ui";
+import { ArrowRightIcon, ShieldAlertIcon } from "lucide-react";
 import { useEffect } from "react";
 import { Form, Link, useNavigation } from "react-router";
 import { toast } from "sonner";
@@ -40,10 +40,15 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
 
-    const held = await services.delivery.list(caller, {
-      status: "pending_approval",
-      ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
-    });
+    const [held, identities] = await Promise.all([
+      services.delivery.list(caller, {
+        status: "pending_approval",
+        order: "asc",
+        ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
+      }),
+      can(caller, "admin") ? services.identity.listIdentities(caller) : Promise.resolve([]),
+    ]);
+    const identityNames = new Map(identities.map((identity) => [identity.id, identity.name]));
 
     /**
      * The body of every held send, read back so a reviewer decides on the
@@ -59,11 +64,18 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           recipients: delivery.recipients,
           createdAt: delivery.createdAt,
           identityId: delivery.identityId,
+          agent:
+            delivery.identityId === null
+              ? null
+              : (identityNames.get(delivery.identityId) ?? delivery.identityId),
+          metadata: Object.entries(delivery.metadata).slice(0, 4),
           // `lastError` carries the approval reason for a held send — which gate
           // put it here. It is the single most useful thing on this page.
           heldBecause: delivery.lastError,
           subject: preview?.subject ?? null,
+          from: preview?.from ?? null,
           text: preview?.text ?? null,
+          attachmentCount: preview?.attachments.length ?? 0,
         };
       }),
     );
@@ -72,6 +84,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       held: previews,
       cursor: held.cursor,
       mayApprove: can(caller, "message:approve"),
+      mode: caller.mode,
     };
   });
 }
@@ -106,6 +119,12 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
     <>
       <PageHeader title={t("approvals.title")} description={t("approvals.description")} />
 
+      {loaderData.mode === "live" && loaderData.held.length > 0 && (
+        <Callout tone="danger" className="mb-4" icon={<ShieldAlertIcon />}>
+          {t("approvals.liveWarning")}
+        </Callout>
+      )}
+
       {/* Above the list, not below it: it explains why the rows have no approve
           button, and an explanation for a missing control has to be readable
           before the reader concludes the page is broken. */}
@@ -135,7 +154,28 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
                       {held.recipients.join(", ")}
                     </Mono>
                   </div>
-                  <When value={held.createdAt} className="shrink-0 text-[13px]" />
+                  <Relative value={held.createdAt} className="shrink-0 text-[13px]" />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-secondary-text">
+                  <span>
+                    {t("field.agent")}:{" "}
+                    {held.agent === null ? (
+                      <span className="text-hint">{t("sent.byAgent")}</span>
+                    ) : (
+                      <Mono>{held.agent}</Mono>
+                    )}
+                  </span>
+                  {held.from !== null && (
+                    <span>
+                      {t("field.from")}: <Mono>{held.from}</Mono>
+                    </span>
+                  )}
+                  {held.attachmentCount > 0 && (
+                    <Tag tone="warning">
+                      {t("approvals.attachments", { count: held.attachmentCount })}
+                    </Tag>
+                  )}
                 </div>
 
                 {held.heldBecause !== null && (
@@ -153,15 +193,57 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
                   </pre>
                 )}
 
+                {held.metadata.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-hint">
+                    <span>{t("approvals.context")}:</span>
+                    {held.metadata.map(([key, value]) => (
+                      <Mono key={key} className="rounded-control bg-muted px-2 py-1">
+                        {key}={value}
+                      </Mono>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center gap-2">
                   {loaderData.mayApprove && (
                     <>
-                      <Form method="post">
-                        <input type="hidden" name="id" value={held.id} />
-                        <Button type="submit" size="sm" disabled={busy}>
-                          {t("approvals.approve")}
-                        </Button>
-                      </Form>
+                      {loaderData.mode === "live" ? (
+                        <AlertDialog>
+                          <AlertDialogTrigger render={<Button size="sm" disabled={busy} />}>
+                            {t("approvals.approve")}
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                {t("approvals.approveLiveTitle")}
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {t("approvals.approveLiveBody", {
+                                  recipients: held.recipients.join(", "),
+                                })}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                              <Form method="post">
+                                <input type="hidden" name="id" value={held.id} />
+                                <AlertDialogAction
+                                  render={<Button type="submit" disabled={busy} />}
+                                >
+                                  {t("approvals.approveLiveConfirm")}
+                                </AlertDialogAction>
+                              </Form>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      ) : (
+                        <Form method="post">
+                          <input type="hidden" name="id" value={held.id} />
+                          <Button type="submit" size="sm" disabled={busy}>
+                            {t("approvals.approve")}
+                          </Button>
+                        </Form>
+                      )}
 
                       <AlertDialog>
                         <AlertDialogTrigger
@@ -208,7 +290,17 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
         </div>
       )}
 
-      {loaderData.cursor !== null && <Pager to={`/approvals?cursor=${loaderData.cursor}`} />}
+      {loaderData.cursor !== null && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            render={<Link to={`/approvals?cursor=${loaderData.cursor}`} />}
+            variant="outline"
+            size="sm"
+          >
+            {t("approvals.next")}
+          </Button>
+        </div>
+      )}
     </>
   );
 }

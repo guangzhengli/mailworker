@@ -1,6 +1,17 @@
 import { Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
 import { BodyViewer } from "@web/app/components/body-viewer";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@web/app/components/ui/alert-dialog";
 import { Button } from "@web/app/components/ui/button";
 import { Card, CardContent } from "@web/app/components/ui/card";
 import { nextStepFor } from "@web/app/deliveries";
@@ -24,7 +35,9 @@ import {
   When,
 } from "@web/app/ui";
 import { ClockIcon, TriangleAlertIcon } from "lucide-react";
-import { Form } from "react-router";
+import { useEffect } from "react";
+import { Form, useLocation, useNavigate } from "react-router";
+import { toast } from "sonner";
 import type { Route } from "./+types/delivery";
 
 export async function loader({ context, request, params }: Route.LoaderArgs) {
@@ -55,6 +68,7 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
       delivery,
       events,
       agent,
+      mode: caller.mode,
       mayApprove: can(caller, "message:approve"),
       preview:
         preview === null
@@ -90,6 +104,23 @@ export default function DeliveryPage({ loaderData, params }: Route.ComponentProp
   const { delivery, events, agent, mayApprove, preview } = loaderData;
   const { t } = useT();
   const nextStep = nextStepFor(delivery.status);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    if (search.get("sent") !== "1") return;
+
+    toast.success(t("compose.sent"));
+    search.delete("sent");
+    void navigate(
+      {
+        pathname: location.pathname,
+        search: search.size === 0 ? "" : `?${search.toString()}`,
+      },
+      { replace: true, preventScrollReset: true },
+    );
+  }, [location.pathname, location.search, navigate, t]);
 
   return (
     <>
@@ -109,13 +140,39 @@ export default function DeliveryPage({ loaderData, params }: Route.ComponentProp
           )
         }
       >
-        {delivery.status === "pending_approval" && mayApprove && (
-          <Form method="post">
-            <Button type="submit" size="sm">
-              {t("delivery.approveAndSend")}
-            </Button>
-          </Form>
-        )}
+        {delivery.status === "pending_approval" &&
+          mayApprove &&
+          (loaderData.mode === "live" ? (
+            <AlertDialog>
+              <AlertDialogTrigger render={<Button size="sm" />}>
+                {t("delivery.approveAndSend")}
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("delivery.approveTitle")}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t("delivery.approveBody", {
+                      recipients: delivery.recipients.join(", "),
+                    })}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                  <Form method="post">
+                    <AlertDialogAction render={<Button type="submit" />}>
+                      {t("delivery.approveConfirm")}
+                    </AlertDialogAction>
+                  </Form>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : (
+            <Form method="post">
+              <Button type="submit" size="sm">
+                {t("delivery.approveAndSend")}
+              </Button>
+            </Form>
+          ))}
       </PageHeader>
 
       <KeyFacts>
@@ -157,7 +214,11 @@ export default function DeliveryPage({ loaderData, params }: Route.ComponentProp
 
       {nextStep !== null && (
         <Callout
-          tone={delivery.status === "deferred" ? "warning" : "info"}
+          tone={
+            delivery.status === "deferred" || delivery.status === "dispatching"
+              ? "warning"
+              : "info"
+          }
           className="mb-4"
           icon={<ClockIcon />}
         >

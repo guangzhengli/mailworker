@@ -182,7 +182,7 @@ export default function Agents({ loaderData, actionData }: Route.ComponentProps)
           <Form method="post" className="flex flex-wrap items-end gap-3">
             <div className="flex min-w-40 flex-col gap-2">
               <Label htmlFor="name">{t("agents.nameLabel")}</Label>
-              <Input id="name" name="name" required placeholder="support-bot" />
+              <Input id="name" name="name" required placeholder={t("agents.namePlaceholder")} />
             </div>
             <div className="flex min-w-56 flex-1 flex-col gap-2">
               <Label htmlFor="allowlist">{t("agents.allowlistLabel")}</Label>

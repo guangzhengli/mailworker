@@ -48,9 +48,9 @@ export const en = {
     "field.to": "To",
 
     "nav.overview": "Overview",
-    "nav.approvals": "Review queue",
-    "nav.sent": "Sending history",
-    "nav.inbox": "Received mail",
+    "nav.approvals": "Approvals",
+    "nav.sent": "Sent Mail",
+    "nav.inbox": "Inbox",
     "nav.agents": "Agents",
     "nav.settings": "Settings",
 
@@ -58,15 +58,9 @@ export const en = {
     "shell.openNav": "Open navigation",
     "shell.closeNav": "Close navigation",
     "shell.nav": "Navigation",
+    "shell.pendingApprovals": "Pending approvals",
 
-    // The environment switcher. The banner is deliberately unmissable: someone
-    // who has to remember which environment they are in will eventually be
-    // wrong about it at the worst possible moment.
     "env.switch": "Switch environment",
-    "env.bannerSandbox":
-      "Sandbox — emails loop back to this environment and never reach external recipients.",
-    "env.bannerTest":
-      "Test — emails are real, but only allowlisted recipients can receive them.",
     "env.modeLive": "Live",
     "env.modeSandbox": "Sandbox",
     "env.modeTest": "Test",
@@ -74,31 +68,87 @@ export const en = {
     "overview.pageTitle": "Overview · Mailworker",
     "overview.title": "Overview",
     "overview.description":
-      "Monitor recent sending activity, incoming mail, and anything that needs attention.",
-    "overview.sentToday": "Emails sent today",
-    "overview.problemsToday": "Need attention today",
-    "overview.awaiting": "Waiting for approval",
-    "overview.awaitingHeld":
-      "Some emails are waiting for approval. They will not be delivered until someone approves them.",
-    "overview.inboxCount": "Receiving addresses",
-    "overview.recentMail": "Latest received mail",
-    "overview.recentSends": "Latest sending activity",
-    "overview.noRecentMail": "No email has arrived yet.",
-    "overview.noRecentSends": "No email has been sent yet.",
+      "Runtime health, pending approvals, agent activity, and recent mail stream.",
+    "overview.generatedAt": "Data generated at",
+    "overview.awaiting": "Awaiting approval",
+    "overview.currentBacklog": "Pending human review",
+    "overview.inboundWindow": "Inbound",
+    "overview.outboundWindow": "Outbound",
+    "overview.problemsWindow": "Delivery problems",
+    "overview.past24Hours": "Past 24 hours",
+    "overview.deliveredWindow": "{count} delivered in past 24h",
     "overview.viewAll": "View all",
-    "overview.setupIncomplete.one":
-      "{count} setup check is failing; sending or receiving may not work.",
-    "overview.setupIncomplete.other":
-      "{count} setup checks are failing; sending or receiving may not work.",
-    "overview.runChecks": "Review checks",
+    "overview.needsAttention": "Needs attention",
+    "overview.attentionClear":
+      "No approvals, delivery failures, or failing domain checks need action.",
+    "overview.domainChecksFailing": "{count} domain checks are failing",
+    "overview.domainChecksAction": "Review the exact failure and suggested remediation.",
+    "overview.byAgent": "Agent {agent}",
+    "overview.unassignedAgent": "Direct API / Console",
+    "overview.runtimeHealth": "Runtime health",
+    "overview.healthDomains": "Domain and DNS",
+    "overview.healthDomainDetail": "{count} configured domains",
+    "overview.healthSending": "Email Sending",
+    "overview.healthSendingDetail": "Required for external delivery in this environment.",
+    "overview.healthSandboxDetail": "Not required while Sandbox loops mail back internally.",
+    "overview.healthDispatch": "Dispatch queue",
+    "overview.healthDispatchDetail": "Moves durable send decisions to the provider.",
+    "overview.healthWebhooks": "Webhook queue",
+    "overview.healthWebhooksDetail": "Dispatches delivery events to your webhook endpoints.",
+    "overview.healthReady": "Ready",
+    "overview.healthMissing": "Missing",
+    "overview.healthOptional": "Optional",
+    "overview.healthHealthy": "Healthy",
+    "overview.healthWarning": "Review",
+    "overview.healthFailing": "Failing",
+    "overview.healthNotSet": "Not set up",
+    "overview.healthLimited": "Limited",
+    "overview.healthLimitedDetail": "An admin credential can run domain diagnostics.",
+    "overview.openDiagnostics": "Open diagnostics",
+    "overview.agentPulse": "Agent pulse",
+    "overview.manageAgents": "Manage agents",
+    "overview.agentLimited": "Agent policy and quota data requires an admin credential.",
+    "overview.noAgents": "No agent identity has been configured for this environment.",
+    "overview.createAgent": "Create an agent",
+    "overview.approvalOn": "Approval on",
+    "overview.agentProblems": "{count} problems",
+    "overview.agentQuota": "{used} of {quota} send slots used · past 24 hours",
+    "overview.agentUnlimited": "{used} sends · no agent limit",
+    "overview.agentWaiting": "{count} awaiting approval",
+    "overview.activity": "Recent activity",
+    "overview.latestActivity": "Newest first",
+    "overview.noActivity": "No inbound or outbound activity yet.",
+    "overview.outboundEvent": "Outbound delivery",
+    "overview.readyTitle": "Prepare this environment",
+    "overview.readyDescription":
+      "Complete the setup path below, then verify an end-to-end mail flow before relying on an agent.",
+    "overview.readyDomain": "Register a domain",
+    "overview.readyDomainDetail":
+      "Run {command} to register routing and sending configuration.",
+    "overview.readyInbox": "Create a receiving address",
+    "overview.readyInboxDetail": "Give the first workflow a dedicated, inspectable inbox.",
+    "overview.readyAgent": "Define an agent policy",
+    "overview.readyAgentDetail":
+      "Set recipients, a quota, and approval requirements before issuing access.",
+    "overview.readyKey": "Issue a scoped key",
+    "overview.readyKeyDetail": "Give the agent only the scopes its workflow needs.",
+    "overview.continueSetup": "Continue setup",
 
-    "approvals.pageTitle": "Review queue · Mailworker",
-    "approvals.title": "Review queue",
+    "approvals.pageTitle": "Approval queue · Mailworker",
+    "approvals.title": "Approval queue",
     "approvals.description":
-      "Emails held by policy. Approve them to release delivery, or reject them.",
+      "Oldest first. Review the agent, policy decision, recipients, and content before releasing delivery.",
     "approvals.empty": "Nothing is waiting for review.",
-    "approvals.heldBecause": "Held by",
-    "approvals.approve": "Approve and release",
+    "approvals.heldBecause": "Held by policy",
+    "approvals.context": "Workflow context",
+    "approvals.attachments": "{count} attachments",
+    "approvals.approve": "Approve & Send",
+    "approvals.liveWarning":
+      "Live environment — approving a message releases it to real external recipients.",
+    "approvals.approveLiveTitle": "Release this email in Live?",
+    "approvals.approveLiveBody":
+      "This immediately queues delivery to {recipients}. Review the message and policy decision before continuing.",
+    "approvals.approveLiveConfirm": "Approve and send",
     "approvals.reject": "Reject",
     "approvals.rejectTitle": "Reject this email?",
     "approvals.rejectBody":
@@ -110,9 +160,10 @@ export const en = {
     "approvals.cannotApprove":
       "This credential cannot approve emails because the approver must be different from the sender.",
     "approvals.openDetail": "View message and delivery details",
+    "approvals.next": "Next waiting emails",
 
-    "sent.pageTitle": "Sending history · Mailworker",
-    "sent.title": "Sending history",
+    "sent.pageTitle": "Sent Mail · Mailworker",
+    "sent.title": "Sent Mail",
     "sent.description":
       "Every email sent from this environment, its current delivery outcome, and the agent it belongs to.",
     "sent.allAgents": "All agents",
@@ -127,12 +178,12 @@ export const en = {
     "sent.searchPlaceholder": "Search subject, text or recipient…",
     "sent.searchLabel": "Search sent mail",
     "sent.noMatch": "No send matches {query}.",
-    "sent.byAgent": "Unassigned",
+    "sent.byAgent": "Direct / Console",
     "sent.byConsole": "console",
     "sent.compose": "New email",
 
     "delivery.pageTitle": "Delivery record · Mailworker",
-    "delivery.all": "Back to sending history",
+    "delivery.all": "Back to Sent Mail",
     "delivery.metadata": "Metadata",
     "delivery.providerId": "Provider message ID",
     "delivery.idempotencyKey": "Idempotency key",
@@ -147,8 +198,11 @@ export const en = {
     "delivery.wireStatus": "Internal status",
     "delivery.id": "Delivery ID",
     "delivery.technical": "Technical details",
-    "delivery.approveAndSend": "Approve and release",
-    // What to do about an ending, as opposed to what the provider said about it.
+    "delivery.approveAndSend": "Approve & Send",
+    "delivery.approveTitle": "Release this email in Live?",
+    "delivery.approveBody":
+      "This immediately queues delivery to {recipients}. Review the message and policy decision before continuing.",
+    "delivery.approveConfirm": "Approve and send",
     "delivery.next.bounced":
       "This address is suppressed, so future emails to it will be refused. If the address was wrong, correct it and remove the suppression.",
     "delivery.next.complained":
@@ -159,10 +213,13 @@ export const en = {
       "The email failed before delivery. Fix the cause, then send it again.",
     "delivery.next.deferred":
       "The email service is retrying. Wait unless it remains in this state for an unusually long time.",
+    "delivery.next.dispatching":
+      "The provider hand-off is in progress. If this stays unchanged, verify delivery before retrying—do not resend automatically.",
 
     "status.draft": "Draft",
     "status.pendingApproval": "Awaiting approval",
     "status.queued": "Queued",
+    "status.dispatching": "Sending",
     "status.dispatched": "Submitted",
     "status.deferred": "Retrying",
     "status.delivered": "Delivered",
@@ -195,11 +252,11 @@ export const en = {
     "inboxes.kindEphemeral": "Temporary",
     "inboxes.kindPersistent": "Permanent",
 
-    "inbox.pageTitle": "Received mail · Mailworker",
-    "inbox.title": "Received mail",
+    "inbox.pageTitle": "Inbox · Mailworker",
+    "inbox.title": "Inbox",
     "inbox.description": "All messages received by every address in this environment.",
     "inbox.searchPlaceholder": "Search subject, text or sender…",
-    "inbox.searchLabel": "Search received mail",
+    "inbox.searchLabel": "Search inbox",
     "inbox.allAddresses": "All receiving addresses",
     "inbox.manageAddresses": "Manage addresses",
     "inbox.unread": "Unread",
@@ -207,7 +264,7 @@ export const en = {
     "inbox.noMatch": "No message matches {query}.",
 
     "message.pageTitle": "{subject} · Mailworker",
-    "message.backToInbox": "Back to received mail",
+    "message.backToInbox": "Back to Inbox",
     "message.details": "Message details",
     "message.replyTo": "Reply-To",
     "message.authentication": "Authentication checks",
@@ -255,6 +312,7 @@ export const en = {
     "agents.adminOnly": "Agent management is available to administrators only.",
     "agents.create": "Create agent",
     "agents.nameLabel": "Agent name",
+    "agents.namePlaceholder": "support-bot",
     "agents.allowlistLabel": "Allowed recipients",
     "agents.allowlistPlaceholder": "*@customer.example.com",
     "agents.quotaLabel": "Daily send limit",
@@ -328,6 +386,12 @@ export const en = {
     "suppressions.suppress": "Suppress address",
     "suppressions.empty": "No addresses are currently suppressed.",
     "suppressions.remove": "Remove suppression",
+    "suppressions.reason.manual": "Manual",
+    "suppressions.reason.hard_bounce": "Hard bounce",
+    "suppressions.reason.soft_bounce": "Soft bounce",
+    "suppressions.reason.complaint": "Complaint",
+    "suppressions.source.local": "Local",
+    "suppressions.source.cloudflare": "Cloudflare",
 
     "diagnostics.pageTitle": "Diagnostics · Mailworker",
     "diagnostics.title": "Diagnostics",
@@ -348,6 +412,10 @@ export const en = {
     "diagnostics.domains": "Domains",
     "diagnostics.noDomains": "No domains are registered yet. Run {command} to add one.",
     "diagnostics.fix": "Suggested fix: {fix}",
+    "diagnostics.status.pass": "Pass",
+    "diagnostics.status.warn": "Warning",
+    "diagnostics.status.fail": "Fail",
+    "diagnostics.status.unknown": "Unknown",
 
     "live.live": "live",
     "live.connecting": "connecting",
@@ -400,6 +468,7 @@ export const en = {
     invalid_ulid: "That is not a valid id.",
     invalid_message_id: "That is not a valid message id.",
     invalid_argument: "The request was not valid.",
+    idempotency_conflict: "That idempotency key belongs to a different send request.",
 
     inbox_not_found: "No such inbox.",
     inbox_expired: "This inbox has expired. Its address is still reserved.",
@@ -424,6 +493,8 @@ export const en = {
     forbidden: "This credential is not allowed to do that.",
 
     wait_timeout: "No matching mail arrived in time.",
+    wait_capacity_exceeded:
+      "This environment has too many concurrent waits. Try again shortly.",
 
     not_found: "No such resource.",
     method_not_allowed: "That method is not allowed here.",

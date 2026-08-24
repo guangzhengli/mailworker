@@ -22,8 +22,8 @@ import { TooltipProvider } from "@web/app/components/ui/tooltip";
 import { type MessageKey, useT } from "@web/app/i18n";
 import { cn } from "@web/app/lib/utils";
 import { Tag } from "@web/app/ui";
-import { CheckIcon, ChevronsUpDownIcon, TriangleAlertIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { CheckIcon, ChevronsUpDownIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Form, NavLink, Outlet, useLocation } from "react-router";
 import type { Route } from "./+types/shell";
 
@@ -55,6 +55,10 @@ export async function loader({ context, request }: Route.LoaderArgs) {
         mode: environment.mode,
       })),
       hasAwaiting: awaiting.items.length > 0,
+      admin: caller.scopes.includes("admin"),
+      mayApprove:
+        caller.identityId === null &&
+        (caller.scopes.includes("admin") || caller.scopes.includes("message:approve")),
     };
   });
 }
@@ -80,12 +84,21 @@ interface Section {
   readonly badge?: boolean;
 }
 
-const SECTIONS: ReadonlyArray<Section> = [
+const SECTIONS: ReadonlyArray<
+  Section & { readonly adminOnly?: boolean; readonly approvalOnly?: boolean }
+> = [
   { to: "/", label: "nav.overview", end: true, Icon: HomeIcon },
-  { to: "/approvals", label: "nav.approvals", end: false, Icon: ApprovalsIcon, badge: true },
+  {
+    to: "/approvals",
+    label: "nav.approvals",
+    end: false,
+    Icon: ApprovalsIcon,
+    badge: true,
+    approvalOnly: true,
+  },
   { to: "/sent", label: "nav.sent", end: false, Icon: SendIcon },
   { to: "/inbox", label: "nav.inbox", end: false, Icon: MailboxIcon },
-  { to: "/agents", label: "nav.agents", end: false, Icon: FingerprintIcon },
+  { to: "/agents", label: "nav.agents", end: false, Icon: FingerprintIcon, adminOnly: true },
   { to: "/settings", label: "nav.settings", end: false, Icon: SettingsGearIcon },
 ];
 
@@ -111,6 +124,7 @@ function NavItem({
     <NavLink
       to={to}
       end={end}
+      aria-label={badge === true ? `${t(label)}. ${t("shell.pendingApprovals")}` : t(label)}
       onClick={onNavigate}
       onMouseEnter={() => icon.current?.startAnimation()}
       onMouseLeave={() => icon.current?.stopAnimation()}
@@ -125,7 +139,9 @@ function NavItem({
     >
       <Icon ref={icon} size={18} className="shrink-0" />
       <span className="flex-1 truncate">{t(label)}</span>
-      {badge === true && <span className="size-2 shrink-0 rounded-full bg-warning" />}
+      {badge === true && (
+        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-warning" />
+      )}
     </NavLink>
   );
 }
@@ -210,35 +226,9 @@ function ModeTag({ mode }: { mode: string }) {
         : t("env.modeTest");
 
   return (
-    <Tag tone={mode === "live" ? "success" : mode === "sandbox" ? "info" : "warning"}>
+    <Tag tone={mode === "live" ? "neutral" : mode === "sandbox" ? "info" : "warning"}>
       {label}
     </Tag>
-  );
-}
-
-/**
- * The mode banner, and the reason it is passive rather than a confirmation.
- *
- * Anything that asks a person to notice which environment they are in will be
- * ignored on the day it matters. This sits above the content on every page of
- * every non-live environment, costs one line, and cannot be dismissed.
- */
-function ModeBanner({ mode }: { mode: LoaderData["mode"] }) {
-  const { t } = useT();
-  if (mode === "live") return null;
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 px-4 py-1.5 text-center text-[13px] font-medium",
-        mode === "sandbox"
-          ? "border-b border-info-border bg-info-bg text-info"
-          : "border-b border-warning-border bg-warning-bg text-warning",
-      )}
-    >
-      <TriangleAlertIcon className="size-3.5 shrink-0" />
-      <span>{mode === "sandbox" ? t("env.bannerSandbox") : t("env.bannerTest")}</span>
-    </div>
   );
 }
 
@@ -262,7 +252,11 @@ function SidebarBody({
       </div>
 
       <nav className="flex flex-col gap-0.5">
-        {SECTIONS.map((section) => (
+        {SECTIONS.filter(
+          (section) =>
+            (section.adminOnly !== true || loaderData.admin) &&
+            (section.approvalOnly !== true || loaderData.mayApprove),
+        ).map((section) => (
           <NavItem
             key={section.to}
             {...section}
@@ -299,7 +293,57 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const menu = useRef<AnimatedIconHandle>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const drawer = useRef<HTMLDivElement>(null);
   const { t } = useT();
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const focusable = () =>
+      Array.from(
+        drawer.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+
+    const frame = requestAnimationFrame(() => (focusable()[0] ?? drawer.current)?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDrawerOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        drawer.current?.focus();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      menuButton.current?.focus();
+    };
+  }, [drawerOpen]);
 
   const section = SECTIONS.find((s) =>
     s.end ? location.pathname === s.to : location.pathname.startsWith(s.to),
@@ -318,6 +362,7 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
 
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-sidebar-border bg-sidebar/80 px-3 py-2 backdrop-blur-md md:hidden">
           <Button
+            ref={menuButton}
             variant="ghost"
             size="icon-sm"
             aria-label={t("shell.openNav")}
@@ -329,6 +374,9 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
             <MenuIcon ref={menu} size={18} />
           </Button>
           <span className="font-medium text-title">{current}</span>
+          <span className="ml-auto">
+            <ModeTag mode={loaderData.mode} />
+          </span>
         </header>
 
         {/*
@@ -342,18 +390,18 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
           <div className="fixed inset-0 z-50 md:hidden">
             <button
               type="button"
+              tabIndex={-1}
               aria-label={t("shell.closeNav")}
               className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
               onClick={() => setDrawerOpen(false)}
             />
             <div
+              ref={drawer}
               role="dialog"
               aria-label={t("shell.nav")}
               aria-modal="true"
+              tabIndex={-1}
               className="absolute inset-y-0 left-0 w-64 border-r border-sidebar-border bg-sidebar shadow-lg"
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setDrawerOpen(false);
-              }}
             >
               <SidebarBody loaderData={loaderData} onNavigate={() => setDrawerOpen(false)} />
             </div>
@@ -361,7 +409,6 @@ export default function Shell({ loaderData }: Route.ComponentProps) {
         )}
 
         <div className="min-w-0">
-          <ModeBanner mode={loaderData.mode} />
           <main className="px-5 py-6 md:px-8 md:py-8">
             <div className="mx-auto max-w-6xl">
               <Outlet />

@@ -3,6 +3,7 @@ import { Toaster } from "@web/app/components/ui/sonner";
 import { errorMessage, isErrorCode, LocaleProvider, useT } from "@web/app/i18n";
 import { localeFromRequest } from "@web/app/i18n/locale.server";
 import { ThemeProvider, ThemeScript } from "@web/app/theme";
+import { MotionConfig } from "motion/react";
 import {
   isRouteErrorResponse,
   Link,
@@ -67,8 +68,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <body>
         <LocaleProvider locale={locale}>
           <ThemeProvider>
-            {children}
-            <Toaster position="bottom-right" />
+            <MotionConfig reducedMotion="user">
+              {children}
+              <Toaster position="bottom-right" />
+            </MotionConfig>
           </ThemeProvider>
         </LocaleProvider>
         <ScrollRestoration />

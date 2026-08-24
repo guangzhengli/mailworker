@@ -98,7 +98,15 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       }),
     );
 
-    return { rows, cursor: listed.cursor, bucket, agent, q, identities };
+    return {
+      rows,
+      cursor: listed.cursor,
+      bucket,
+      agent,
+      q,
+      identities,
+      mayCompose: can(caller, "admin"),
+    };
   });
 }
 
@@ -122,10 +130,12 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <PageHeader title={t("sent.title")} description={t("sent.description")}>
-        <Button render={<Link to="/compose" />} size="sm">
-          <PenLineIcon />
-          {t("sent.compose")}
-        </Button>
+        {loaderData.mayCompose && (
+          <Button render={<Link to="/compose" />} size="sm">
+            <PenLineIcon />
+            {t("sent.compose")}
+          </Button>
+        )}
       </PageHeader>
 
       <Toolbar>
@@ -189,7 +199,7 @@ export default function Sent({ loaderData }: Route.ComponentProps) {
           <Empty
             icon={<SendIcon />}
             action={
-              bucket === null && agent === null && q === "" ? (
+              loaderData.mayCompose && bucket === null && agent === null && q === "" ? (
                 <Button render={<Link to="/compose" />} size="sm" variant="outline">
                   {t("sent.compose")}
                 </Button>

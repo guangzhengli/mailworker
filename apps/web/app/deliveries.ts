@@ -16,7 +16,7 @@ export const BUCKETS: readonly Bucket[] = ["waiting", "moving", "problem", "done
 
 const MEMBERS: Readonly<Record<Bucket, readonly DeliveryStatus[]>> = {
   waiting: ["pending_approval"],
-  moving: ["draft", "queued", "dispatched", "deferred"],
+  moving: ["draft", "queued", "dispatching", "dispatched", "deferred"],
   // `complained` sits here rather than in `done`: the message arrived, but a
   // recipient marked it spam, and that is a problem to act on.
   problem: ["bounced", "failed", "rejected", "complained"],
@@ -53,6 +53,7 @@ export const BUCKET_LABEL = {
  * person reading it. Absent for the endings that need no action.
  */
 const NEXT_STEP = {
+  dispatching: "delivery.next.dispatching",
   bounced: "delivery.next.bounced",
   complained: "delivery.next.complained",
   rejected: "delivery.next.rejected",

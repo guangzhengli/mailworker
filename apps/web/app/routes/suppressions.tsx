@@ -21,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@web/app/components/ui/table";
-import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { localeFromMatches, type MessageKey, translate, useT } from "@web/app/i18n";
 import { Empty, PageHeader, Tag, When } from "@web/app/ui";
 import { useRef } from "react";
 import { Form } from "react-router";
@@ -63,15 +63,21 @@ export async function action({ context, request }: Route.ActionArgs) {
 }
 
 /**
- * The reasons the form offers, in the wire vocabulary — so that what you pick
- * here reads the same as what the table below and the API report back. The
- * underscore is the only thing softened, and the table softens it the same way.
+ * The reasons the form offers, in the wire vocabulary with localized presentation.
  */
 const REASONS = ["manual", "complaint", "hard_bounce", "soft_bounce"] as const;
 
-const REASON_LABELS: Record<string, string> = Object.fromEntries(
-  REASONS.map((reason) => [reason, reason.replaceAll("_", " ")]),
-);
+const REASON_KEYS = {
+  manual: "suppressions.reason.manual",
+  hard_bounce: "suppressions.reason.hard_bounce",
+  soft_bounce: "suppressions.reason.soft_bounce",
+  complaint: "suppressions.reason.complaint",
+} as const satisfies Record<(typeof REASONS)[number], MessageKey>;
+
+const SOURCE_KEYS = {
+  local: "suppressions.source.local",
+  cloudflare: "suppressions.source.cloudflare",
+} as const satisfies Record<string, MessageKey>;
 
 /** Bounces are a fact about the address; manual entries are a decision about it. */
 const REASON_TONES = {
@@ -85,6 +91,10 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
   const { entries, maySuppress, mayRemove } = loaderData;
   const ban = useRef<AnimatedIconHandle>(null);
   const { t } = useT();
+
+  const reasonItems = Object.fromEntries(
+    REASONS.map((reason) => [reason, t(REASON_KEYS[reason])]),
+  );
 
   return (
     <>
@@ -108,14 +118,14 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
 
               <div className="flex flex-col gap-2">
                 <Label htmlFor="reason">{t("field.reason")}</Label>
-                <Select name="reason" defaultValue="manual" items={REASON_LABELS}>
-                  <SelectTrigger id="reason" className="w-40">
+                <Select name="reason" defaultValue="manual" items={reasonItems}>
+                  <SelectTrigger id="reason" className="w-44">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {REASONS.map((reason) => (
                       <SelectItem key={reason} value={reason}>
-                        {REASON_LABELS[reason]}
+                        {t(REASON_KEYS[reason])}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -157,10 +167,16 @@ export default function Suppressions({ loaderData }: Route.ComponentProps) {
                   </TableCell>
                   <TableCell>
                     <Tag tone={REASON_TONES[entry.reason] ?? "neutral"}>
-                      {entry.reason.replaceAll("_", " ")}
+                      {entry.reason in REASON_KEYS
+                        ? t(REASON_KEYS[entry.reason as keyof typeof REASON_KEYS])
+                        : entry.reason.replaceAll("_", " ")}
                     </Tag>
                   </TableCell>
-                  <TableCell className="text-secondary-text">{entry.source}</TableCell>
+                  <TableCell className="text-secondary-text">
+                    {entry.source in SOURCE_KEYS
+                      ? t(SOURCE_KEYS[entry.source as keyof typeof SOURCE_KEYS])
+                      : entry.source}
+                  </TableCell>
                   <TableCell>
                     <When value={entry.createdAt} />
                   </TableCell>

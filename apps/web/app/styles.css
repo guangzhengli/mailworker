@@ -368,3 +368,19 @@
     @apply font-mono;
   }
 }
+
+/*
+ * Motion's provider handles JavaScript-driven icon transforms. This handles
+ * CSS transitions, loading indicators and the live-status ping so the same
+ * operating-system preference applies to every source of motion.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

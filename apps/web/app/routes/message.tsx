@@ -27,16 +27,6 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
     const message = await services.mailbox.getMessage(caller, Ulid.parse(params.id));
 
-    /**
-     * Opening a message marks it seen, the same as `mailworker get` does — the
-     * dashboard is one more reader of the same mailbox, and a message a human has
-     * read on screen but which the API still reports as unseen is a lie that will
-     * confuse whoever is polling.
-     */
-    if (!message.seen && can(caller, "message:read")) {
-      await services.mailbox.markSeen(caller, message.id, true);
-    }
-
     const inbox = await services.mailbox.getInbox(caller, message.inboxId).catch(() => null);
 
     return {
@@ -48,6 +38,7 @@ export async function loader({ context, request, params }: Route.LoaderArgs) {
         hasHtml: message.bodyHtml !== null && message.bodyHtml.length > 0,
       },
       inboxAddress: inbox?.address ?? null,
+      mayCompose: can(caller, "admin"),
     };
   });
 }
@@ -81,10 +72,12 @@ export default function MessagePage({ loaderData, params }: Route.ComponentProps
       >
         {/* Reply is what turns an inbox receiving support mail into one that can
             answer it. It sends as the inbox's own address, under the same gates. */}
-        <Button render={<Link to={`/compose?reply=${message.id}`} />} size="sm">
-          <ReplyIcon />
-          {t("message.reply")}
-        </Button>
+        {loaderData.mayCompose && (
+          <Button render={<Link to={`/compose?reply=${message.id}`} />} size="sm">
+            <ReplyIcon />
+            {t("message.reply")}
+          </Button>
+        )}
       </PageHeader>
 
       <KeyFacts>

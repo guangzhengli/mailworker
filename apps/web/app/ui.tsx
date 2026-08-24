@@ -153,6 +153,7 @@ const DELIVERY_LABELS = {
   draft: "status.draft",
   pending_approval: "status.pendingApproval",
   queued: "status.queued",
+  dispatching: "status.dispatching",
   dispatched: "status.dispatched",
   deferred: "status.deferred",
   delivered: "status.delivered",
@@ -314,12 +315,16 @@ export function PageHeader({
 export function SectionTitle({
   children,
   actions,
+  className,
 }: {
   children: React.ReactNode;
   actions?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="mt-8 mb-3 flex flex-wrap items-center justify-between gap-3">
+    <div
+      className={cn("mt-8 mb-3 flex flex-wrap items-center justify-between gap-3", className)}
+    >
       <h2 className="text-xs font-medium tracking-wider text-hint uppercase">{children}</h2>
       {actions !== undefined && <div className="flex items-center gap-2">{actions}</div>}
     </div>

@@ -1,5 +1,5 @@
 import { Ulid } from "@mailworker/core";
-import { page } from "@web/app/auth";
+import { can, page } from "@web/app/auth";
 import { Button } from "@web/app/components/ui/button";
 import { Card, CardContent } from "@web/app/components/ui/card";
 import { Input } from "@web/app/components/ui/input";
@@ -14,9 +14,7 @@ import {
 import { Textarea } from "@web/app/components/ui/textarea";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
 import { Callout, Mono, Note, PageHeader } from "@web/app/ui";
-import { useEffect } from "react";
-import { Form, redirect, useNavigation, useSearchParams } from "react-router";
-import { toast } from "sonner";
+import { Form, redirect, useNavigation } from "react-router";
 import type { Route } from "./+types/compose";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
@@ -39,6 +37,7 @@ export const meta: Route.MetaFunction = ({ matches }) => [
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
+    if (!can(caller, "admin")) throw new Response("Admin access required.", { status: 403 });
     const url = new URL(request.url);
     const replyTo = url.searchParams.get("reply");
 
@@ -69,6 +68,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
 
 export async function action({ context, request }: Route.ActionArgs) {
   return await page(context, request, async ({ caller, services }) => {
+    if (!can(caller, "admin")) throw new Response("Admin access required.", { status: 403 });
     const form = await request.formData();
 
     // Provisioned on first use, so a deployment that never sends from here never
@@ -99,13 +99,8 @@ export async function action({ context, request }: Route.ActionArgs) {
 
 export default function Compose({ loaderData }: Route.ComponentProps) {
   const busy = useNavigation().state !== "idle";
-  const [search] = useSearchParams();
   const { t, rich } = useT();
   const quoted = loaderData.quoted;
-
-  useEffect(() => {
-    if (search.get("sent") === "1") toast.success(t("compose.sent"));
-  }, [search, t]);
 
   if (loaderData.inboxes.length === 0) {
     return (

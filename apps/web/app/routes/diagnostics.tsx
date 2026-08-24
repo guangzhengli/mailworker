@@ -2,7 +2,7 @@ import type { CheckStatus } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@web/app/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@web/app/components/ui/table";
-import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { localeFromMatches, type MessageKey, translate, useT } from "@web/app/i18n";
 import {
   Empty,
   Fact,
@@ -54,6 +54,13 @@ const TONE: Record<CheckStatus, Tone> = {
   fail: "danger",
   unknown: "neutral",
 };
+
+const STATUS_KEYS = {
+  pass: "diagnostics.status.pass",
+  warn: "diagnostics.status.warn",
+  fail: "diagnostics.status.fail",
+  unknown: "diagnostics.status.unknown",
+} as const satisfies Record<CheckStatus, MessageKey>;
 
 export default function Diagnostics({ loaderData }: Route.ComponentProps) {
   const { t, rich } = useT();
@@ -128,7 +135,11 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
                 <CardTitle className="font-mono text-[15px] text-title">
                   {diagnosis.domain}
                 </CardTitle>
-                <Tag tone={TONE[diagnosis.status]}>{diagnosis.status}</Tag>
+                <Tag tone={TONE[diagnosis.status]}>
+                  {diagnosis.status in STATUS_KEYS
+                    ? t(STATUS_KEYS[diagnosis.status])
+                    : diagnosis.status}
+                </Tag>
               </CardHeader>
               <Table>
                 <TableBody>
@@ -145,8 +156,12 @@ export default function Diagnostics({ loaderData }: Route.ComponentProps) {
                       <TableCell className="w-28 align-top font-medium text-title">
                         {check.name}
                       </TableCell>
-                      <TableCell className="w-24 align-top">
-                        <Tag tone={TONE[check.status]}>{check.status}</Tag>
+                      <TableCell className="w-28 align-top">
+                        <Tag tone={TONE[check.status]}>
+                          {check.status in STATUS_KEYS
+                            ? t(STATUS_KEYS[check.status])
+                            : check.status}
+                        </Tag>
                       </TableCell>
                       <TableCell className="align-top">
                         <div className="break-words">{check.detail}</div>
