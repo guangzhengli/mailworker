@@ -1,0 +1,52 @@
+{
+  "name": "@mailworker/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Type-safe, retry-safe TypeScript client for Mailworker",
+  "license": "MIT",
+  "homepage": "https://github.com/guangzhengli/mailworker#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guangzhengli/mailworker.git",
+    "directory": "packages/sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && esbuild src/index.ts --bundle --platform=neutral --target=es2023 --format=esm --sourcemap --outfile=dist/index.js --tsconfig=tsconfig.json",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@mailworker/contract": "workspace:*",
+    "@types/node": "^22.15.3",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
