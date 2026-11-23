@@ -52,7 +52,8 @@ RECEIVING
       Cheap: one database insert, no Cloudflare API call. Make one per test.
       --prefix p gives p-<random>@d; --name p gives p@d and fails if it is taken.
       Temporary inboxes are muted by default. Persistent inboxes are watched
-      by default. For newsletters, use inbox create --persistent --muted.
+      by default. Mute any address no person reads: newsletters and long-lived
+      test accounts use inbox create --persistent --muted.
   mailworker inbox update <id> [--mute|--unmute] [--display-name name] [--json]
   mailworker inbox ls [--include-expired] [--cursor id]
                        [--all --max-items n] [--json|--jsonl]

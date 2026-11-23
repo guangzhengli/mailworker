@@ -94,8 +94,10 @@ the race between triggering a message and starting to wait.
 
 Temporary (`ephemeral`) addresses default to muted. Persistent addresses
 default to watched. Pass `muted` when creating or updating an inbox to
-override the default. For a newsletter use `{ "kind": "persistent", "muted": true }`
-or `mailworker inbox create --persistent --muted`. Muted mail remains available
+override the default. Mute every persistent address no person reads, such as
+newsletter subscriptions and long-lived test accounts: create it with
+`{ "kind": "persistent", "muted": true }` or
+`mailworker inbox create --persistent --muted`. Muted mail remains available
 through the API. Use `direction=inbound&archived=false&muted=false` for the
 main inbox view.
 

@@ -130,9 +130,13 @@ and anything that arrives in the gap is still matched.
 
 ### Triage mail for people
 
-For high-volume subscriptions such as newsletters, use
-`mailworker inbox create --persistent --muted`. Mail at muted addresses stays
-available to the agent and stays out of the main inbox and its unread count.
+Mute every address that no person reads. Temporary inboxes are muted already.
+A persistent address is watched unless you say otherwise, so create newsletter
+subscriptions and long-lived test accounts — a fixture that keeps the same
+address across runs — with `mailworker inbox create --persistent --muted`.
+Mail at muted addresses stays available to the agent and stays out of the main
+inbox, its unread count and the dashboard sidebar. To fix an address created
+without it, run `mailworker inbox update <id> --mute`.
 
 Use `mailworker update <id> --label bug` for triage people will see. Labels
 such as `bug` or `投诉` are created on first use. Put machine bookkeeping such
