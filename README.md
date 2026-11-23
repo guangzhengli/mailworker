@@ -145,6 +145,11 @@ delivered. Query `GET /v1/send/:id` for the event timeline, or subscribe to
 signed webhooks. Use `POST /v1/inboxes` to create product-specific or temporary
 addresses and `GET /v1/messages/wait` to long-poll for incoming mail.
 
+Temporary inboxes default to muted. Use `mailworker inbox create --persistent --muted`
+to keep a high-volume address out of the main inbox. Use `mailworker update`
+or `PATCH /v1/messages` to mark mail read, star or archive it, and apply labels.
+Use `mailworker note` or `POST /v1/messages/:id/notes` to leave a plain-text note.
+
 See the complete [REST API reference](skills/mailworker/references/rest-api.md).
 
 ## Human approval is a security boundary

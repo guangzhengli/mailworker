@@ -140,6 +140,11 @@ curl -sS -X POST "$MAILWORKER_URL/v1/send" \
 `POST /v1/inboxes` 为产品或测试创建邮箱，通过 `GET /v1/messages/wait`
 长轮询等待入站邮件。
 
+临时邮箱默认静音。用 `mailworker inbox create --persistent --muted`
+创建长期使用的静音地址，高流量来信就不会进入主收件箱。用 `mailworker update`
+或 `PATCH /v1/messages` 修改已读、星标、归档状态及标签，用 `mailworker note`
+或 `POST /v1/messages/:id/notes` 留下纯文本备注。
+
 完整接口见 [REST API 参考](skills/mailworker/references/rest-api.md)。
 
 ## 人工审批是一条安全边界
