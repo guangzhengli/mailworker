@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { ApiError, type Client, type RequestOptions } from "@cli/client";
 import { UsageError } from "@cli/errors";
 import { buildProgram } from "@cli/main";
@@ -48,6 +49,7 @@ function fakeClient(responses: Partial<Client>): Client {
   return {
     get: unexpected("get"),
     post: unexpected("post"),
+    patch: unexpected("patch"),
     postRaw: unexpected("postRaw"),
     delete: unexpected("delete"),
     bytes: unexpected("bytes"),
@@ -266,6 +268,8 @@ describe("capability discovery and pagination", () => {
         deliveryTimeline: true,
         webhooksConfigured: false,
         typescriptSdk: true,
+        labels: true,
+        notes: true,
       },
       limits: {
         maxPageSize: 200,
@@ -283,6 +287,7 @@ describe("capability discovery and pagination", () => {
         readInboxes: false,
         createInboxes: false,
         readMessages: true,
+        annotateMessages: true,
         injectMessages: false,
         sendMessages: false,
         approveMessages: false,
@@ -360,5 +365,126 @@ describe("capability discovery and pagination", () => {
 
     expect(await invoke(client, ["inbox", "ls", "--json", "--jsonl"])).toBe(ExitCode.USAGE);
     expect(stdout).toBe("");
+  });
+});
+
+describe("mail client state commands", () => {
+  it("sends inbox create overrides and patches named inboxes", async () => {
+    const post = vi.fn(async () => ({ id: "inbox", muted: true }) as never);
+    const patch = vi.fn(
+      async () => ({ id: "inbox", muted: false, displayName: "Support" }) as never,
+    );
+    const client = fakeClient({ post, patch });
+
+    expect(await invoke(client, ["inbox", "create", "--persistent", "--muted", "--json"])).toBe(
+      ExitCode.OK,
+    );
+    expect(post).toHaveBeenLastCalledWith("/v1/inboxes", { kind: "persistent", muted: true });
+    await invoke(client, ["inbox", "create", "--watched", "--json"]);
+    expect(post).toHaveBeenLastCalledWith("/v1/inboxes", { muted: false });
+    await invoke(client, ["inbox", "create", "--json"]);
+    expect(post).toHaveBeenLastCalledWith("/v1/inboxes", {});
+    expect(await invoke(client, ["inbox", "create", "--muted", "--watched"])).toBe(
+      ExitCode.USAGE,
+    );
+    expect(
+      await invoke(client, [
+        "inbox",
+        "update",
+        "inbox",
+        "--unmute",
+        "--display-name",
+        "Support",
+        "--json",
+      ]),
+    ).toBe(ExitCode.OK);
+    expect(patch).toHaveBeenCalledWith("/v1/inboxes/inbox", {
+      muted: false,
+      displayName: "Support",
+    });
+  });
+
+  it("maps message filters and chooses the single or batch PATCH endpoint", async () => {
+    const get = vi.fn(async () => ({ items: [], cursor: null }) as never);
+    const patch = vi.fn(async () => ({ updated: 2 }) as never);
+    const client = fakeClient({ get, patch });
+    expect(
+      await invoke(client, [
+        "ls",
+        "--label",
+        "Bug report",
+        "--starred",
+        "--unarchived",
+        "--json",
+      ]),
+    ).toBe(ExitCode.OK);
+    expect(get).toHaveBeenCalledWith(
+      "/v1/messages",
+      expect.objectContaining({ label: "Bug report", starred: true, archived: false }),
+    );
+    expect(await invoke(client, ["ls", "--archived", "--unarchived"])).toBe(ExitCode.USAGE);
+    expect(
+      await invoke(client, [
+        "update",
+        "one",
+        "--unread",
+        "--star",
+        "--label",
+        "Bug",
+        "--label",
+        "Support",
+        "--json",
+      ]),
+    ).toBe(ExitCode.OK);
+    expect(patch).toHaveBeenLastCalledWith("/v1/messages/one", {
+      seen: false,
+      starred: true,
+      labels: { add: ["Bug", "Support"] },
+    });
+
+    expect(
+      await invoke(client, [
+        "update",
+        "one",
+        "two",
+        "--read",
+        "--unstar",
+        "--archive",
+        "--unlabel",
+        "Bug",
+        "--json",
+      ]),
+    ).toBe(ExitCode.OK);
+    expect(patch).toHaveBeenLastCalledWith("/v1/messages", {
+      ids: ["one", "two"],
+      seen: true,
+      starred: false,
+      archived: true,
+      labels: { remove: ["Bug"] },
+    });
+    expect(await invoke(client, ["update", "one", "--read", "--unread"])).toBe(ExitCode.USAGE);
+    expect(await invoke(client, ["update", "one"])).toBe(ExitCode.USAGE);
+    expect(patch).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows label usage and creates and lists notes", async () => {
+    const get = vi.fn(async () => ({ items: [] }) as never);
+    const post = vi.fn(async () => ({ id: "note", body: "Investigate" }) as never);
+    const client = fakeClient({ get, post });
+    await invoke(client, ["labels", "--json"]);
+    expect(get).toHaveBeenLastCalledWith("/v1/labels");
+    await invoke(client, ["note", "message", "Investigate", "--json"]);
+    expect(post).toHaveBeenCalledWith("/v1/messages/message/notes", { body: "Investigate" });
+    const bodyFile = fileURLToPath(new URL("../LICENSE", import.meta.url));
+    await invoke(client, ["note", "message", "--body-file", bodyFile, "--json"]);
+    expect(post).toHaveBeenLastCalledWith("/v1/messages/message/notes", {
+      body: expect.stringContaining("MIT License"),
+    });
+    await invoke(client, ["notes", "message", "--json"]);
+    expect(get).toHaveBeenLastCalledWith("/v1/messages/message/notes");
+    expect(await invoke(client, ["note", "message"])).toBe(ExitCode.USAGE);
+    expect(await invoke(client, ["note", "message", "Both", "--body-file", "unused"])).toBe(
+      ExitCode.USAGE,
+    );
   });
 });

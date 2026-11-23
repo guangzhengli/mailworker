@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { readTextBody } from "@cli/body";
 import type { Client } from "@cli/client";
 import { usage } from "@cli/errors";
 import {
@@ -67,7 +68,7 @@ export function sendCommand(client: () => Client): Command {
     .option("--dry-run", "print what would be sent and stop")
     .option("--json", "print the outcome as JSON")
     .action(async (options: SendOptions & { interactive?: boolean }) => {
-      const body = options.bodyFile === undefined ? undefined : readBody(options.bodyFile);
+      const body = options.bodyFile === undefined ? undefined : readTextBody(options.bodyFile);
       const attachments = [
         ...(options.attach ?? []).map((path) => readAttachment(path, null)),
         ...(options.inline ?? []).map((pair) => {
@@ -203,10 +204,6 @@ export function doctorCommand(client: () => Client): Command {
         !report.deployment.dispatchQueueConfigured;
       if (failed) process.exitCode = ExitCode.ERROR;
     });
-}
-
-function readBody(path: string): string {
-  return path === "-" ? readFileSync(0, "utf8") : readFileSync(path, "utf8");
 }
 
 interface AttachmentInput {

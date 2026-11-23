@@ -1,4 +1,5 @@
 import type { Client } from "@cli/client";
+import { flagPair, usage } from "@cli/errors";
 import { emit, emitJsonLines, inboxLine, inboxTable, type OutputOptions } from "@cli/output";
 import { fetchPage, type PaginationOptions } from "@cli/pagination";
 import type { InboxDto } from "@mailworker/contract";
@@ -11,6 +12,8 @@ interface CreateOptions extends OutputOptions {
   domain?: string;
   address?: string;
   persistent?: boolean;
+  muted?: boolean;
+  watched?: boolean;
   identity?: string;
 }
 
@@ -28,7 +31,7 @@ interface ListOptions extends OutputOptions, PaginationOptions {
  * one and clean up afterwards.
  */
 export function inboxCommand(client: () => Client): Command {
-  const inbox = new Command("inbox").description("Create, list and remove inboxes");
+  const inbox = new Command("inbox").description("Create, update, list and remove inboxes");
 
   inbox
     .command("create")
@@ -39,9 +42,12 @@ export function inboxCommand(client: () => Client): Command {
     .option("--domain <domain>", "required only when the deployment serves several")
     .option("--ttl <duration>", "how long it lives, e.g. 10m, 2h (default 1h)")
     .option("--persistent", "never expires")
+    .option("--muted", "hide inbound mail from the main inbox")
+    .option("--watched", "include inbound mail in the main inbox")
     .option("--identity <name>", "act as this agent identity when sending")
     .option("--json", "print the DTO instead of a line")
     .action(async (options: CreateOptions) => {
+      const muted = flagPair(options, "muted", "watched");
       const created = await client().post<InboxDto>("/v1/inboxes", {
         ...(options.address === undefined ? {} : { address: options.address }),
         ...(options.name === undefined ? {} : { localPart: options.name }),
@@ -49,10 +55,38 @@ export function inboxCommand(client: () => Client): Command {
         ...(options.domain === undefined ? {} : { domain: options.domain }),
         ...(options.ttl === undefined ? {} : { ttl: options.ttl }),
         ...(options.identity === undefined ? {} : { identity: options.identity }),
+        ...(muted === undefined ? {} : { muted }),
         ...(options.persistent === true ? { kind: "persistent" } : {}),
       });
       emit(created, options, () => inboxLine(created));
     });
+
+  inbox
+    .command("update <id>")
+    .description("Change an inbox's muted status or display name")
+    .option("--mute", "hide inbound mail from the main inbox")
+    .option("--unmute", "include inbound mail in the main inbox")
+    .option("--display-name <name>", "set the display name (an empty name clears it)")
+    .option("--json", "print the updated inbox")
+    .action(
+      async (
+        id: string,
+        options: OutputOptions & { mute?: boolean; unmute?: boolean; displayName?: string },
+      ) => {
+        const muted = flagPair(options, "mute", "unmute");
+        if (muted === undefined && options.displayName === undefined) {
+          throw usage("Pass --mute, --unmute or --display-name.");
+        }
+        const updated = await client().patch<InboxDto>(
+          `/v1/inboxes/${encodeURIComponent(id)}`,
+          {
+            ...(muted === undefined ? {} : { muted }),
+            ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
+          },
+        );
+        emit(updated, options, () => inboxLine(updated));
+      },
+    );
 
   inbox
     .command("ls")

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Client } from "@cli/client";
 import { UsageError } from "@cli/errors";
 import type { OutputOptions } from "@cli/output";
@@ -79,4 +80,8 @@ export async function writeBody(
   // `$(...)` sees the body and nothing appended to it.
   process.stdout.write(body.endsWith("\n") ? body : `${body}\n`);
   return true;
+}
+
+export function readTextBody(path: string): string {
+  return path === "-" ? readFileSync(0, "utf8") : readFileSync(path, "utf8");
 }

@@ -15,3 +15,16 @@ export class UsageError extends Error {}
 export function usage(message: string): UsageError {
   return new UsageError(message);
 }
+
+export function flagPair<T extends object>(
+  options: T,
+  yes: Extract<keyof T, string>,
+  no: Extract<keyof T, string>,
+): boolean | undefined {
+  const enabled = options[yes] === true;
+  const disabled = options[no] === true;
+  if (enabled && disabled) {
+    throw usage(`--${yes} and --${no} cannot be combined.`);
+  }
+  return enabled ? true : disabled ? false : undefined;
+}

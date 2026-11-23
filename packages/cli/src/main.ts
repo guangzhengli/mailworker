@@ -6,7 +6,16 @@ import { envCommand } from "@cli/environments";
 import { UsageError } from "@cli/errors";
 import { inboxCommand } from "@cli/inbox";
 import { identitiesCommand, keysCommand, webhooksCommand } from "@cli/keys";
-import { getCommand, injectCommand, lsCommand, seenCommand } from "@cli/messages";
+import {
+  getCommand,
+  injectCommand,
+  labelsCommand,
+  lsCommand,
+  noteCommand,
+  notesCommand,
+  seenCommand,
+  updateCommand,
+} from "@cli/messages";
 import {
   approveCommand,
   doctorCommand,
@@ -49,6 +58,10 @@ export function buildProgram(makeClient: (options: GlobalOptions) => Client): Co
   program.addCommand(lsCommand(client));
   program.addCommand(getCommand(client));
   program.addCommand(seenCommand(client));
+  program.addCommand(updateCommand(client));
+  program.addCommand(labelsCommand(client));
+  program.addCommand(noteCommand(client));
+  program.addCommand(notesCommand(client));
   program.addCommand(waitCommand(client));
   program.addCommand(tailCommand(client));
   program.addCommand(injectCommand(client));

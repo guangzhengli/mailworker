@@ -1,15 +1,23 @@
 import { readFileSync } from "node:fs";
-import { type BodyOptions, bodyFormatOf, writeBody } from "@cli/body";
+import { type BodyOptions, bodyFormatOf, readTextBody, writeBody } from "@cli/body";
 import type { Client } from "@cli/client";
+import { flagPair, usage } from "@cli/errors";
 import {
   emit,
   emitJsonLines,
   messageDetail,
+  messageLine,
   messageTable,
   type OutputOptions,
 } from "@cli/output";
 import { fetchPage, type PaginationOptions } from "@cli/pagination";
-import type { MessageDto, MessageSummaryDto } from "@mailworker/contract";
+import type {
+  LabelUsageDto,
+  MessageDto,
+  MessageSummaryDto,
+  NoteDto,
+  UpdateMessageBody,
+} from "@mailworker/contract";
 import { Command } from "commander";
 
 interface ListOptions extends OutputOptions, PaginationOptions {
@@ -18,6 +26,10 @@ interface ListOptions extends OutputOptions, PaginationOptions {
   q?: string;
   limit?: string;
   unseen?: boolean;
+  label?: string;
+  starred?: boolean;
+  archived?: boolean;
+  unarchived?: boolean;
 }
 
 type GetOptions = OutputOptions & BodyOptions;
@@ -34,6 +46,10 @@ export function lsCommand(client: () => Client): Command {
     .option("--from <address>", "only from this sender")
     .option("-q, --q <text>", "substring search over subject, body and sender")
     .option("--unseen", "only messages not yet marked seen")
+    .option("--label <name>", "only messages with this label")
+    .option("--starred", "only starred messages")
+    .option("--archived", "only archived messages")
+    .option("--unarchived", "only unarchived messages")
     .option("--limit <n>", "how many to return")
     .option("--cursor <id>", "continue after this cursor")
     .option("--all", "follow cursors until --max-items is reached")
@@ -41,6 +57,7 @@ export function lsCommand(client: () => Client): Command {
     .option("--json", "print the page instead of a table")
     .option("--jsonl", "print one compact message object per line")
     .action(async (options: ListOptions) => {
+      const archived = flagPair(options, "archived", "unarchived");
       const page = await fetchPage<MessageSummaryDto>(
         client(),
         "/v1/messages",
@@ -48,6 +65,9 @@ export function lsCommand(client: () => Client): Command {
           inbox: options.inbox,
           from: options.from,
           q: options.q,
+          label: options.label,
+          starred: options.starred,
+          archived,
           limit: options.limit,
           ...(options.unseen === true ? { seen: false } : {}),
         },
@@ -135,4 +155,132 @@ export function seenCommand(client: () => Client): Command {
     .action(async (id: string, options: { unseen?: boolean }) => {
       await client().post(`/v1/messages/${id}/seen`, { seen: options.unseen !== true });
     });
+}
+
+interface UpdateOptions extends OutputOptions {
+  read?: boolean;
+  unread?: boolean;
+  star?: boolean;
+  unstar?: boolean;
+  archive?: boolean;
+  unarchive?: boolean;
+  label?: string[];
+  unlabel?: string[];
+}
+
+function collectLabel(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+export function updateCommand(client: () => Client): Command {
+  return new Command("update")
+    .argument("<id...>")
+    .description("Change message state or labels")
+    .option("--read", "mark read")
+    .option("--unread", "mark unread")
+    .option("--star", "star messages")
+    .option("--unstar", "remove stars")
+    .option("--archive", "archive messages")
+    .option("--unarchive", "move messages out of the archive")
+    .option("--label <name>", "add a label (repeatable)", collectLabel, [])
+    .option("--unlabel <name>", "remove a label (repeatable)", collectLabel, [])
+    .option("--json", "print the API response")
+    .action(async (ids: string[], options: UpdateOptions) => {
+      const seen = flagPair(options, "read", "unread");
+      const starred = flagPair(options, "star", "unstar");
+      const archived = flagPair(options, "archive", "unarchive");
+      const add = options.label ?? [];
+      const remove = options.unlabel ?? [];
+      const change: UpdateMessageBody = {
+        ...(seen === undefined ? {} : { seen }),
+        ...(starred === undefined ? {} : { starred }),
+        ...(archived === undefined ? {} : { archived }),
+        ...(add.length === 0 && remove.length === 0
+          ? {}
+          : {
+              labels: {
+                ...(add.length === 0 ? {} : { add }),
+                ...(remove.length === 0 ? {} : { remove }),
+              },
+            }),
+      };
+      if (Object.keys(change).length === 0) throw usage("Pass at least one message change.");
+      if (ids.length === 1) {
+        const updated = await client().patch<MessageSummaryDto>(
+          `/v1/messages/${encodeURIComponent(ids[0]!)}`,
+          change,
+        );
+        emit(updated, options, () => messageLine(updated));
+      } else {
+        const updated = await client().patch<{ updated: number }>("/v1/messages", {
+          ids,
+          ...change,
+        });
+        emit(updated, options, () => `Updated ${updated.updated} messages.\n`);
+      }
+    });
+}
+
+export function labelsCommand(client: () => Client): Command {
+  return new Command("labels")
+    .description("List labels and their usage")
+    .option("--json", "print the API response")
+    .action(async (options: OutputOptions) => {
+      const result = await client().get<{ items: LabelUsageDto[] }>("/v1/labels");
+      emit(result, options, () =>
+        result.items.length === 0
+          ? "No labels.\n"
+          : result.items
+              .map(
+                (label) =>
+                  `${label.name}  ${label.messageCount} messages  ${label.unreadCount} unread\n`,
+              )
+              .join(""),
+      );
+    });
+}
+
+export function noteCommand(client: () => Client): Command {
+  return new Command("note")
+    .argument("<id>")
+    .argument("[text]")
+    .description("Add a plain-text note to a message")
+    .option("--body-file <file>", "read the note from a file (or - for stdin)")
+    .option("--json", "print the note")
+    .action(
+      async (
+        id: string,
+        text: string | undefined,
+        options: OutputOptions & { bodyFile?: string },
+      ) => {
+        if ((text === undefined) === (options.bodyFile === undefined)) {
+          throw usage("Pass note text or --body-file.");
+        }
+        const body = options.bodyFile === undefined ? text : readTextBody(options.bodyFile);
+        const note = await client().post<NoteDto>(
+          `/v1/messages/${encodeURIComponent(id)}/notes`,
+          { body },
+        );
+        emit(note, options, () => noteLine(note));
+      },
+    );
+}
+
+export function notesCommand(client: () => Client): Command {
+  return new Command("notes")
+    .argument("<id>")
+    .description("List notes on a message")
+    .option("--json", "print the API response")
+    .action(async (id: string, options: OutputOptions) => {
+      const result = await client().get<{ items: NoteDto[] }>(
+        `/v1/messages/${encodeURIComponent(id)}/notes`,
+      );
+      emit(result, options, () =>
+        result.items.length === 0 ? "No notes.\n" : result.items.map(noteLine).join(""),
+      );
+    });
+}
+
+function noteLine(note: NoteDto): string {
+  return `${note.id}  ${note.createdAt}  ${note.authorSubject}\n${note.body}\n`;
 }

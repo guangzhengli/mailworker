@@ -29,6 +29,7 @@ export class ApiError extends Error {
 export interface Client {
   get<T>(path: string, query?: Query, options?: RequestOptions): Promise<T>;
   post<T>(path: string, body?: unknown, query?: Query, options?: RequestOptions): Promise<T>;
+  patch<T>(path: string, body: unknown, options?: RequestOptions): Promise<T>;
   postRaw<T>(
     path: string,
     body: Uint8Array | string,
@@ -136,6 +137,13 @@ export function createClient(config: Config): Client {
           "application/json",
           options,
         ),
+        readJson<T>,
+      );
+    },
+
+    async patch<T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> {
+      return consume(
+        await send("PATCH", path, undefined, JSON.stringify(body), "application/json", options),
         readJson<T>,
       );
     },
