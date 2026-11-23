@@ -24,12 +24,15 @@ import type {
   Inbox,
   InjectMessageInput,
   InjectMessageResult,
+  Label,
+  LabelUsage,
   ListDeliveriesQuery,
   ListInboxesQuery,
   ListMessagesQuery,
   Message,
   MessageSummary,
   MintedApiKey,
+  Note,
   Page,
   PaginatorOptions,
   RequestOptions,
@@ -37,6 +40,9 @@ import type {
   SendInput,
   SendResult,
   Suppression,
+  UpdateInboxInput,
+  UpdateMessageInput,
+  UpdateMessagesResult,
   WaitForDeliveryOptions,
   WaitForMessageInput,
   WaitForMessageResult,
@@ -65,7 +71,7 @@ export interface MailworkerClientOptions {
 }
 
 type Query = Readonly<Record<string, string | number | boolean | undefined>>;
-type HttpMethod = "GET" | "POST" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 interface InternalRequest extends RequestOptions {
   readonly query?: Query;
@@ -177,6 +183,19 @@ export class MailworkerClient {
     });
   }
 
+  async updateInbox(
+    id: string,
+    input: UpdateInboxInput,
+    options: RequestOptions = {},
+  ): Promise<Inbox> {
+    validateInput(schemas.updateInbox, input);
+    return await this.#request("PATCH", `/v1/inboxes/${encodeURIComponent(id)}`, {
+      ...options,
+      json: input,
+      schema: schemas.inbox,
+    });
+  }
+
   async deleteInbox(id: string, options: RequestOptions = {}): Promise<void> {
     await this.#request("DELETE", `/v1/inboxes/${encodeURIComponent(id)}`, {
       ...options,
@@ -206,6 +225,85 @@ export class MailworkerClient {
     return await this.#request("GET", `/v1/messages/${encodeURIComponent(id)}`, {
       ...options,
       schema: schemas.message,
+    });
+  }
+
+  async updateMessage(
+    id: string,
+    input: UpdateMessageInput,
+    options: RequestOptions = {},
+  ): Promise<MessageSummary> {
+    validateInput(schemas.updateMessage, input);
+    return await this.#request("PATCH", `/v1/messages/${encodeURIComponent(id)}`, {
+      ...options,
+      json: input,
+      schema: schemas.messageSummary,
+    });
+  }
+
+  async updateMessages(
+    ids: readonly string[],
+    input: UpdateMessageInput,
+    options: RequestOptions = {},
+  ): Promise<UpdateMessagesResult> {
+    const body = { ...input, ids };
+    validateInput(schemas.updateMessages, body);
+    return await this.#request("PATCH", "/v1/messages", {
+      ...options,
+      json: body,
+      schema: schemas.updatedMessages,
+    });
+  }
+
+  async listLabels(options: RequestOptions = {}): Promise<readonly LabelUsage[]> {
+    const result = await this.#request<{ readonly items: readonly LabelUsage[] }>(
+      "GET",
+      "/v1/labels",
+      { ...options, schema: schemas.labels },
+    );
+    return result.items;
+  }
+
+  async renameLabel(id: string, name: string, options: RequestOptions = {}): Promise<Label> {
+    const body = { name };
+    validateInput(schemas.renameLabel, body);
+    return await this.#request("PATCH", `/v1/labels/${encodeURIComponent(id)}`, {
+      ...options,
+      json: body,
+      schema: schemas.label,
+    });
+  }
+
+  async deleteLabel(id: string, options: RequestOptions = {}): Promise<void> {
+    await this.#request("DELETE", `/v1/labels/${encodeURIComponent(id)}`, {
+      ...options,
+      expectEmpty: true,
+    });
+  }
+
+  async addNote(messageId: string, body: string, options: RequestOptions = {}): Promise<Note> {
+    const input = { body };
+    validateInput(schemas.createNote, input);
+    return await this.#request("POST", `/v1/messages/${encodeURIComponent(messageId)}/notes`, {
+      ...options,
+      json: input,
+      schema: schemas.note,
+    });
+  }
+
+  async listNotes(messageId: string, options: RequestOptions = {}): Promise<readonly Note[]> {
+    const result = await this.#request<{ readonly items: readonly Note[] }>(
+      "GET",
+      `/v1/messages/${encodeURIComponent(messageId)}/notes`,
+      { ...options, schema: schemas.notes },
+    );
+    return result.items;
+  }
+
+  async deleteNote(id: string, options: RequestOptions = {}): Promise<void> {
+    await this.#request("DELETE", `/v1/notes/${encodeURIComponent(id)}`, {
+      ...options,
+      expectEmpty: true,
     });
   }
 

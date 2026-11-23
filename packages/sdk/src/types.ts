@@ -65,6 +65,8 @@ export interface Capabilities {
     readonly deliveryTimeline: true;
     readonly webhooksConfigured: boolean;
     readonly typescriptSdk: true;
+    readonly labels: boolean;
+    readonly notes: boolean;
   };
   readonly limits: {
     readonly maxPageSize: number;
@@ -83,6 +85,7 @@ export interface Capabilities {
     readonly readInboxes: boolean;
     readonly createInboxes: boolean;
     readonly readMessages: boolean;
+    readonly annotateMessages: boolean;
     readonly injectMessages: boolean;
     readonly sendMessages: boolean;
     readonly approveMessages: boolean;
@@ -97,6 +100,7 @@ export interface CreateInboxInput {
   readonly domain?: string;
   readonly kind?: "ephemeral" | "persistent";
   readonly ttl?: number | string;
+  readonly muted?: boolean;
   readonly displayName?: string;
   readonly identity?: string;
   readonly metadata?: Readonly<Record<string, string>>;
@@ -106,6 +110,7 @@ export interface ListInboxesQuery extends PageQuery {
   readonly kind?: "ephemeral" | "persistent";
   readonly domain?: string;
   readonly includeExpired?: boolean;
+  readonly muted?: boolean;
 }
 
 export interface Inbox {
@@ -115,10 +120,16 @@ export interface Inbox {
   readonly domain: string;
   readonly displayName: string | null;
   readonly kind: "ephemeral" | "persistent";
+  readonly muted: boolean;
   readonly identityId: string | null;
   readonly metadata: Readonly<Record<string, string>> | null;
   readonly expiresAt: string | null;
   readonly createdAt: string;
+}
+
+export interface UpdateInboxInput {
+  readonly muted?: boolean;
+  readonly displayName?: string | null;
 }
 
 export interface Attachment {
@@ -161,11 +172,22 @@ export interface MessageBase {
   readonly autoSubmitted: string | null;
   readonly size: number;
   readonly seen: boolean;
+  readonly starred: boolean;
+  readonly archivedAt: string | null;
+  readonly labels: readonly string[];
   readonly sentAt: string | null;
   readonly receivedAt: string;
 }
 
+export interface Unsubscribe {
+  readonly https: string | null;
+  readonly mailto: string | null;
+  readonly oneClick: boolean;
+}
+
 export interface Message extends MessageBase {
+  readonly listId: string | null;
+  readonly unsubscribe: Unsubscribe | null;
   readonly bodyText: string | null;
   readonly bodyHtml: string | null;
   readonly attachments: readonly Attachment[];
@@ -173,6 +195,7 @@ export interface Message extends MessageBase {
 
 export interface MessageSummary extends MessageBase {
   readonly attachmentCount: number;
+  readonly noteCount: number;
   readonly hasText: boolean;
   readonly hasHtml: boolean;
   readonly preview: string;
@@ -184,8 +207,47 @@ export interface ListMessagesQuery extends PageQuery {
   readonly direction?: "inbound" | "outbound";
   readonly from?: string;
   readonly seen?: boolean;
+  readonly label?: string;
+  readonly starred?: boolean;
+  readonly archived?: boolean;
+  readonly muted?: boolean;
   readonly q?: string;
   readonly after?: string;
+}
+
+export interface UpdateMessageInput {
+  readonly seen?: boolean;
+  readonly starred?: boolean;
+  readonly archived?: boolean;
+  readonly labels?: {
+    readonly add?: readonly string[];
+    readonly remove?: readonly string[];
+  };
+}
+
+export interface UpdateMessagesResult {
+  readonly updated: number;
+}
+
+export interface Label {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+}
+
+export interface LabelUsage extends Label {
+  readonly messageCount: number;
+  readonly unreadCount: number;
+  readonly lastUsedAt: string | null;
+}
+
+export interface Note {
+  readonly id: string;
+  readonly messageId: string;
+  readonly authorSubject: string;
+  readonly authorIdentityId: string | null;
+  readonly body: string;
+  readonly createdAt: string;
 }
 
 export interface WaitForMessageInput {

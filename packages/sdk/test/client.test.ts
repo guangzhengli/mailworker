@@ -21,6 +21,7 @@ const inbox = {
   domain: "mail.example.com",
   displayName: null,
   kind: "persistent",
+  muted: false,
   identityId: null,
   metadata: null,
   expiresAt: null,
@@ -81,6 +82,12 @@ describe("MailworkerClient safety", () => {
     await expect(client(fetch).getInbox(inbox.id)).rejects.toBeInstanceOf(
       MailworkerProtocolError,
     );
+  });
+
+  it("parses an inbox from a Worker that predates muting", async () => {
+    const { muted: _muted, ...older } = inbox;
+    const fetch = vi.fn(async () => Response.json(older));
+    expect(await client(fetch).getInbox(inbox.id)).toEqual(inbox);
   });
 
   it("keeps the request timeout active while consuming the response body", async () => {
@@ -375,5 +382,159 @@ describe("MailworkerClient safety", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const init = fetch.mock.calls[0]![1]!;
     expect(JSON.parse(String(init.body))).toEqual({ reason: "Wrong recipient" });
+  });
+});
+
+describe("mail client state", () => {
+  const message = {
+    id: inbox.id,
+    inboxId: inbox.id,
+    identityId: null,
+    messageId: "request@example.com",
+    threadId: "request@example.com",
+    direction: "inbound",
+    origin: "email",
+    contentTrust: "untrusted",
+    fromHeader: "sender@example.com",
+    from: "sender@example.com",
+    toHeader: inbox.address,
+    to: [inbox.address],
+    cc: [],
+    bcc: [],
+    replyTo: null,
+    subject: "Support",
+    inReplyTo: null,
+    references: [],
+    provenance: {
+      trusted: false,
+      reasons: [],
+      spf: "unknown",
+      dkim: "unknown",
+      dmarc: "unknown",
+    },
+    tag: null,
+    autoSubmitted: null,
+    size: 0,
+    seen: false,
+    starred: true,
+    archivedAt: null,
+    labels: ["Bug"],
+    sentAt: null,
+    receivedAt: inbox.createdAt,
+    noteCount: 1,
+    attachmentCount: 0,
+    hasText: true,
+    hasHtml: false,
+    preview: "Help",
+  };
+
+  it("creates and patches inboxes and forwards false and true list filters", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) =>
+      Response.json(
+        init?.method === "GET" ? { items: [message], cursor: null } : { ...inbox, muted: true },
+      ),
+    );
+    const sdk = client(fetch);
+    await expect(sdk.createInbox({ muted: true })).resolves.toMatchObject({ muted: true });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL("https://mailworker.test/v1/inboxes"),
+      expect.objectContaining({ method: "POST", body: '{"muted":true}' }),
+    );
+    await expect(
+      sdk.updateInbox(inbox.id, { muted: true, displayName: null }),
+    ).resolves.toMatchObject({ muted: true });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`https://mailworker.test/v1/inboxes/${inbox.id}`),
+      expect.objectContaining({ method: "PATCH", body: '{"muted":true,"displayName":null}' }),
+    );
+    await expect(
+      sdk.listMessages({ muted: false, starred: true, archived: false, label: "Bug report" }),
+    ).resolves.toMatchObject({ items: [message] });
+    const [url] = fetch.mock.lastCall!;
+    expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({
+      muted: "false",
+      starred: "true",
+      archived: "false",
+      label: "Bug report",
+    });
+  });
+
+  it("uses PATCH with typed summaries or a batch count and validates input", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+      Response.json(String(url).endsWith("/v1/messages") ? { updated: 1 } : message),
+    );
+    const sdk = client(fetch);
+    await expect(
+      sdk.updateMessage(message.id, { starred: true, labels: { add: ["Bug"] } }),
+    ).resolves.toEqual(message);
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL(`https://mailworker.test/v1/messages/${message.id}`),
+      expect.objectContaining({
+        method: "PATCH",
+        body: '{"starred":true,"labels":{"add":["Bug"]}}',
+      }),
+    );
+    await expect(sdk.updateMessages([message.id], { archived: false })).resolves.toEqual({
+      updated: 1,
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      new URL("https://mailworker.test/v1/messages"),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ archived: false, ids: [message.id] }),
+      }),
+    );
+    await expect(sdk.updateMessages([], { archived: false })).rejects.toBeInstanceOf(
+      MailworkerValidationError,
+    );
+    await expect(sdk.updateInbox(inbox.id, {})).rejects.toBeInstanceOf(
+      MailworkerValidationError,
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("validates label and note responses and sends their writes to the intended routes", async () => {
+    const label = { id: inbox.id, name: "Bug", createdAt: inbox.createdAt };
+    const usage = { ...label, messageCount: 1, unreadCount: 0, lastUsedAt: inbox.createdAt };
+    const note = {
+      id: inbox.id,
+      messageId: message.id,
+      authorSubject: "key:agent",
+      authorIdentityId: null,
+      body: "Investigate",
+      createdAt: inbox.createdAt,
+    };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ items: [usage] }))
+      .mockResolvedValueOnce(Response.json({ ...label, name: "Incident" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json(note, { status: 201 }))
+      .mockResolvedValueOnce(Response.json({ items: [note] }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const sdk = client(fetch);
+    await expect(sdk.listLabels()).resolves.toEqual([usage]);
+    await expect(sdk.renameLabel(label.id, "Incident")).resolves.toEqual({
+      ...label,
+      name: "Incident",
+    });
+    await expect(sdk.deleteLabel(label.id)).resolves.toBeUndefined();
+    await expect(sdk.addNote(message.id, note.body)).resolves.toEqual(note);
+    await expect(sdk.listNotes(message.id)).resolves.toEqual([note]);
+    await expect(sdk.deleteNote(note.id)).resolves.toBeUndefined();
+    expect(
+      fetch.mock.calls.map(([url, init]) => [
+        new URL(String(url)).pathname,
+        init?.method,
+        init?.body,
+      ]),
+    ).toEqual([
+      ["/v1/labels", "GET", undefined],
+      [`/v1/labels/${label.id}`, "PATCH", '{"name":"Incident"}'],
+      [`/v1/labels/${label.id}`, "DELETE", undefined],
+      [`/v1/messages/${message.id}/notes`, "POST", '{"body":"Investigate"}'],
+      [`/v1/messages/${message.id}/notes`, "GET", undefined],
+      [`/v1/notes/${note.id}`, "DELETE", undefined],
+    ]);
   });
 });
