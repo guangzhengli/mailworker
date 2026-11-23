@@ -1,3 +1,4 @@
+import type { Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
 import { ComposeProvider, useCompose } from "@web/app/components/compose-panel";
 import {
@@ -53,6 +54,23 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     // able to open the pages its scopes allow.
     const readsMail = can(caller, "message:read");
     const readsInboxes = can(caller, "inbox:read");
+    // Muted addresses fold into one entry, so the sidebar only lists what a
+    // person reads; paging keeps them from crowding out the rest.
+    const watchedAddresses = async () => {
+      const items = [];
+      let cursor: Ulid | null = null;
+      do {
+        const page = await services.mailbox.listInboxes(caller, {
+          kind: "persistent",
+          muted: false,
+          limit: 100,
+          ...(cursor === null ? {} : { cursor }),
+        });
+        items.push(...page.items);
+        cursor = page.cursor;
+      } while (cursor !== null && items.length < 500);
+      return items;
+    };
     const [environments, counts, labels, addresses] = await Promise.all([
       // A credential bound to one environment cannot list the others.
       admin ? services.identity.listEnvironments(caller) : Promise.resolve([]),
@@ -60,9 +78,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
         ? container.dashboard.mailCounts(caller, now, statusesIn("problem"))
         : Promise.resolve(NO_COUNTS),
       readsMail ? services.mailbox.listLabels(caller) : Promise.resolve([]),
-      readsInboxes
-        ? services.mailbox.listInboxes(caller, { kind: "persistent", limit: 100 })
-        : Promise.resolve({ items: [], cursor: null }),
+      readsInboxes ? watchedAddresses() : Promise.resolve([]),
     ]);
 
     return {
@@ -86,7 +102,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
         total: label.messageCount,
         lastUsedAt: label.lastUsedAt,
       })),
-      addresses: [...addresses.items]
+      addresses: [...addresses]
         .sort(
           (left, right) =>
             left.domain.localeCompare(right.domain) ||
@@ -98,7 +114,6 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           localPart: inbox.localPart,
           domain: inbox.domain,
           displayName: inbox.displayName,
-          muted: inbox.muted,
         })),
     };
   });
@@ -108,6 +123,7 @@ const NO_COUNTS: MailCounts = {
   inboxUnread: 0,
   unreadByInbox: {},
   activeEphemeralInboxes: 0,
+  mutedPersistentInboxes: 0,
   pendingApproval: 0,
   problems: 0,
 };
@@ -137,7 +153,6 @@ function SideLink({
   Icon,
   count,
   tone,
-  muted,
   title,
   onNavigate,
 }: {
@@ -147,7 +162,6 @@ function SideLink({
   Icon?: IconComponent | React.ComponentType<{ className?: string }>;
   count?: number;
   tone?: "warning" | "danger";
-  muted?: boolean;
   title?: string;
   onNavigate?: (() => void) | undefined;
 }) {
@@ -166,7 +180,6 @@ function SideLink({
         active
           ? "bg-selected font-medium text-title"
           : "text-secondary-text hover:bg-hover hover:text-title",
-        muted === true && !active && "text-hint",
       )}
     >
       {Icon !== undefined && (
@@ -176,9 +189,6 @@ function SideLink({
         />
       )}
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {muted === true && (
-        <BellOffIcon aria-hidden="true" className="size-3.5 shrink-0 text-hint" />
-      )}
       {count !== undefined && count > 0 && (
         <span
           className={cn(
@@ -410,19 +420,24 @@ function MailNav({
                   to={mailHref({ view: "all", inbox: address.id })}
                   active={onMail && filters.inbox === address.id}
                   label={`${address.localPart}@`}
-                  title={
-                    address.muted
-                      ? t("shell.mutedTitle", { address: address.address })
-                      : address.address
-                  }
+                  title={address.address}
                   Icon={AtSignIcon}
                   count={data.counts.unreadByInbox[address.id] ?? 0}
-                  muted={address.muted}
                   onNavigate={onNavigate}
                 />
               ))}
           </div>
         ))}
+        {data.counts.mutedPersistentInboxes > 0 && (
+          <SideLink
+            to="/inboxes?kind=persistent&muted=1"
+            active={false}
+            label={t("shell.mutedAddresses")}
+            Icon={BellOffIcon}
+            count={data.counts.mutedPersistentInboxes}
+            onNavigate={onNavigate}
+          />
+        )}
         {data.counts.activeEphemeralInboxes > 0 && (
           <SideLink
             to="/inboxes?kind=ephemeral"
@@ -433,15 +448,17 @@ function MailNav({
             onNavigate={onNavigate}
           />
         )}
-        {data.addresses.length === 0 && data.counts.activeEphemeralInboxes === 0 && (
-          <Link
-            to="/inboxes"
-            onClick={onNavigate}
-            className="px-3 py-1 text-[13px] text-secondary-text hover:text-title"
-          >
-            {t("shell.addAddress")}
-          </Link>
-        )}
+        {data.addresses.length === 0 &&
+          data.counts.activeEphemeralInboxes === 0 &&
+          data.counts.mutedPersistentInboxes === 0 && (
+            <Link
+              to="/inboxes"
+              onClick={onNavigate}
+              className="px-3 py-1 text-[13px] text-secondary-text hover:text-title"
+            >
+              {t("shell.addAddress")}
+            </Link>
+          )}
       </Group>
     </>
   );

@@ -74,10 +74,12 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const rawKind = url.searchParams.get("kind");
     const kind: "persistent" | "ephemeral" | null =
       rawKind === "persistent" || rawKind === "ephemeral" ? rawKind : null;
+    const muted = kind === "persistent" && url.searchParams.get("muted") === "1";
 
     const page = await services.mailbox.listInboxes(caller, {
       includeExpired: url.searchParams.get("expired") === "1",
       ...(kind === null ? {} : { kind }),
+      ...(muted ? { muted } : {}),
       ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
     });
 
@@ -85,6 +87,7 @@ export async function loader({ context, request }: Route.LoaderArgs) {
       inboxes: page.items,
       cursor: page.cursor,
       kind,
+      muted,
       includeExpired: url.searchParams.get("expired") === "1",
       mayCreate: can(caller, "inbox:write"),
       domains: await services.mailbox.listDomains(caller),
@@ -397,24 +400,31 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
 
       <div className="flex flex-wrap items-start justify-between gap-x-4">
         <FilterTabs>
-          {([null, "persistent", "ephemeral"] as const).map((kind) => (
+          {(
+            [
+              [null, false, "inboxes.kindAll"],
+              ["persistent", false, "inboxes.kindPersistent"],
+              ["persistent", true, "inboxes.kindMuted"],
+              ["ephemeral", false, "inboxes.kindEphemeral"],
+            ] as const
+          ).map(([kind, muted, label]) => (
             <FilterTab
-              key={kind ?? "all"}
-              to={inboxesHref({ kind, expired: loaderData.includeExpired })}
-              active={loaderData.kind === kind}
+              key={label}
+              to={inboxesHref({ kind, muted, expired: loaderData.includeExpired })}
+              active={loaderData.kind === kind && loaderData.muted === muted}
             >
-              {kind === null
-                ? t("inboxes.kindAll")
-                : kind === "persistent"
-                  ? t("inboxes.kindPersistent")
-                  : t("inboxes.kindEphemeral")}
+              {t(label)}
             </FilterTab>
           ))}
         </FilterTabs>
         <Button
           render={
             <Link
-              to={inboxesHref({ kind: loaderData.kind, expired: !loaderData.includeExpired })}
+              to={inboxesHref({
+                kind: loaderData.kind,
+                muted: loaderData.muted,
+                expired: !loaderData.includeExpired,
+              })}
             />
           }
           variant="ghost"
@@ -493,6 +503,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
         <Pager
           to={inboxesHref({
             kind: loaderData.kind,
+            muted: loaderData.muted,
             expired: loaderData.includeExpired,
             cursor: loaderData.cursor,
           })}
@@ -504,15 +515,18 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
 
 function inboxesHref({
   kind,
+  muted = false,
   expired,
   cursor,
 }: {
   kind: "persistent" | "ephemeral" | null;
+  muted?: boolean;
   expired: boolean;
   cursor?: string | null;
 }): string {
   const params = new URLSearchParams();
   if (kind !== null) params.set("kind", kind);
+  if (muted) params.set("muted", "1");
   if (expired) params.set("expired", "1");
   if (cursor !== undefined && cursor !== null) params.set("cursor", cursor);
   const query = params.toString();

@@ -354,11 +354,13 @@ describe("D1DashboardQueries", () => {
     });
   });
 
-  it("counts unarchived inbound unread mail by inbox and excludes muted and deleted addresses from the main count", async () => {
+  it("counts unread mail by inbox, muted and temporary addresses, and excludes muted and deleted addresses from the main count", async () => {
     const createdAt = SINCE.toISOString();
     const identityId = Ulid.parse(id(601));
     const otherIdentity = Ulid.parse(id(602));
-    const [watched, muted, expired, deleted, other] = [611, 612, 613, 614, 615].map(id);
+    const [watched, muted, expired, deleted, other, quiet, otherQuiet] = [
+      611, 612, 613, 614, 615, 616, 617,
+    ].map(id);
     for (const [inboxId, overrides] of [
       [watched!, {}],
       [
@@ -368,6 +370,9 @@ describe("D1DashboardQueries", () => {
       [expired!, { kind: "ephemeral", expiresAt: NOW.toISOString() }],
       [deleted!, { deletedAt: NOW.toISOString() }],
       [other!, { identityId: otherIdentity }],
+      [quiet!, { muted: true }],
+      [otherQuiet!, { muted: true, identityId: otherIdentity }],
+      [id(618), { muted: true, deletedAt: NOW.toISOString() }],
     ] as const) {
       await db.insert(schema.inboxes).values({
         id: inboxId,
@@ -437,6 +442,7 @@ describe("D1DashboardQueries", () => {
       inboxUnread: 3,
       unreadByInbox: { [watched!]: 1, [muted!]: 1, [expired!]: 1, [other!]: 1 },
       activeEphemeralInboxes: 1,
+      mutedPersistentInboxes: 2,
       pendingApproval: 1,
       problems: 2,
     });
@@ -445,6 +451,7 @@ describe("D1DashboardQueries", () => {
       inboxUnread: 2,
       unreadByInbox: { [watched!]: 1, [muted!]: 1, [expired!]: 1 },
       activeEphemeralInboxes: 1,
+      mutedPersistentInboxes: 1,
       pendingApproval: 1,
       problems: 1,
     });

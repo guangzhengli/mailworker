@@ -29,6 +29,7 @@ export interface MailCounts {
   readonly inboxUnread: number;
   readonly unreadByInbox: Readonly<Record<string, number>>;
   readonly activeEphemeralInboxes: number;
+  readonly mutedPersistentInboxes: number;
   readonly pendingApproval: number;
   readonly problems: number;
 }
@@ -157,7 +158,7 @@ export class D1DashboardQueries {
     CallerRules.require(ctx, "inbox:read");
     const identityId = CallerRules.has(ctx, "admin") ? null : ctx.identityId;
 
-    const [unread, ephemeral, delivery] = await Promise.all([
+    const [unread, addresses, delivery] = await Promise.all([
       this.db
         .select({
           id: inboxes.id,
@@ -183,12 +184,14 @@ export class D1DashboardQueries {
         )
         .groupBy(inboxes.id, inboxes.muted),
       this.db
-        .select({ count: sql<number>`count(*)` })
+        .select({
+          ephemeral: sql<number>`count(*) FILTER (WHERE ${inboxes.kind} = 'ephemeral')`,
+          mutedPersistent: sql<number>`count(*) FILTER (WHERE ${inboxes.kind} = 'persistent' AND ${inboxes.muted} = 1)`,
+        })
         .from(inboxes)
         .where(
           and(
             eq(inboxes.accountId, ctx.accountId),
-            eq(inboxes.kind, "ephemeral"),
             isNull(inboxes.deletedAt),
             or(isNull(inboxes.expiresAt), gt(inboxes.expiresAt, toIsoText(now))),
             identityId === null ? undefined : eq(inboxes.identityId, identityId),
@@ -211,7 +214,8 @@ export class D1DashboardQueries {
     return {
       inboxUnread: unread.reduce((total, inbox) => total + (inbox.muted ? 0 : inbox.count), 0),
       unreadByInbox: Object.fromEntries(unread.map(({ id, count }) => [id, count])),
-      activeEphemeralInboxes: ephemeral[0]?.count ?? 0,
+      activeEphemeralInboxes: addresses[0]?.ephemeral ?? 0,
+      mutedPersistentInboxes: addresses[0]?.mutedPersistent ?? 0,
       pendingApproval: delivery[0]?.pendingApproval ?? 0,
       problems: delivery[0]?.problems ?? 0,
     };
