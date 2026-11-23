@@ -120,6 +120,13 @@
       "when": 1786492800009,
       "tag": "0016_post_deploy_contract_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1786492800010,
+      "tag": "0017_mail_client_state",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,9 @@ import type {
   Caller,
   EmailAddress,
   ListMessagesQuery,
+  MessageLabelChanges,
   MessageRepository,
+  MessageStateChange,
   MessageSummary,
   Page,
   RfcMessageId,
@@ -13,22 +15,26 @@ import type {
 } from "@mailworker/core";
 import {
   decodeStoredMessageBody,
+  LabelName,
   MESSAGE_INDEX_TEXT_BYTES,
   Message,
+  notFound,
   PREVIEW_SOURCE_LENGTH,
   truncateUtf8,
 } from "@mailworker/core";
 import type { Db } from "@web/workers/adapters/d1";
 import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
+import { D1Labels, rethrowLabelError } from "@web/workers/adapters/d1-labels";
 import type { AttachmentRow, MessageRow } from "@web/workers/adapters/schema";
 import { attachments, messages } from "@web/workers/adapters/schema";
 import type { SQL } from "drizzle-orm";
-import { and, asc, count, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 export class D1Messages implements MessageRepository {
   constructor(
     private readonly db: Db,
     private readonly blobs?: BlobStore,
+    readonly labels = new D1Labels(db),
   ) {}
 
   /**
@@ -67,8 +73,22 @@ export class D1Messages implements MessageRepository {
     for (const group of chunks(message.attachments, ATTACHMENTS_PER_STATEMENT)) {
       statements.push(attachmentInsert(this.db.$client, ctx, message.id, group));
     }
-    const [inserted] = await this.db.$client.batch(statements);
-    return { stored: (inserted?.results.length ?? 0) > 0 };
+    if (message.labels.length > 0) {
+      statements.push(
+        ...this.addLabelStatements(
+          ctx,
+          changePrefix(ctx, [message.id], null),
+          message.labels,
+          message.receivedAt,
+        ),
+      );
+    }
+    try {
+      const [inserted] = await this.db.$client.batch(statements);
+      return { stored: (inserted?.results.length ?? 0) > 0 };
+    } catch (error) {
+      rethrowLabelError(error);
+    }
   }
 
   async findById(ctx: Caller, id: Ulid): Promise<Message | null> {
@@ -78,7 +98,7 @@ export class D1Messages implements MessageRepository {
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.id, id)))
       .limit(1);
     if (row === undefined) return null;
-    return await this.toHydratedMessage(ctx, row, await this.attachmentsFor(ctx, [id]));
+    return (await this.hydrateRows(ctx, [row]))[0]!;
   }
 
   async findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null> {
@@ -88,11 +108,7 @@ export class D1Messages implements MessageRepository {
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.rfcMessageId, rfcId)))
       .limit(1);
     if (row === undefined) return null;
-    return await this.toHydratedMessage(
-      ctx,
-      row,
-      await this.attachmentsFor(ctx, [row.id as Ulid]),
-    );
+    return (await this.hydrateRows(ctx, [row]))[0]!;
   }
 
   async findPlacement(
@@ -116,11 +132,7 @@ export class D1Messages implements MessageRepository {
       )
       .limit(1);
     if (row === undefined) return null;
-    return await this.toHydratedMessage(
-      ctx,
-      row,
-      await this.attachmentsFor(ctx, [row.id as Ulid]),
-    );
+    return (await this.hydrateRows(ctx, [row]))[0]!;
   }
 
   /**
@@ -181,6 +193,11 @@ export class D1Messages implements MessageRepository {
         //
         // Matching on `account_id` too is what lets this use
         // `idx_attachments_message` instead of scanning.
+        noteCount: sql<number>`(
+          SELECT count(*) FROM message_notes
+          WHERE message_notes.account_id = messages.account_id
+            AND message_notes.message_id = messages.id
+        )`,
         attachmentCount: sql<number>`(
           SELECT count(*) FROM attachments
           WHERE attachments.account_id = messages.account_id
@@ -188,13 +205,18 @@ export class D1Messages implements MessageRepository {
         )`,
       })
       .from(messages)
-      .where(and(eq(messages.accountId, ctx.accountId), ...listFilters(query)))
+      .where(and(eq(messages.accountId, ctx.accountId), ...listFilters(ctx, query)))
       .orderBy(query.order === "asc" ? asc(messages.id) : desc(messages.id))
       .limit(limit);
 
+    const labels = await this.labels.namesForMessages(
+      ctx,
+      rows.map(({ row }) => row.id),
+    );
     const items = rows.map(
       (r): MessageSummary => ({
-        ...summaryFields(r.row),
+        ...summaryFields(r.row, labels.get(r.row.id) ?? []),
+        noteCount: Number(r.noteCount),
         attachmentCount: Number(r.attachmentCount),
         hasText: Boolean(r.hasText),
         hasHtml: Boolean(r.hasHtml),
@@ -211,26 +233,153 @@ export class D1Messages implements MessageRepository {
       .from(messages)
       .where(and(eq(messages.accountId, ctx.accountId), eq(messages.threadId, threadId)))
       .orderBy(asc(messages.id));
-    const byMessage = await this.attachmentsFor(
-      ctx,
-      rows.map((row) => row.id as Ulid),
-    );
+    return await this.hydrateRows(ctx, rows);
+  }
+
+  private async hydrateRows(ctx: Caller, rows: readonly MessageRow[]): Promise<Message[]> {
+    const ids = rows.map((row) => row.id as Ulid);
+    const [byMessage, labels] = await Promise.all([
+      this.attachmentsFor(ctx, ids),
+      this.labels.namesForMessages(ctx, ids),
+    ]);
     const hydrated: Message[] = [];
     // Workers allow six simultaneous outbound connections. R2 reads use those
     // slots, so hydrate five at a time rather than Promise.all over a long thread.
     for (const group of chunks(rows, BODY_HYDRATION_CONCURRENCY)) {
       hydrated.push(
-        ...(await Promise.all(group.map((row) => this.toHydratedMessage(ctx, row, byMessage)))),
+        ...(await Promise.all(
+          group.map((row) =>
+            this.toHydratedMessage(ctx, row, byMessage, labels.get(row.id) ?? []),
+          ),
+        )),
       );
     }
     return hydrated;
   }
 
   async setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void> {
-    await this.db
-      .update(messages)
-      .set({ seen })
-      .where(and(eq(messages.accountId, ctx.accountId), eq(messages.id, id)));
+    await this.updateState(ctx, [id], { seen });
+  }
+
+  async updateState(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+  ): Promise<void> {
+    const statement = this.stateStatement(ctx, ids, change);
+    if (statement !== null) await statement.run();
+  }
+
+  async applyChanges(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+    options: MessageLabelChanges,
+  ): Promise<void> {
+    const prefix = changePrefix(ctx, ids, options.identityId);
+    const client = this.db.$client;
+    // D1 batches are transactional. Every write is gated by the same set of
+    // accessible IDs, and a limit violation aborts the whole batch.
+    const missing = client
+      .prepare(
+        `${prefix.sql} SELECT value AS id FROM requested, json_each(requested.ids)
+       WHERE value NOT IN (SELECT id FROM eligible)`,
+      )
+      .bind(...prefix.bindings);
+    const statements = [missing];
+    if (options.remove.length > 0) {
+      statements.push(
+        client
+          .prepare(
+            `${prefix.sql}
+         DELETE FROM message_labels WHERE account_id = ? AND ${prefix.allowed}
+           AND message_id IN (SELECT id FROM eligible)
+           AND label_id IN (SELECT id FROM labels WHERE account_id = ? AND name_key IN (SELECT value FROM json_each(?)))`,
+          )
+          .bind(
+            ...prefix.bindings,
+            ctx.accountId,
+            ctx.accountId,
+            JSON.stringify(options.remove),
+          ),
+      );
+    }
+    if (options.add.length > 0) {
+      statements.push(...this.addLabelStatements(ctx, prefix, options.add, options.now));
+    }
+    const state = this.stateStatement(ctx, ids, change, prefix);
+    if (state !== null) statements.push(state);
+
+    try {
+      const [result] = await client.batch<{ id: string }>(statements);
+      const missingIds = result!.results.map((row) => row.id);
+      if (missingIds.length > 0) {
+        throw notFound("message_not_found", "One or more messages were not found.", {
+          ids: missingIds,
+        });
+      }
+    } catch (error) {
+      rethrowLabelError(error);
+    }
+  }
+
+  private addLabelStatements(
+    ctx: Caller,
+    prefix: ReturnType<typeof changePrefix>,
+    names: readonly string[],
+    now: Date,
+  ): D1PreparedStatement[] {
+    return [
+      this.labels.ensureStatement(ctx, names, now, prefix),
+      this.db.$client
+        .prepare(
+          `${prefix.sql}
+         INSERT INTO message_labels (account_id, message_id, label_id, created_at)
+         SELECT l.account_id, eligible.id, l.id, ?
+         FROM labels l CROSS JOIN eligible
+         WHERE l.account_id = ? AND l.name_key IN (SELECT value FROM json_each(?))
+           AND ${prefix.allowed}
+         ON CONFLICT (account_id, message_id, label_id) DO NOTHING`,
+        )
+        .bind(
+          ...prefix.bindings,
+          toIsoText(now),
+          ctx.accountId,
+          JSON.stringify(names.map(LabelName.key)),
+        ),
+    ];
+  }
+
+  private stateStatement(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+    prefix?: ReturnType<typeof changePrefix>,
+  ): D1PreparedStatement | null {
+    const { seen, starred, archivedAt } = change;
+    if (
+      ids.length === 0 ||
+      (seen === undefined && starred === undefined && archivedAt === undefined)
+    )
+      return null;
+    return this.db.$client
+      .prepare(
+        `${prefix?.sql ?? ""}
+       UPDATE messages
+       SET seen = coalesce(?, seen), starred = coalesce(?, starred),
+           archived_at = CASE WHEN ? THEN ? ELSE archived_at END
+       WHERE account_id = ? AND id IN (${prefix === undefined ? "SELECT value FROM json_each(?)" : "SELECT id FROM eligible"})
+         AND ${prefix?.allowed ?? "1"}`,
+      )
+      .bind(
+        ...(prefix?.bindings ?? []),
+        seen === undefined ? null : Number(seen),
+        starred === undefined ? null : Number(starred),
+        Number(archivedAt !== undefined),
+        toIsoText(archivedAt ?? null),
+        ctx.accountId,
+        ...(prefix === undefined ? [JSON.stringify(ids)] : []),
+      );
   }
 
   /**
@@ -315,8 +464,9 @@ export class D1Messages implements MessageRepository {
     ctx: Caller,
     row: MessageRow,
     byMessage: Map<string, AttachmentMeta[]>,
+    labels: readonly string[],
   ): Promise<Message> {
-    const indexed = toMessage(row, byMessage);
+    const indexed = toMessage(row, byMessage, labels);
     if (row.bodyKey === null) return indexed;
     if (this.blobs === undefined) {
       throw new Error("D1Messages needs a BlobStore to hydrate R2-backed message bodies.");
@@ -351,8 +501,42 @@ export class D1Messages implements MessageRepository {
   }
 }
 
-function listFilters(query: ListMessagesQuery): (SQL | undefined)[] {
+function changePrefix(ctx: Caller, ids: readonly Ulid[], identityId: Ulid | null) {
+  return {
+    sql: `WITH requested(account_id, ids, identity_id) AS (VALUES (?, ?, ?)),
+           eligible AS (
+             SELECT m.id FROM requested r JOIN messages m ON m.account_id = r.account_id
+             WHERE m.id IN (SELECT value FROM json_each(r.ids))
+               AND (r.identity_id IS NULL OR m.identity_id = r.identity_id)
+           )`,
+    bindings: [ctx.accountId, JSON.stringify([...new Set(ids)]), identityId],
+    allowed: "(SELECT count(*) FROM eligible) = (SELECT json_array_length(ids) FROM requested)",
+  };
+}
+
+function listFilters(ctx: Caller, query: ListMessagesQuery): (SQL | undefined)[] {
   return [
+    query.id === undefined ? undefined : eq(messages.id, query.id),
+    query.starred === undefined ? undefined : eq(messages.starred, query.starred),
+    query.archived === undefined
+      ? undefined
+      : query.archived
+        ? isNotNull(messages.archivedAt)
+        : isNull(messages.archivedAt),
+    query.muted === undefined
+      ? undefined
+      : sql`EXISTS (
+      SELECT 1 FROM inboxes i
+      WHERE i.account_id = messages.account_id AND i.id = messages.inbox_id
+        AND i.deleted_at IS NULL AND i.muted = ${Number(query.muted)}
+    )`,
+    query.label === undefined
+      ? undefined
+      : sql`messages.id IN (
+      SELECT ml.message_id FROM labels l
+      JOIN message_labels ml ON ml.account_id = l.account_id AND ml.label_id = l.id
+      WHERE l.account_id = ${ctx.accountId} AND l.name_key = ${LabelName.key(query.label)}
+    )`,
     query.inboxId === undefined ? undefined : eq(messages.inboxId, query.inboxId),
     query.identityId === undefined ? undefined : eq(messages.identityId, query.identityId),
     query.threadId === undefined ? undefined : eq(messages.threadId, query.threadId),
@@ -473,6 +657,10 @@ function toRow(
     rawKey: message.rawKey,
     size: message.size,
     seen: message.seen,
+    starred: message.starred,
+    archivedAt: toIsoText(message.archivedAt),
+    listId: message.listId,
+    listUnsubscribe: message.unsubscribe,
     sentAt: toIsoText(message.sentAt),
     receivedAt: toIsoText(message.receivedAt),
   };
@@ -533,11 +721,15 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return result;
 }
 
-type SummaryRow = Omit<MessageRow, "bodyKey" | "bodyText" | "bodyHtml">;
+type SummaryRow = Omit<
+  MessageRow,
+  "bodyKey" | "bodyText" | "bodyHtml" | "listId" | "listUnsubscribe"
+>;
 
 function summaryFields(
   row: SummaryRow,
-): Omit<MessageSummary, "attachmentCount" | "hasText" | "hasHtml" | "preview"> {
+  labels: readonly string[],
+): Omit<MessageSummary, "attachmentCount" | "noteCount" | "hasText" | "hasHtml" | "preview"> {
   return {
     id: row.id as Ulid,
     accountId: row.accountId as Message["accountId"],
@@ -570,6 +762,9 @@ function summaryFields(
     rawKey: row.rawKey,
     size: row.size,
     seen: row.seen,
+    starred: row.starred,
+    archivedAt: toDate(row.archivedAt),
+    labels,
     sentAt: toDate(row.sentAt),
     receivedAt: toDate(row.receivedAt),
   };
@@ -607,14 +802,22 @@ function summaryProjection() {
     rawKey: messages.rawKey,
     size: messages.size,
     seen: messages.seen,
+    starred: messages.starred,
+    archivedAt: messages.archivedAt,
     sentAt: messages.sentAt,
     receivedAt: messages.receivedAt,
   };
 }
 
-export function toMessage(row: MessageRow, byMessage: Map<string, AttachmentMeta[]>): Message {
+export function toMessage(
+  row: MessageRow,
+  byMessage: Map<string, AttachmentMeta[]>,
+  labels: readonly string[] = [],
+): Message {
   return {
-    ...summaryFields(row),
+    ...summaryFields(row, labels),
+    listId: row.listId,
+    unsubscribe: row.listUnsubscribe,
     bodyText: row.bodyText,
     bodyHtml: row.bodyHtml,
     attachments: byMessage.get(row.id) ?? [],

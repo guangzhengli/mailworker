@@ -13,7 +13,14 @@ import type {
   Ulid,
 } from "@mailworker/core";
 import type { Db } from "@web/workers/adapters/d1";
-import { afterCursor, pageLimit, toDate, toIsoText, toPage } from "@web/workers/adapters/d1";
+import {
+  afterCursor,
+  errorText,
+  pageLimit,
+  toDate,
+  toIsoText,
+  toPage,
+} from "@web/workers/adapters/d1";
 import { matchingMessageIds } from "@web/workers/adapters/d1-messages";
 import type { DeliveryEventRow, DeliveryRow } from "@web/workers/adapters/schema";
 import { deliveries, deliveryEvents, dispatchOutbox } from "@web/workers/adapters/schema";
@@ -333,21 +340,6 @@ export class D1Deliveries implements DeliveryRepository {
     const [row] = await this.db.select().from(deliveries).where(where).limit(1);
     return row === undefined ? null : toDelivery(row);
   }
-}
-
-function errorText(error: unknown): string {
-  const parts: string[] = [];
-  let current: unknown = error;
-  const seen = new Set<unknown>();
-  while (current !== null && current !== undefined && !seen.has(current)) {
-    seen.add(current);
-    parts.push(String(current));
-    current =
-      typeof current === "object" && "cause" in current
-        ? (current as { cause?: unknown }).cause
-        : undefined;
-  }
-  return parts.join("\n");
 }
 
 /**

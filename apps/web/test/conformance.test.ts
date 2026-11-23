@@ -7,6 +7,7 @@ import {
   D1Identities,
   D1Inboxes,
   D1Messages,
+  D1Notes,
   D1Suppressions,
   R2Blobs,
   schema,
@@ -40,6 +41,7 @@ async function reset(): Promise<void> {
   await db.batch([
     db.delete(schema.attachments),
     db.delete(schema.messages),
+    db.delete(schema.labels),
     db.delete(schema.deliveryEvents),
     db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
@@ -62,9 +64,12 @@ async function reset(): Promise<void> {
 
 runRepositoryConformance("D1 + R2", async () => {
   await reset();
+  const messages = new D1Messages(db);
   return {
     inboxes: new D1Inboxes(db),
-    messages: new D1Messages(db),
+    messages,
+    labels: messages.labels,
+    notes: new D1Notes(db),
     deliveries: new D1Deliveries(db),
     identities: new D1Identities(db),
     apiKeys: new D1ApiKeys(db),
@@ -118,5 +123,54 @@ describe("0010 rolling Worker compatibility", () => {
         envelope_recipient: "agent+two@mail.example.com",
       },
     ]);
+  });
+});
+
+describe("0017 mail client state migration", () => {
+  beforeEach(reset);
+
+  it("backfills mute for legacy ephemeral inboxes and leaves persistent inboxes watched", async () => {
+    await env.DB.prepare(
+      `INSERT INTO inboxes (id, account_id, address, local_part, domain, kind, created_at)
+       VALUES ('old-e', 'alice', 'old-e@example.com', 'old-e', 'example.com', 'ephemeral', '2026-07-01'),
+              ('old-p', 'alice', 'old-p@example.com', 'old-p', 'example.com', 'persistent', '2026-07-01')`,
+    ).run();
+    const migration = env.TEST_MIGRATIONS.find(
+      (entry) => entry.name === "0017_mail_client_state.sql",
+    );
+    const backfill = migration?.queries.find((query) => query.startsWith("UPDATE `inboxes`"));
+    expect(backfill).toBeDefined();
+    await env.DB.prepare(backfill!).run();
+    const { results } = await env.DB.prepare(
+      "SELECT id, muted FROM inboxes WHERE account_id = 'alice' ORDER BY id",
+    ).all<{ id: string; muted: number }>();
+    expect(results).toEqual([
+      { id: "old-e", muted: 1 },
+      { id: "old-p", muted: 0 },
+    ]);
+  });
+
+  it("uses the mail client indexes for ordered main-inbox and starred pages", async () => {
+    const main = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN SELECT id FROM messages
+       WHERE account_id = ? AND direction = ? AND archived_at IS NULL
+         AND EXISTS (SELECT 1 FROM inboxes i WHERE i.account_id = messages.account_id
+           AND i.id = messages.inbox_id AND i.muted = ? AND i.deleted_at IS NULL)
+       ORDER BY id DESC LIMIT 50`,
+    )
+      .bind("alice", "inbound", 0)
+      .all<{ detail: string }>();
+    const starred = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN SELECT id FROM messages WHERE account_id = ? AND starred = ?
+       ORDER BY id DESC LIMIT 50`,
+    )
+      .bind("alice", 1)
+      .all<{ detail: string }>();
+    expect(main.results.map(({ detail }) => detail).join("\n")).toContain(
+      "SEARCH messages USING INDEX idx_messages_direction_archive",
+    );
+    expect(starred.results.map(({ detail }) => detail).join("\n")).toContain(
+      "idx_messages_starred",
+    );
   });
 });

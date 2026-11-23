@@ -354,8 +354,185 @@ describe("D1DashboardQueries", () => {
     });
   });
 
+  it("counts unarchived inbound unread mail by inbox and excludes muted and deleted addresses from the main count", async () => {
+    const createdAt = SINCE.toISOString();
+    const identityId = Ulid.parse(id(601));
+    const otherIdentity = Ulid.parse(id(602));
+    const [watched, muted, expired, deleted, other] = [611, 612, 613, 614, 615].map(id);
+    for (const [inboxId, overrides] of [
+      [watched!, {}],
+      [
+        muted!,
+        { kind: "ephemeral", muted: true, expiresAt: new Date(+NOW + 60_000).toISOString() },
+      ],
+      [expired!, { kind: "ephemeral", expiresAt: NOW.toISOString() }],
+      [deleted!, { deletedAt: NOW.toISOString() }],
+      [other!, { identityId: otherIdentity }],
+    ] as const) {
+      await db.insert(schema.inboxes).values({
+        id: inboxId,
+        accountId: ACCOUNT,
+        identityId,
+        address: `${inboxId}@mail.example`,
+        localPart: inboxId,
+        domain: "mail.example",
+        kind: "persistent",
+        createdAt,
+        ...overrides,
+      });
+    }
+
+    const candidates = [
+      { inboxId: watched! },
+      { inboxId: watched!, seen: true },
+      { inboxId: watched!, archivedAt: createdAt },
+      { inboxId: watched!, direction: "outbound" },
+      { inboxId: muted! },
+      { inboxId: expired! },
+      { inboxId: deleted! },
+      { inboxId: other!, identityId: otherIdentity },
+      { inboxId: watched!, accountId: "different-account" },
+    ];
+    for (const [index, overrides] of candidates.entries()) {
+      await db.insert(schema.messages).values({
+        id: id(650 + index),
+        accountId: ACCOUNT,
+        identityId,
+        rfcMessageId: `fixture-${index}@mail.example`,
+        threadId: id(650 + index),
+        direction: "inbound",
+        fromHeader: "sender@example.com",
+        toHeader: "support@mail.example",
+        toAddrs: [],
+        ccAddrs: [],
+        bccAddrs: [],
+        referencesIds: [],
+        trustReasons: [],
+        receivedAt: createdAt,
+        ...overrides,
+      });
+    }
+
+    for (const [index, overrides] of [
+      { status: "pending_approval" },
+      { status: "bounced" },
+      { status: "failed", identityId: otherIdentity },
+      { status: "failed", accountId: "different-account" },
+      { status: "rejected" },
+    ].entries()) {
+      await db.insert(schema.deliveries).values({
+        id: id(660 + index),
+        accountId: ACCOUNT,
+        identityId,
+        recipients: ["person@example.com"],
+        createdAt,
+        updatedAt: createdAt,
+        statusChangedAt: createdAt,
+        ...overrides,
+      });
+    }
+
+    const statuses = ["bounced", "failed"];
+    await expect(queries.mailCounts(ADMIN, NOW, statuses)).resolves.toEqual({
+      inboxUnread: 3,
+      unreadByInbox: { [watched!]: 1, [muted!]: 1, [expired!]: 1, [other!]: 1 },
+      activeEphemeralInboxes: 1,
+      pendingApproval: 1,
+      problems: 2,
+    });
+    const caller: Caller = { ...ADMIN, scopes: ["inbox:read", "message:read"], identityId };
+    await expect(queries.mailCounts(caller, NOW, statuses)).resolves.toEqual({
+      inboxUnread: 2,
+      unreadByInbox: { [watched!]: 1, [muted!]: 1, [expired!]: 1 },
+      activeEphemeralInboxes: 1,
+      pendingApproval: 1,
+      problems: 1,
+    });
+    await expect(queries.mailCounts(caller, NOW, [])).resolves.toMatchObject({ problems: 0 });
+  });
+
+  it("returns deliveries only for visible outbound copies and accepts more than 100 IDs", async () => {
+    const createdAt = SINCE.toISOString();
+    const identityId = Ulid.parse(id(701));
+    const otherIdentity = Ulid.parse(id(702));
+    const own = Ulid.parse(id(710));
+    const other = Ulid.parse(id(711));
+    const inbound = Ulid.parse(id(712));
+    const withoutDelivery = Ulid.parse(id(713));
+    const outboundDifferentAccount = Ulid.parse(id(714));
+    for (const [messageId, fields] of [
+      [own, {}],
+      [other, { identityId: otherIdentity }],
+      [inbound, { direction: "inbound" }],
+      [withoutDelivery, {}],
+      [outboundDifferentAccount, { accountId: "different-account" }],
+    ] as const) {
+      await db.insert(schema.messages).values({
+        id: messageId,
+        accountId: ACCOUNT,
+        identityId,
+        inboxId: id(700),
+        rfcMessageId: `${messageId}@mail.example`,
+        threadId: messageId,
+        direction: "outbound",
+        fromHeader: "sender@example.com",
+        toHeader: "support@mail.example",
+        toAddrs: [],
+        ccAddrs: [],
+        bccAddrs: [],
+        referencesIds: [],
+        trustReasons: [],
+        receivedAt: createdAt,
+        ...fields,
+      });
+    }
+    for (const [index, fields] of [
+      { messageId: own },
+      { messageId: other, identityId: otherIdentity, status: "bounced" },
+      { messageId: inbound },
+      { messageId: outboundDifferentAccount, accountId: "different-account" },
+    ].entries()) {
+      await db.insert(schema.deliveries).values({
+        id: id(720 + index),
+        accountId: ACCOUNT,
+        identityId,
+        status: "delivered",
+        recipients: ["person@example.com"],
+        createdAt,
+        updatedAt: createdAt,
+        statusChangedAt: createdAt,
+        ...fields,
+      });
+    }
+    const ids = [
+      own,
+      other,
+      inbound,
+      withoutDelivery,
+      outboundDifferentAccount,
+      ...Array.from({ length: 100 }, (_, index) => Ulid.parse(id(1000 + index))),
+    ];
+    const caller: Caller = { ...ADMIN, scopes: ["message:read"], identityId };
+    await expect(queries.deliveriesForMessages(caller, ids)).resolves.toEqual(
+      new Map([[own, { id: id(720), status: "delivered" }]]),
+    );
+    await expect(queries.deliveriesForMessages(ADMIN, ids)).resolves.toEqual(
+      new Map([
+        [own, { id: id(720), status: "delivered" }],
+        [other, { id: id(721), status: "bounced" }],
+      ]),
+    );
+    await expect(queries.deliveriesForMessages(caller, [])).resolves.toEqual(new Map());
+  });
+
   it("does not let a read-only projection bypass scopes", async () => {
     const noInboxRead: Caller = { ...ADMIN, scopes: ["message:read"] };
+    await expect(queries.mailCounts(noInboxRead, NOW, [])).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(
+      queries.deliveriesForMessages({ ...ADMIN, scopes: ["inbox:read"] }, []),
+    ).rejects.toMatchObject({ code: "forbidden" });
     await expect(queries.summary(noInboxRead, SINCE, NOW)).rejects.toEqual(
       expect.objectContaining<Partial<DomainError>>({ code: "forbidden" }),
     );

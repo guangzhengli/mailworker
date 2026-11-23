@@ -20,7 +20,9 @@ import {
   D1Domains,
   D1Identities,
   D1Inboxes,
+  D1Labels,
   D1Messages,
+  D1Notes,
   D1Suppressions,
   D1Webhooks,
   DohResolver,
@@ -78,7 +80,9 @@ export interface Container {
 export function createContainer(env: Env): Container {
   const db = createDb(env.DB);
   const blobs = new R2Blobs(env.BLOBS);
-  const messages = new D1Messages(db, blobs);
+  const ids = new UlidGenerator();
+  const labels = new D1Labels(db, ids);
+  const messages = new D1Messages(db, blobs, labels);
   const apiKeys = new D1ApiKeys(db);
   const accounts = new D1Accounts(db);
   const identities = new D1Identities(db);
@@ -97,12 +101,14 @@ export function createContainer(env: Env): Container {
 
   const deps: CoreDeps = {
     clock: new SystemClock(),
-    ids: new UlidGenerator(),
+    ids,
     contentHasher: new WebCryptoContentHasher(),
     secrets: new WebCryptoSecrets(),
 
     inboxes: new D1Inboxes(db),
     messages,
+    labels,
+    notes: new D1Notes(db),
     deliveries: deliveryRepo,
     identities,
     domains: domainRepo,

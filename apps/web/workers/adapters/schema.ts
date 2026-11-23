@@ -1,5 +1,7 @@
+import type { Unsubscribe } from "@mailworker/core";
 import { sql } from "drizzle-orm";
 import {
+  foreignKey,
   index,
   integer,
   primaryKey,
@@ -75,6 +77,7 @@ export const inboxes = sqliteTable(
     displayName: text("display_name"),
     /** ephemeral | persistent */
     kind: text("kind").notNull().default("ephemeral"),
+    muted: bool("muted"),
     identityId: text("identity_id"),
     metadata: text("metadata", { mode: "json" }).$type<Record<string, string>>(),
     expiresAt: timestamp("expires_at"),
@@ -134,6 +137,10 @@ export const messages = sqliteTable(
     rawKey: text("raw_key"),
     size: integer("size").notNull().default(0),
     seen: bool("seen"),
+    starred: bool("starred"),
+    archivedAt: timestamp("archived_at"),
+    listId: text("list_id"),
+    listUnsubscribe: text("list_unsubscribe", { mode: "json" }).$type<Unsubscribe>(),
 
     /**
      * The `Date` header. DISPLAY ONLY — never sort by it. A message whose `Date`
@@ -162,10 +169,70 @@ export const messages = sqliteTable(
       sql`CASE WHEN ${t.direction} = 'inbound' THEN coalesce(${t.envelopeRecipient}, '#legacy-row:' || ${t.id}) ELSE '#outbound' END`,
       t.rfcMessageId,
     ),
+    uniqueIndex("uq_messages_account_id").on(t.accountId, t.id),
+    index("idx_messages_direction_archive").on(t.accountId, t.direction, t.archivedAt, t.id),
+    index("idx_messages_starred").on(t.accountId, t.starred, t.id),
     index("idx_messages_inbox").on(t.accountId, t.inboxId, t.id),
     index("idx_messages_identity").on(t.accountId, t.identityId, t.id),
     index("idx_messages_thread").on(t.accountId, t.threadId, t.id),
     index("idx_messages_sent_between").on(t.accountId, t.direction, t.fromAddr, t.receivedAt),
+  ],
+);
+
+export const labels = sqliteTable(
+  "labels",
+  {
+    id: id(),
+    accountId: accountId(),
+    name: text("name").notNull(),
+    nameKey: text("name_key").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_labels_account_name_key").on(t.accountId, t.nameKey),
+    uniqueIndex("uq_labels_account_id").on(t.accountId, t.id),
+  ],
+);
+
+export const messageLabels = sqliteTable(
+  "message_labels",
+  {
+    accountId: accountId(),
+    messageId: text("message_id").notNull(),
+    labelId: text("label_id").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.messageId, t.labelId] }),
+    foreignKey({
+      columns: [t.accountId, t.messageId],
+      foreignColumns: [messages.accountId, messages.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.accountId, t.labelId],
+      foreignColumns: [labels.accountId, labels.id],
+    }).onDelete("cascade"),
+    index("idx_message_labels_label").on(t.accountId, t.labelId, t.messageId),
+  ],
+);
+
+export const messageNotes = sqliteTable(
+  "message_notes",
+  {
+    id: id(),
+    accountId: accountId(),
+    messageId: text("message_id").notNull(),
+    authorSubject: text("author_subject").notNull(),
+    authorIdentityId: text("author_identity_id"),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (t) => [
+    index("idx_message_notes_message").on(t.accountId, t.messageId, t.id),
+    foreignKey({
+      columns: [t.accountId, t.messageId],
+      foreignColumns: [messages.accountId, messages.id],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -221,6 +288,7 @@ export const deliveries = sqliteTable(
       sql`coalesce(${t.identityId}, '#unbound')`,
       t.idempotencyKey,
     ),
+    index("idx_deliveries_message").on(t.accountId, t.messageId),
     index("idx_delivery_status").on(t.accountId, t.status, t.createdAt),
     index("idx_delivery_provider_id").on(t.accountId, t.providerMsgId),
     index("idx_delivery_quota").on(t.accountId, t.identityId, t.createdAt),

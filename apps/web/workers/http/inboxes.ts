@@ -1,4 +1,9 @@
-import { createInboxBody, listInboxesQuery, toInboxDto } from "@mailworker/contract";
+import {
+  createInboxBody,
+  listInboxesQuery,
+  toInboxDto,
+  updateInboxBody,
+} from "@mailworker/contract";
 import { Ulid } from "@mailworker/core";
 import type { HttpEnv } from "@web/workers/http/env";
 import { compact, invalid } from "@web/workers/http/errors";
@@ -33,6 +38,17 @@ export const inboxes = new Hono<HttpEnv>()
     const inbox = await c.var.services.mailbox.getInbox(
       c.var.caller,
       Ulid.parse(c.req.param("id")),
+    );
+    return c.json(toInboxDto(inbox));
+  })
+
+  .patch("/:id", async (c) => {
+    const parsed = updateInboxBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return invalid(c, parsed.error);
+    const inbox = await c.var.services.mailbox.updateInbox(
+      c.var.caller,
+      Ulid.parse(c.req.param("id")),
+      compact(parsed.data),
     );
     return c.json(toInboxDto(inbox));
   })

@@ -1,12 +1,17 @@
-import type { WaitResponse } from "@mailworker/contract";
+import type { UpdateMessageBody, WaitResponse } from "@mailworker/contract";
 import {
+  createNoteBody,
   ingestRawQuery,
   listMessagesQuery,
   seenBody,
   toMessageDto,
   toMessageSummaryDto,
+  toNoteDto,
+  updateMessageBody,
+  updateMessagesBody,
   waitQuery,
 } from "@mailworker/contract";
+import type { MessageChange } from "@mailworker/core";
 import { MAX_INBOUND_MESSAGE_BYTES, ThreadId, Ulid } from "@mailworker/core";
 import { sanitizeHtml } from "@mailworker/mime";
 import type { HttpEnv } from "@web/workers/http/env";
@@ -70,6 +75,43 @@ export const messages = new Hono<HttpEnv>()
     return c.json({ items: page.items.map(toMessageSummaryDto), cursor: page.cursor });
   })
 
+  .patch("/", async (c) => {
+    const parsed = updateMessagesBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return invalid(c, parsed.error);
+    const { ids, ...body } = parsed.data;
+    return c.json(
+      await c.var.services.mailbox.updateMessages(c.var.caller, ids, messageChange(body)),
+    );
+  })
+
+  .patch("/:id", async (c) => {
+    const parsed = updateMessageBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return invalid(c, parsed.error);
+    const id = Ulid.parse(c.req.param("id"));
+    const { mailbox } = c.var.services;
+    await mailbox.updateMessages(c.var.caller, [id], messageChange(parsed.data));
+    return c.json(toMessageSummaryDto(await mailbox.getMessageSummary(c.var.caller, id)));
+  })
+
+  .get("/:id/notes", async (c) => {
+    const items = await c.var.services.mailbox.listNotes(
+      c.var.caller,
+      Ulid.parse(c.req.param("id")),
+    );
+    return c.json({ items: items.map(toNoteDto) });
+  })
+
+  .post("/:id/notes", async (c) => {
+    const parsed = createNoteBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return invalid(c, parsed.error);
+    const note = await c.var.services.mailbox.addNote(
+      c.var.caller,
+      Ulid.parse(c.req.param("id")),
+      parsed.data.body,
+    );
+    return c.json(toNoteDto(note), 201);
+  })
+
   .get("/:id", async (c) => {
     const message = await c.var.services.mailbox.getMessage(
       c.var.caller,
@@ -119,6 +161,10 @@ export const messages = new Hono<HttpEnv>()
     );
     return c.body(null, 204);
   });
+
+function messageChange({ labels, ...state }: UpdateMessageBody): MessageChange {
+  return compact({ ...state, addLabels: labels?.add, removeLabels: labels?.remove });
+}
 
 export const threads = new Hono<HttpEnv>().get("/:id", async (c) => {
   const thread = await c.var.services.mailbox.getThread(

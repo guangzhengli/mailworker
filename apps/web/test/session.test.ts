@@ -161,5 +161,13 @@ describe("the cookie as a credential", () => {
     });
 
     expect(response.status).toBe(401);
+
+    const patch = await SELF.fetch("https://mailworker.test/v1/messages", {
+      method: "PATCH",
+      headers: { Cookie: `mw_session=${sealed}` },
+      body: JSON.stringify({ ids: ["01ARZ3NDEKTSV4RRFFQ69G5FAV"], starred: true }),
+    });
+    expect(patch.status).toBe(401);
+    expect(await patch.json()).toMatchObject({ error: { code: "unauthorized" } });
   });
 });

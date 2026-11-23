@@ -28,6 +28,7 @@ beforeEach(async () => {
   await db.batch([
     db.delete(schema.attachments),
     db.delete(schema.messages),
+    db.delete(schema.labels),
     db.delete(schema.deliveryEvents),
     db.delete(schema.dispatchOutbox),
     db.delete(schema.deliveries),
@@ -120,6 +121,15 @@ describe("retention, against real D1 and R2", () => {
     expect(before.objects.length).toBeGreaterThan(0);
 
     const { services, caller } = ctx();
+    const {
+      items: [message],
+    } = await services.mailbox.listMessages(caller);
+    await services.mailbox.updateMessages(caller, [message!.id], {
+      addLabels: ["Ephemeral issue"],
+    });
+    await services.mailbox.addNote(caller, message!.id, "Temporary diagnosis");
+    expect(await db.select().from(schema.messageLabels)).toHaveLength(1);
+    expect(await db.select().from(schema.messageNotes)).toHaveLength(1);
     const result = await services.mailbox.sweepExpired(caller);
 
     expect(result).toMatchObject({ purged: 1, failed: 0 });
@@ -136,6 +146,8 @@ describe("retention, against real D1 and R2", () => {
     // inbox delete that only touched one table.
     const rows = await db.select().from(schema.messages);
     expect(rows).toEqual([]);
+    expect(await db.select().from(schema.messageLabels)).toEqual([]);
+    expect(await db.select().from(schema.messageNotes)).toEqual([]);
   });
 
   it("leaves an inbox still inside its grace period alone", async () => {

@@ -67,6 +67,7 @@ describe("GET /v1/capabilities", () => {
     expect(body.principal.scopes).toEqual(["message:read"]);
     expect(body.actions).toMatchObject({
       readMessages: true,
+      annotateMessages: true,
       createInboxes: false,
       injectMessages: false,
       sendMessages: false,
@@ -78,8 +79,18 @@ describe("GET /v1/capabilities", () => {
     expect(body.limits.maxRecipients).toBe(50);
     expect(body.limits.maxInboundMessageBytes).toBe(25 * 1024 * 1024);
     expect(body.limits.maxOutboundMessageBytes).toBe(5 * 1024 * 1024);
-    expect(body.features.receiving).toBe(true);
+    expect(body.features).toMatchObject({ receiving: true, labels: true, notes: true });
     expect(body.features.sending).toBe(false);
+  });
+
+  it("does not advertise annotation for a key without message:read", async () => {
+    const key = await api("/v1/keys", ADMIN_KEY, {
+      method: "POST",
+      body: JSON.stringify({ name: "inbox reader", scopes: ["inbox:read"] }),
+    });
+    const { token } = (await key.json()) as { token: string };
+    const response = await api("/v1/capabilities", token);
+    expect(capabilitiesDto.parse(await response.json()).actions.annotateMessages).toBe(false);
   });
 
   it("reports bootstrap administration without exposing the secret", async () => {

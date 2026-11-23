@@ -1,6 +1,7 @@
 import type { DiagnosticsDto } from "@mailworker/contract";
 import type { AccountId } from "@mailworker/core";
 import { createContainer } from "@web/workers/container";
+import { labels, notes } from "@web/workers/http/annotations";
 import { authenticate } from "@web/workers/http/auth";
 import { capabilities } from "@web/workers/http/capabilities";
 import type { HttpEnv } from "@web/workers/http/env";
@@ -67,6 +68,8 @@ export const app = new Hono<HttpEnv>()
   .route("/v1/inboxes", inboxes)
   .route("/v1/messages", messages)
   .route("/v1/threads", threads)
+  .route("/v1/labels", labels)
+  .route("/v1/notes", notes)
   .route("/v1/ingest", ingest)
   .route("/v1/send", send)
   .route("/v1/suppressions", suppressions)

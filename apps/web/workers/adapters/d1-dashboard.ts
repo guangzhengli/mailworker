@@ -25,6 +25,14 @@ export interface DashboardSummary {
   readonly totalMessages: number;
 }
 
+export interface MailCounts {
+  readonly inboxUnread: number;
+  readonly unreadByInbox: Readonly<Record<string, number>>;
+  readonly activeEphemeralInboxes: number;
+  readonly pendingApproval: number;
+  readonly problems: number;
+}
+
 /** The minimum pieces an operator needs before an environment can do useful work. */
 export interface DashboardReadiness {
   readonly domains: number;
@@ -138,6 +146,111 @@ export class D1DashboardQueries {
       totalDeliveries: Number(delivery?.total ?? 0),
       totalMessages: Number(message?.total ?? 0),
     };
+  }
+
+  async mailCounts(
+    ctx: Caller,
+    now: Date,
+    problemStatuses: readonly string[],
+  ): Promise<MailCounts> {
+    CallerRules.require(ctx, "message:read");
+    CallerRules.require(ctx, "inbox:read");
+    const identityId = CallerRules.has(ctx, "admin") ? null : ctx.identityId;
+
+    const [unread, ephemeral, delivery] = await Promise.all([
+      this.db
+        .select({
+          id: inboxes.id,
+          muted: inboxes.muted,
+          count: sql<number>`count(*)`,
+        })
+        .from(messages)
+        .innerJoin(
+          inboxes,
+          and(eq(inboxes.accountId, messages.accountId), eq(inboxes.id, messages.inboxId)),
+        )
+        .where(
+          and(
+            eq(messages.accountId, ctx.accountId),
+            eq(messages.direction, "inbound"),
+            eq(messages.seen, false),
+            isNull(messages.archivedAt),
+            isNull(inboxes.deletedAt),
+            identityId === null
+              ? undefined
+              : and(eq(messages.identityId, identityId), eq(inboxes.identityId, identityId)),
+          ),
+        )
+        .groupBy(inboxes.id, inboxes.muted),
+      this.db
+        .select({ count: sql<number>`count(*)` })
+        .from(inboxes)
+        .where(
+          and(
+            eq(inboxes.accountId, ctx.accountId),
+            eq(inboxes.kind, "ephemeral"),
+            isNull(inboxes.deletedAt),
+            or(isNull(inboxes.expiresAt), gt(inboxes.expiresAt, toIsoText(now))),
+            identityId === null ? undefined : eq(inboxes.identityId, identityId),
+          ),
+        ),
+      this.db
+        .select({
+          pendingApproval: sql<number>`count(*) FILTER (WHERE ${deliveries.status} = 'pending_approval')`,
+          problems: sql<number>`count(*) FILTER (WHERE ${deliveries.status} IN (SELECT value FROM json_each(${JSON.stringify(problemStatuses)})))`,
+        })
+        .from(deliveries)
+        .where(
+          and(
+            eq(deliveries.accountId, ctx.accountId),
+            identityId === null ? undefined : eq(deliveries.identityId, identityId),
+          ),
+        ),
+    ]);
+
+    return {
+      inboxUnread: unread.reduce((total, inbox) => total + (inbox.muted ? 0 : inbox.count), 0),
+      unreadByInbox: Object.fromEntries(unread.map(({ id, count }) => [id, count])),
+      activeEphemeralInboxes: ephemeral[0]?.count ?? 0,
+      pendingApproval: delivery[0]?.pendingApproval ?? 0,
+      problems: delivery[0]?.problems ?? 0,
+    };
+  }
+
+  async deliveriesForMessages(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+  ): Promise<ReadonlyMap<string, { readonly id: Ulid; readonly status: string }>> {
+    CallerRules.require(ctx, "message:read");
+    const result = new Map<string, { id: Ulid; status: string }>();
+    if (messageIds.length === 0) return result;
+    const identityId = CallerRules.has(ctx, "admin") ? null : ctx.identityId;
+    const rows = await this.db
+      .select({ messageId: messages.id, id: deliveries.id, status: deliveries.status })
+      .from(deliveries)
+      .innerJoin(
+        messages,
+        and(
+          eq(messages.accountId, deliveries.accountId),
+          eq(messages.id, deliveries.messageId),
+        ),
+      )
+      .where(
+        and(
+          eq(deliveries.accountId, ctx.accountId),
+          eq(messages.direction, "outbound"),
+          sql`${deliveries.messageId} IN (SELECT value FROM json_each(${JSON.stringify(messageIds)}))`,
+          identityId === null
+            ? undefined
+            : and(eq(deliveries.identityId, identityId), eq(messages.identityId, identityId)),
+        ),
+      )
+      .orderBy(desc(deliveries.id));
+    for (const row of rows) {
+      if (!result.has(row.messageId))
+        result.set(row.messageId, { id: row.id as Ulid, status: row.status });
+    }
+    return result;
   }
 
   async readiness(ctx: Caller, now: Date): Promise<DashboardReadiness> {

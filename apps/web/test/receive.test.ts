@@ -1,5 +1,12 @@
 import { env, SELF } from "cloudflare:test";
-import type { InboxDto, MessageDto, WaitResponse } from "@mailworker/contract";
+import type {
+  InboxDto,
+  LabelUsageDto,
+  MessageDto,
+  MessageSummaryDto,
+  NoteDto,
+  WaitResponse,
+} from "@mailworker/contract";
 import { createDb, schema } from "@web/workers/adapters";
 import entry from "@web/workers/entry";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -28,6 +35,7 @@ beforeEach(async () => {
   await db.batch([
     db.delete(schema.attachments),
     db.delete(schema.messages),
+    db.delete(schema.labels),
     db.delete(schema.inboxes),
     db.delete(schema.domains),
   ]);
@@ -64,7 +72,10 @@ async function createInbox(prefix = "agent"): Promise<InboxDto> {
   return (await response.json()) as InboxDto;
 }
 
-function rawEmail(to: string, options: { subject?: string; body?: string; id?: string } = {}) {
+function rawEmail(
+  to: string,
+  options: { subject?: string; body?: string; id?: string; headers?: readonly string[] } = {},
+) {
   const messageId = options.id ?? `${crypto.randomUUID()}@sender.test`;
   return [
     `From: Sender <noreply@sender.test>`,
@@ -73,6 +84,7 @@ function rawEmail(to: string, options: { subject?: string; body?: string; id?: s
     `Message-ID: <${messageId}>`,
     `Date: Wed, 01 Jul 2026 12:00:00 +0000`,
     `Content-Type: text/plain; charset=utf-8`,
+    ...(options.headers ?? []),
     "",
     options.body ?? "Nothing to see here.",
     "",
@@ -343,5 +355,203 @@ describe("the API surface", () => {
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
       "forbidden",
     );
+  });
+});
+
+describe("mail client state over /v1", () => {
+  const absent = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
+  function write(method: "POST" | "PATCH", body: object): RequestInit {
+    return {
+      method,
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    };
+  }
+
+  async function expectError(response: Response, status: number, code: string) {
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ error: { code } });
+  }
+
+  it("creates and patches inbox mute state and reports invalid or missing inboxes", async () => {
+    const ephemeral = await createInbox();
+    expect(ephemeral.muted).toBe(true);
+    const created = await api(
+      "/v1/inboxes",
+      write("POST", { kind: "persistent", muted: true }),
+    );
+    expect(created.status).toBe(201);
+    const inbox = (await created.json()) as InboxDto;
+    expect(inbox.muted).toBe(true);
+
+    const changed = await api(
+      `/v1/inboxes/${inbox.id}`,
+      write("PATCH", { muted: false, displayName: "  Support  " }),
+    );
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({
+      id: inbox.id,
+      muted: false,
+      displayName: "Support",
+    });
+    const listed = await api("/v1/inboxes?muted=false");
+    expect(await listed.json()).toMatchObject({ items: [{ id: inbox.id }] });
+    await expectError(
+      await api(`/v1/inboxes/${inbox.id}`, write("PATCH", {})),
+      400,
+      "invalid_argument",
+    );
+    await expectError(
+      await api(`/v1/inboxes/${absent}`, write("PATCH", { muted: true })),
+      404,
+      "inbox_not_found",
+    );
+  });
+
+  it("persists list headers from the real email path and exposes them on message and thread reads", async () => {
+    const inbox = await createInbox();
+    const raw = rawEmail(inbox.address, {
+      headers: [
+        "List-Id: Weekly Digest <digest.example.com>",
+        "List-Unsubscribe: <http://example.com/old>, <https://example.com/leave>, <mailto:leave@example.com>",
+        "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+      ],
+    });
+    expect(await deliver(inbox.address, raw)).toEqual([]);
+    const {
+      items: [summary],
+    } = (await (await api("/v1/messages")).json()) as { items: MessageSummaryDto[] };
+    expect(summary).toMatchObject({
+      starred: false,
+      archivedAt: null,
+      labels: [],
+      noteCount: 0,
+    });
+    const message = (await (await api(`/v1/messages/${summary!.id}`)).json()) as MessageDto;
+    expect(message).toMatchObject({
+      listId: "Weekly Digest <digest.example.com>",
+      unsubscribe: {
+        https: "https://example.com/leave",
+        mailto: "mailto:leave@example.com",
+        oneClick: true,
+      },
+    });
+    const thread = await api(`/v1/threads/${encodeURIComponent(message.threadId)}`);
+    expect(await thread.json()).toMatchObject({
+      items: [{ listId: message.listId, unsubscribe: message.unsubscribe }],
+    });
+  });
+
+  it("patches one or many messages and manages usage and labels", async () => {
+    const inbox = await createInbox();
+    await deliver(inbox.address, rawEmail(inbox.address));
+    const {
+      items: [item],
+    } = (await (await api("/v1/messages")).json()) as { items: MessageSummaryDto[] };
+    const path = `/v1/messages/${item!.id}`;
+    const patched = await api(
+      path,
+      write("PATCH", {
+        starred: true,
+        archived: true,
+        labels: { add: [" Bug ", "BUG", "Support"] },
+      }),
+    );
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({
+      id: item!.id,
+      starred: true,
+      archivedAt: expect.any(String),
+      labels: ["Bug", "Support"],
+      noteCount: 0,
+    });
+
+    const batch = await api(
+      "/v1/messages",
+      write("PATCH", { ids: [item!.id, item!.id], archived: false }),
+    );
+    expect(batch.status).toBe(200);
+    expect(await batch.json()).toEqual({ updated: 1 });
+    const page = await api("/v1/messages?starred=true&archived=false&label=bUg");
+    expect(await page.json()).toMatchObject({ items: [{ id: item!.id, archivedAt: null }] });
+
+    const failed = await api(
+      "/v1/messages",
+      write("PATCH", { ids: [item!.id, absent], seen: true, labels: { add: ["Rollback"] } }),
+    );
+    expect(failed.status).toBe(404);
+    expect(await failed.json()).toMatchObject({
+      error: { code: "message_not_found", details: { ids: [absent] } },
+    });
+    const labels = await api("/v1/labels");
+    expect(labels.status).toBe(200);
+    const { items } = (await labels.json()) as { items: LabelUsageDto[] };
+    expect(
+      items.map(({ name, messageCount, unreadCount }) => ({ name, messageCount, unreadCount })),
+    ).toEqual([
+      { name: "Bug", messageCount: 1, unreadCount: 1 },
+      { name: "Support", messageCount: 1, unreadCount: 1 },
+    ]);
+    const bug = items.find(({ name }) => name === "Bug")!;
+    const labelPath = `/v1/labels/${bug.id}`;
+    await expectError(
+      await api(labelPath, write("PATCH", { name: "SUPPORT" })),
+      400,
+      "invalid_argument",
+    );
+    const renamed = await api(labelPath, write("PATCH", { name: "Incident" }));
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ id: bug.id, name: "Incident" });
+    expect((await api(labelPath, { method: "DELETE" })).status).toBe(204);
+    expect(await (await api(path)).json()).toMatchObject({ labels: ["Support"], seen: false });
+    await expectError(await api(path, write("PATCH", {})), 400, "invalid_argument");
+    expect((await api(`${path}/seen`, write("POST", {}))).status).toBe(204);
+    expect(await (await api(path)).json()).toMatchObject({ seen: true });
+  });
+
+  it("writes and lists plain-text notes, checks note authorship, and rejects unknown messages", async () => {
+    const inbox = await createInbox();
+    await deliver(inbox.address, rawEmail(inbox.address));
+    const {
+      items: [message],
+    } = (await (await api("/v1/messages")).json()) as { items: MessageSummaryDto[] };
+    const notesPath = `/v1/messages/${message!.id}/notes`;
+    const posted = await api(notesPath, write("POST", { body: "  <b>Investigate</b>  " }));
+    expect(posted.status).toBe(201);
+    const note = (await posted.json()) as NoteDto;
+    expect(note).toMatchObject({
+      messageId: message!.id,
+      body: "<b>Investigate</b>",
+      authorSubject: "key:bootstrap",
+      authorIdentityId: null,
+    });
+    const list = await api(notesPath);
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ items: [note] });
+    expect(await (await api("/v1/messages")).json()).toMatchObject({
+      items: [{ id: message!.id, noteCount: 1 }],
+    });
+
+    const key = await api(
+      "/v1/keys",
+      write("POST", { name: "note reader", scopes: ["message:read"] }),
+    );
+    const { token } = (await key.json()) as { token: string };
+    const notePath = `/v1/notes/${note.id}`;
+    const headers = { Authorization: `Bearer ${token}` };
+    await expectError(await api(notePath, { method: "DELETE", headers }), 403, "forbidden");
+    await expectError(
+      await api(`/v1/labels/${absent}`, { method: "DELETE", headers }),
+      403,
+      "forbidden",
+    );
+    expect((await api(notePath, { method: "DELETE" })).status).toBe(204);
+    await expectError(
+      await api(notesPath, write("POST", { body: "  " })),
+      400,
+      "invalid_argument",
+    );
+    await expectError(await api(`/v1/messages/${absent}/notes`), 404, "message_not_found");
   });
 });

@@ -20,6 +20,7 @@ export {
   type DashboardAgentPulse,
   type DashboardReadiness,
   type DashboardSummary,
+  type MailCounts,
 } from "@web/workers/adapters/d1-dashboard";
 export { D1Deliveries } from "@web/workers/adapters/d1-deliveries";
 export {
@@ -28,7 +29,9 @@ export {
   D1Identities,
 } from "@web/workers/adapters/d1-identity";
 export { D1Inboxes } from "@web/workers/adapters/d1-inboxes";
+export { D1Labels } from "@web/workers/adapters/d1-labels";
 export { D1Messages } from "@web/workers/adapters/d1-messages";
+export { D1Notes } from "@web/workers/adapters/d1-notes";
 export { D1Suppressions } from "@web/workers/adapters/d1-suppressions";
 export { D1Webhooks } from "@web/workers/adapters/d1-webhooks";
 export { DohResolver } from "@web/workers/adapters/dns";

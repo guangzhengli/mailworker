@@ -3,6 +3,7 @@ import type {
   EmailAddress,
   Inbox,
   InboxRepository,
+  InboxSettingsUpdate,
   ListInboxesQuery,
   Page,
   Ulid,
@@ -67,12 +68,25 @@ export class D1Inboxes implements InboxRepository {
     return { stored: inserted.length > 0 };
   }
 
-  async update(ctx: Caller, inbox: Inbox): Promise<void> {
-    const { id: _id, accountId: _accountId, ...mutable } = toRow(ctx, inbox);
-    await this.db
+  update(ctx: Caller, inbox: Inbox): Promise<undefined>;
+  update(ctx: Caller, change: InboxSettingsUpdate): Promise<Inbox | null>;
+  async update(
+    ctx: Caller,
+    change: Inbox | InboxSettingsUpdate,
+  ): Promise<Inbox | null | undefined> {
+    const where = and(eq(inboxes.accountId, ctx.accountId), eq(inboxes.id, change.id));
+    if ("accountId" in change) {
+      const { id: _id, accountId: _accountId, ...mutable } = toRow(ctx, change);
+      await this.db.update(inboxes).set(mutable).where(where);
+      return;
+    }
+    const { id: _id, ...settings } = change;
+    const [row] = await this.db
       .update(inboxes)
-      .set(mutable)
-      .where(and(eq(inboxes.accountId, ctx.accountId), eq(inboxes.id, inbox.id)));
+      .set(settings)
+      .where(and(where, isNull(inboxes.deletedAt)))
+      .returning();
+    return row === undefined ? null : toInbox(row);
   }
 
   async list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>> {
@@ -84,6 +98,7 @@ export class D1Inboxes implements InboxRepository {
         and(
           eq(inboxes.accountId, ctx.accountId),
           isNull(inboxes.deletedAt),
+          query.muted === undefined ? undefined : eq(inboxes.muted, query.muted),
           query.kind === undefined ? undefined : eq(inboxes.kind, query.kind),
           query.domain === undefined ? undefined : eq(inboxes.domain, query.domain),
           query.identityId === undefined ? undefined : eq(inboxes.identityId, query.identityId),
@@ -136,6 +151,7 @@ function toRow(ctx: Caller, inbox: Inbox): typeof inboxes.$inferInsert {
     domain: inbox.domain,
     displayName: inbox.displayName,
     kind: inbox.kind,
+    muted: inbox.muted,
     identityId: inbox.identityId,
     metadata: inbox.metadata === null ? null : { ...inbox.metadata },
     expiresAt: toIsoText(inbox.expiresAt),
@@ -153,6 +169,7 @@ export function toInbox(row: InboxRow): Inbox {
     domain: row.domain,
     displayName: row.displayName,
     kind: row.kind as Inbox["kind"],
+    muted: row.muted,
     identityId: row.identityId as Ulid | null,
     metadata: row.metadata,
     expiresAt: toDate(row.expiresAt),

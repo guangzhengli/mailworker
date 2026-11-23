@@ -50,6 +50,8 @@ export const capabilities = new Hono<HttpEnv>().get("/", async (c) => {
       deliveryTimeline: true,
       webhooksConfigured: c.env.WEBHOOK_QUEUE !== undefined,
       typescriptSdk: true,
+      labels: true,
+      notes: true,
     },
     limits: {
       maxPageSize: MAX_PAGE_SIZE,
@@ -67,6 +69,7 @@ export const capabilities = new Hono<HttpEnv>().get("/", async (c) => {
       readInboxes: Caller.has(caller, "inbox:read"),
       createInboxes: Caller.has(caller, "inbox:write"),
       readMessages: Caller.has(caller, "message:read"),
+      annotateMessages: Caller.has(caller, "message:read"),
       injectMessages: Caller.has(caller, "message:inject"),
       sendMessages: Caller.has(caller, "message:send"),
       approveMessages: caller.identityId === null && Caller.has(caller, "message:approve"),

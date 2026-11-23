@@ -62,3 +62,18 @@ export function toPage<T extends { readonly id: Ulid }>(
   const full = rows.length === limit && rows.length > 0;
   return { items: rows, cursor: full ? rows[rows.length - 1]!.id : null };
 }
+
+export function errorText(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current !== null && current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    parts.push(String(current));
+    current =
+      typeof current === "object" && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : undefined;
+  }
+  return parts.join("\n");
+}
