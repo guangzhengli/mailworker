@@ -1,3 +1,4 @@
+import { labelUsageDto, noteDto, toLabelUsageDto, toNoteDto } from "@contract/annotations";
 import { inboxDto, toInboxDto } from "@contract/inbox";
 import {
   messageDto,
@@ -209,5 +210,63 @@ describe("outbound and delivery-event codecs", () => {
     expect(dto.raw).toContain("bounced");
     expect(dto.smtpResponse).toBe("5.1.1 user unknown");
     expect(dto.bounceType).toBe("hard");
+  });
+});
+
+describe("mail client state DTOs", () => {
+  it("projects annotations and exposes mailing-list fields on details", async () => {
+    const h = createHarness();
+    const inbox = await h.seedInbox(`support@${TEST_DOMAIN}`);
+    const result = await h.services.ingestion.ingest(h.ctx, {
+      recipient: inbox.address,
+      envelopeFrom: "sender@example.com",
+      raw: rawEmail({ to: inbox.address, from: "sender@example.com" }),
+    });
+    if (result.outcome !== "stored") throw new Error("Expected a stored fixture.");
+    const mailbox = h.services.mailbox;
+    await mailbox.updateMessages(h.ctx, [result.message.id], {
+      starred: true,
+      archived: true,
+      addLabels: ["Bug"],
+    });
+    const note = await mailbox.addNote(h.ctx, result.message.id, "Investigate");
+    const [label] = await mailbox.listLabels(h.ctx);
+    const summary = messageSummaryDto.parse(
+      toMessageSummaryDto(await mailbox.getMessageSummary(h.ctx, result.message.id)),
+    );
+    expect(summary).toMatchObject({
+      starred: true,
+      archivedAt: h.clock.now().toISOString(),
+      labels: ["Bug"],
+      noteCount: 1,
+    });
+    expect(summary).not.toHaveProperty("unsubscribe");
+    const detail = messageDto.parse(
+      toMessageDto(await mailbox.getMessage(h.ctx, result.message.id)),
+    );
+    expect(detail).toMatchObject({
+      starred: true,
+      archivedAt: h.clock.now().toISOString(),
+      labels: ["Bug"],
+      listId: null,
+      unsubscribe: null,
+    });
+    expect(inboxDto.parse(toInboxDto(inbox)).muted).toBe(false);
+    expect(noteDto.parse(toNoteDto(note))).toEqual({
+      id: note.id,
+      messageId: result.message.id,
+      authorSubject: h.ctx.subject,
+      authorIdentityId: null,
+      body: "Investigate",
+      createdAt: h.clock.now().toISOString(),
+    });
+    expect(labelUsageDto.parse(toLabelUsageDto(label!))).toEqual({
+      id: label!.id,
+      name: "Bug",
+      messageCount: 1,
+      unreadCount: 0,
+      createdAt: h.clock.now().toISOString(),
+      lastUsedAt: h.clock.now().toISOString(),
+    });
   });
 });

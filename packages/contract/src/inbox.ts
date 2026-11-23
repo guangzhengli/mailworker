@@ -43,6 +43,7 @@ export const createInboxBody = z
     /** Required only when this deployment serves more than one domain. */
     domain: z.string().optional(),
     kind: z.enum(["ephemeral", "persistent"]).optional(),
+    muted: z.boolean().optional(),
     ttl: durationMs.optional(),
     displayName: z.string().max(255).optional(),
     identity: z.string().optional(),
@@ -54,6 +55,7 @@ export const createInboxBody = z
       ...(input.localPart === undefined ? {} : { localPart: input.localPart }),
       ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
       ...(input.domain === undefined ? {} : { domain: input.domain }),
+      ...(input.muted === undefined ? {} : { muted: input.muted }),
       ...(input.kind === undefined ? {} : { kind: input.kind }),
       ...(input.ttl === undefined ? {} : { ttlMs: input.ttl }),
       ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
@@ -62,9 +64,21 @@ export const createInboxBody = z
     }),
   );
 
+export const updateInboxBody = z
+  .strictObject({
+    muted: z.boolean().optional(),
+    displayName: z.string().max(255).nullable().optional(),
+  })
+  .refine(({ muted, displayName }) => muted !== undefined || displayName !== undefined, {
+    message: "Pass at least one inbox change.",
+  });
+
+export type UpdateInboxBody = z.infer<typeof updateInboxBody>;
+
 export const listInboxesQuery = pageQuery.extend({
   kind: z.enum(["ephemeral", "persistent"]).optional(),
   domain: z.string().optional(),
+  muted: queryBool.optional(),
   /**
    * Expired inboxes are hidden by default, because an agent listing inboxes
    * wants the ones it can still use. The dashboard asks for them, since "my
@@ -83,6 +97,8 @@ export const inboxDto = z.object({
   domain: z.string(),
   displayName: z.string().nullable(),
   kind: z.enum(["ephemeral", "persistent"]),
+  /** Defaulted so a newer client still parses a Worker that predates muting. */
+  muted: z.boolean().default(false),
   identityId: z.string().nullable(),
   metadata: z.record(z.string(), z.string()).nullable(),
   expiresAt: z.string().nullable(),
@@ -105,6 +121,7 @@ export function toInboxDto(inbox: Inbox): InboxDto {
     domain: inbox.domain,
     displayName: inbox.displayName,
     kind: inbox.kind,
+    muted: inbox.muted,
     identityId: inbox.identityId,
     metadata: inbox.metadata === null ? null : { ...inbox.metadata },
     expiresAt: toIso(inbox.expiresAt),

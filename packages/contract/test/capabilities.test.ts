@@ -25,6 +25,8 @@ describe("capabilities contract", () => {
         deliveryTimeline: true,
         webhooksConfigured: false,
         typescriptSdk: true,
+        labels: true,
+        notes: true,
       },
       limits: {
         maxPageSize: 200,
@@ -42,6 +44,7 @@ describe("capabilities contract", () => {
         readInboxes: false,
         createInboxes: false,
         readMessages: true,
+        annotateMessages: true,
         injectMessages: false,
         sendMessages: false,
         approveMessages: false,

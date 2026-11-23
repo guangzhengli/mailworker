@@ -12,6 +12,7 @@ import type {
   MessageSummary,
   WaitForMessageRequest,
 } from "@mailworker/core";
+import { MAX_MESSAGES_PER_UPDATE } from "@mailworker/core";
 import { z } from "zod";
 
 export const attachmentDto = z.object({
@@ -80,12 +81,24 @@ const messageBase = z.object({
   autoSubmitted: z.string().nullable(),
   size: z.number().int().nonnegative(),
   seen: z.boolean(),
+  // Defaulted so a newer client still parses a Worker that predates them.
+  starred: z.boolean().default(false),
+  archivedAt: z.string().nullable().default(null),
+  labels: z.array(z.string()).default([]),
   /** The `Date` header. Display only — order by `id`, never by this. */
   sentAt: z.string().nullable(),
   receivedAt: z.string(),
 });
 
+export const unsubscribeDto = z.object({
+  https: z.string().nullable(),
+  mailto: z.string().nullable(),
+  oneClick: z.boolean(),
+});
+
 export const messageDto = messageBase.extend({
+  listId: z.string().nullable().default(null),
+  unsubscribe: unsubscribeDto.nullable().default(null),
   bodyText: z.string().nullable(),
   /** Sanitized HTML, or null. See `toMessageDto` for why it can be null. */
   bodyHtml: z.string().nullable(),
@@ -95,6 +108,7 @@ export const messageDto = messageBase.extend({
 export type MessageDto = z.infer<typeof messageDto>;
 
 export const messageSummaryDto = messageBase.extend({
+  noteCount: z.number().int().nonnegative().default(0),
   attachmentCount: z.number().int().nonnegative(),
   hasText: z.boolean(),
   hasHtml: z.boolean(),
@@ -127,6 +141,8 @@ export interface MessageDtoOptions {
 export function toMessageDto(message: Message, options: MessageDtoOptions = {}): MessageDto {
   return {
     ...summaryFields(message),
+    listId: message.listId,
+    unsubscribe: message.unsubscribe,
     bodyText: message.bodyText,
     bodyHtml:
       message.bodyHtml === null || options.sanitizeHtml === undefined
@@ -140,6 +156,7 @@ export function toMessageSummaryDto(summary: MessageSummary): MessageSummaryDto 
   return {
     ...summaryFields(summary),
     attachmentCount: summary.attachmentCount,
+    noteCount: summary.noteCount,
     hasText: summary.hasText,
     hasHtml: summary.hasHtml,
     preview: summary.preview,
@@ -191,6 +208,9 @@ function summaryFields(message: Message | MessageSummary): z.infer<typeof messag
     autoSubmitted: message.autoSubmitted,
     size: message.size,
     seen: message.seen,
+    starred: message.starred,
+    archivedAt: toIso(message.archivedAt),
+    labels: [...message.labels],
     sentAt: toIso(message.sentAt),
     receivedAt: toIso(message.receivedAt),
   };
@@ -202,6 +222,10 @@ export const listMessagesQuery = pageQuery.extend({
   direction: z.enum(["inbound", "outbound"]).optional(),
   from: emailAddress.optional(),
   seen: queryBool.optional(),
+  label: z.string().optional(),
+  starred: queryBool.optional(),
+  archived: queryBool.optional(),
+  muted: queryBool.optional(),
   /** Substring search over subject, text body and sender. Terms are ANDed. */
   q: z.string().min(1).max(256).optional(),
   after: ulid.optional(),
@@ -270,3 +294,22 @@ export const ingestRawQuery = z.object({
 export type IngestRawQuery = z.infer<typeof ingestRawQuery>;
 
 export const seenBody = z.strictObject({ seen: z.boolean().optional() });
+
+export const updateMessageBody = z.strictObject({
+  seen: z.boolean().optional(),
+  starred: z.boolean().optional(),
+  archived: z.boolean().optional(),
+  labels: z
+    .strictObject({
+      add: z.array(z.string()).optional(),
+      remove: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+export const updateMessagesBody = updateMessageBody.extend({
+  ids: z.array(ulid).min(1).max(MAX_MESSAGES_PER_UPDATE),
+});
+
+export type UpdateMessageBody = z.infer<typeof updateMessageBody>;
+export type UpdateMessagesBody = z.infer<typeof updateMessagesBody>;

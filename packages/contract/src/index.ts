@@ -1,3 +1,4 @@
+export * from "@contract/annotations";
 export * from "@contract/capabilities";
 export * from "@contract/errors";
 export * from "@contract/identity";

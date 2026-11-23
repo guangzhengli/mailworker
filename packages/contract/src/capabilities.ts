@@ -38,6 +38,9 @@ export const capabilitiesDto = z.object({
     deliveryTimeline: z.literal(true),
     webhooksConfigured: z.boolean(),
     typescriptSdk: z.literal(true),
+    /** False when talking to a Worker that predates labels and notes. */
+    labels: z.boolean().default(false),
+    notes: z.boolean().default(false),
   }),
   limits: z.object({
     maxPageSize: z.number().int().positive(),
@@ -56,6 +59,7 @@ export const capabilitiesDto = z.object({
     readInboxes: z.boolean(),
     createInboxes: z.boolean(),
     readMessages: z.boolean(),
+    annotateMessages: z.boolean().default(false),
     injectMessages: z.boolean(),
     sendMessages: z.boolean(),
     approveMessages: z.boolean(),

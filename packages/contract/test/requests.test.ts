@@ -1,5 +1,11 @@
-import { createInboxBody, listInboxesQuery } from "@contract/inbox";
-import { listMessagesQuery, waitQuery } from "@contract/message";
+import { createNoteBody, renameLabelBody } from "@contract/annotations";
+import { createInboxBody, listInboxesQuery, updateInboxBody } from "@contract/inbox";
+import {
+  listMessagesQuery,
+  updateMessageBody,
+  updateMessagesBody,
+  waitQuery,
+} from "@contract/message";
 import { sendBody } from "@contract/send";
 import { describe, expect, it } from "vitest";
 
@@ -131,5 +137,67 @@ describe("sendBody", () => {
     expect(sendBody.safeParse({ from: "a@b.com", to: ["c@d.com"], subject: "s" }).success).toBe(
       true,
     );
+  });
+});
+
+describe("mail client state requests", () => {
+  const id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+  it("retains explicit mute, false flags and null display names", () => {
+    expect(createInboxBody.parse({ muted: false })).toEqual({ muted: false });
+    expect(updateInboxBody.parse({ muted: false, displayName: null })).toEqual({
+      muted: false,
+      displayName: null,
+    });
+    expect(updateInboxBody.safeParse({}).success).toBe(false);
+    expect(updateInboxBody.safeParse({ expiresAt: null }).success).toBe(false);
+    expect(updateInboxBody.safeParse({ displayName: "x".repeat(256) }).success).toBe(false);
+    expect(listInboxesQuery.parse({ muted: "true" })).toMatchObject({ muted: true });
+    expect(
+      listMessagesQuery.parse({
+        label: "Bug",
+        seen: "false",
+        starred: "true",
+        archived: "false",
+        muted: "false",
+      }),
+    ).toMatchObject({
+      label: "Bug",
+      seen: false,
+      starred: true,
+      archived: false,
+      muted: false,
+    });
+  });
+
+  it("keeps label operations nested and validates batch IDs", () => {
+    const change = {
+      starred: true,
+      archived: false,
+      labels: { add: ["Bug"], remove: ["Question"] },
+    };
+    expect(updateMessageBody.parse(change)).toEqual(change);
+    expect(updateMessageBody.safeParse({ labels: { unknown: [] } }).success).toBe(false);
+    expect(updateMessageBody.safeParse({ ids: [id], ...change }).success).toBe(false);
+    expect(updateMessagesBody.parse({ ids: [id.toLowerCase()], ...change })).toEqual({
+      ids: [id],
+      ...change,
+    });
+    expect(updateMessagesBody.safeParse({ ids: [], ...change }).success).toBe(false);
+    expect(updateMessagesBody.safeParse({ ids: ["bad"], ...change }).success).toBe(false);
+    expect(
+      updateMessagesBody.safeParse({ ids: Array.from({ length: 101 }, () => id), ...change })
+        .success,
+    ).toBe(false);
+  });
+
+  it("parses plain-text notes and label renames", () => {
+    expect(createNoteBody.parse({ body: "  <b>Needs review</b>  " })).toEqual({
+      body: "<b>Needs review</b>",
+    });
+    expect(createNoteBody.safeParse({ body: " " }).success).toBe(false);
+    expect(createNoteBody.safeParse({ body: "x".repeat(4001) }).success).toBe(false);
+    expect(renameLabelBody.parse({ name: "Bug" })).toEqual({ name: "Bug" });
+    expect(renameLabelBody.safeParse({ name: "Bug", id }).success).toBe(false);
   });
 });
