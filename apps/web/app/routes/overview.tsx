@@ -417,7 +417,9 @@ function ActivityPanel({ data }: { data: OverviewData }) {
             {data.activity.map((item) => (
               <li key={`${item.kind}:${item.id}`}>
                 <Link
-                  to={item.kind === "inbound" ? `/messages/${item.id}` : `/sent/${item.id}`}
+                  to={
+                    item.kind === "inbound" ? `/mail/${item.id}?view=all` : `/sent/${item.id}`
+                  }
                   className="flex items-start gap-3 px-4 py-3.5 hover:bg-hover"
                 >
                   {item.kind === "inbound" ? (
@@ -638,7 +640,7 @@ export default function Overview({ loaderData }: Route.ComponentProps) {
         <Stat
           label={t("overview.inboundWindow")}
           value={loaderData.summary.inbound}
-          to="/inbox"
+          to="/mail"
           detail={t("overview.past24Hours")}
         />
         <Stat

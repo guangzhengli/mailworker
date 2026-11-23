@@ -42,8 +42,11 @@ import {
   TableRow,
 } from "@web/app/components/ui/table";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { mailHref } from "@web/app/mail";
 import {
   Empty,
+  FilterTab,
+  FilterTabs,
   ListCard,
   Mono,
   PageHeader,
@@ -51,12 +54,11 @@ import {
   Relative,
   Tag,
   TextLink,
-  Toolbar,
   When,
 } from "@web/app/ui";
-import { MailboxIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, MailboxIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Form, Link, useNavigation } from "react-router";
+import { Form, Link, useFetcher, useNavigation } from "react-router";
 import { toast } from "sonner";
 import type { Route } from "./+types/inboxes";
 
@@ -69,14 +71,20 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
 
+    const rawKind = url.searchParams.get("kind");
+    const kind: "persistent" | "ephemeral" | null =
+      rawKind === "persistent" || rawKind === "ephemeral" ? rawKind : null;
+
     const page = await services.mailbox.listInboxes(caller, {
       includeExpired: url.searchParams.get("expired") === "1",
+      ...(kind === null ? {} : { kind }),
       ...(cursor === null ? {} : { cursor: Ulid.parse(cursor) }),
     });
 
     return {
       inboxes: page.items,
       cursor: page.cursor,
+      kind,
       includeExpired: url.searchParams.get("expired") === "1",
       mayCreate: can(caller, "inbox:write"),
       domains: await services.mailbox.listDomains(caller),
@@ -93,6 +101,13 @@ export async function action({ context, request }: Route.ActionArgs) {
       return { created: null, taken: null };
     }
 
+    if (form.get("intent") === "mute") {
+      await services.mailbox.updateInbox(caller, Ulid.parse(String(form.get("id"))), {
+        muted: form.get("muted") === "1",
+      });
+      return { created: null, taken: null };
+    }
+
     const ttlMinutes = Number(form.get("ttlMinutes") ?? 0);
     const persistent = form.get("kind") === "persistent";
     const domain = String(form.get("domain") ?? "").trim();
@@ -106,6 +121,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     try {
       const inbox = await services.mailbox.createInbox(caller, {
         kind: persistent ? "persistent" : "ephemeral",
+        muted: form.get("watched") === null,
         ...naming,
         ...(domain === "" ? {} : { domain }),
         ...(persistent || !Number.isFinite(ttlMinutes) || ttlMinutes <= 0
@@ -136,14 +152,25 @@ export async function action({ context, request }: Route.ActionArgs) {
 function NewInbox({
   domains,
   taken,
+  created,
   busy,
 }: {
   domains: readonly string[];
   taken: string | null;
+  created: string | null;
   busy: boolean;
 }) {
   const plus = useRef<AnimatedIconHandle>(null);
   const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<"persistent" | "ephemeral">("persistent");
+  const [watched, setWatched] = useState(true);
+
+  useEffect(() => {
+    if (created === null) return;
+    setOpen(false);
+    setKind("persistent");
+    setWatched(true);
+  }, [created]);
   const { t } = useT();
 
   // Reopened by the failed submission itself, so the address that was rejected
@@ -229,7 +256,12 @@ function NewInbox({
                */}
               <Select
                 name="kind"
-                defaultValue="ephemeral"
+                value={kind}
+                onValueChange={(value) => {
+                  const next = value === "ephemeral" ? "ephemeral" : "persistent";
+                  setKind(next);
+                  setWatched(next === "persistent");
+                }}
                 items={{
                   ephemeral: t("inboxes.kindEphemeral"),
                   persistent: t("inboxes.kindPersistent"),
@@ -253,8 +285,22 @@ function NewInbox({
                 type="number"
                 min={1}
                 defaultValue={60}
+                disabled={kind === "persistent"}
                 className="w-28 tabular-nums"
               />
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="watched"
+              name="watched"
+              checked={watched}
+              onCheckedChange={(checked) => setWatched(checked === true)}
+            />
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="watched">{t("inboxes.watchedLabel")}</Label>
+              <span className="text-xs text-hint">{t("inboxes.watchedHint")}</span>
             </div>
           </div>
 
@@ -345,19 +391,38 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
     <>
       <PageHeader title={t("inboxes.title")} description={t("inboxes.description")}>
         {loaderData.mayCreate && (
-          <NewInbox domains={loaderData.domains} taken={taken} busy={busy} />
+          <NewInbox domains={loaderData.domains} taken={taken} created={created} busy={busy} />
         )}
       </PageHeader>
 
-      <Toolbar>
+      <div className="flex flex-wrap items-start justify-between gap-x-4">
+        <FilterTabs>
+          {([null, "persistent", "ephemeral"] as const).map((kind) => (
+            <FilterTab
+              key={kind ?? "all"}
+              to={inboxesHref({ kind, expired: loaderData.includeExpired })}
+              active={loaderData.kind === kind}
+            >
+              {kind === null
+                ? t("inboxes.kindAll")
+                : kind === "persistent"
+                  ? t("inboxes.kindPersistent")
+                  : t("inboxes.kindEphemeral")}
+            </FilterTab>
+          ))}
+        </FilterTabs>
         <Button
-          render={<Link to={loaderData.includeExpired ? "/inboxes" : "/inboxes?expired=1"} />}
+          render={
+            <Link
+              to={inboxesHref({ kind: loaderData.kind, expired: !loaderData.includeExpired })}
+            />
+          }
           variant="ghost"
           size="sm"
         >
           {loaderData.includeExpired ? t("inboxes.hideExpired") : t("inboxes.showExpired")}
         </Button>
-      </Toolbar>
+      </div>
 
       <ListCard>
         {loaderData.inboxes.length === 0 ? (
@@ -370,6 +435,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
               <TableRow>
                 <TableHead>{t("field.address")}</TableHead>
                 <TableHead className="w-32">{t("field.kind")}</TableHead>
+                <TableHead className="w-36">{t("inboxes.inInbox")}</TableHead>
                 <TableHead className="w-40">{t("field.expires")}</TableHead>
                 <TableHead className="w-44">{t("field.created")}</TableHead>
                 <TableHead className="w-px" />
@@ -383,7 +449,7 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
                       after finding the row is to read what came to it. */}
                   <TableCell className="max-w-0 truncate">
                     <TextLink
-                      render={<Link to={`/inbox?inbox=${inbox.id}`} />}
+                      render={<Link to={mailHref({ view: "all", inbox: inbox.id })} />}
                       variant="quiet"
                       className="font-mono text-[13px]"
                     >
@@ -396,6 +462,14 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
                         ? t("inboxes.kindPersistent")
                         : t("inboxes.kindEphemeral")}
                     </Tag>
+                  </TableCell>
+                  <TableCell>
+                    <MuteToggle
+                      id={inbox.id}
+                      muted={inbox.muted}
+                      editable={loaderData.mayCreate}
+                      busy={busy}
+                    />
                   </TableCell>
                   <TableCell>
                     <Relative value={inbox.expiresAt} />
@@ -417,9 +491,69 @@ export default function Inboxes({ loaderData, actionData }: Route.ComponentProps
 
       {loaderData.cursor !== null && (
         <Pager
-          to={`/inboxes?cursor=${loaderData.cursor}${loaderData.includeExpired ? "&expired=1" : ""}`}
+          to={inboxesHref({
+            kind: loaderData.kind,
+            expired: loaderData.includeExpired,
+            cursor: loaderData.cursor,
+          })}
         />
       )}
     </>
+  );
+}
+
+function inboxesHref({
+  kind,
+  expired,
+  cursor,
+}: {
+  kind: "persistent" | "ephemeral" | null;
+  expired: boolean;
+  cursor?: string | null;
+}): string {
+  const params = new URLSearchParams();
+  if (kind !== null) params.set("kind", kind);
+  if (expired) params.set("expired", "1");
+  if (cursor !== undefined && cursor !== null) params.set("cursor", cursor);
+  const query = params.toString();
+  return query === "" ? "/inboxes" : `/inboxes?${query}`;
+}
+
+function MuteToggle({
+  id,
+  muted,
+  editable,
+  busy,
+}: {
+  id: string;
+  muted: boolean;
+  editable: boolean;
+  busy: boolean;
+}) {
+  const { t } = useT();
+  const fetcher = useFetcher();
+  const pending = fetcher.formData?.get("muted");
+  const shown = pending === undefined || pending === null ? muted : pending === "1";
+  const label = shown ? t("inboxes.muted") : t("inboxes.watched");
+  if (!editable) {
+    return <span className="text-[13px] text-secondary-text">{label}</span>;
+  }
+  return (
+    <fetcher.Form method="post">
+      <input type="hidden" name="intent" value="mute" />
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="muted" value={shown ? "0" : "1"} />
+      <Button
+        type="submit"
+        variant="ghost"
+        size="xs"
+        disabled={busy || fetcher.state !== "idle"}
+        title={shown ? t("mail.unmuteHint") : t("mail.muteHint")}
+        className={shown ? "text-hint" : "text-body"}
+      >
+        {shown ? <BellOffIcon /> : <BellIcon />}
+        {label}
+      </Button>
+    </fetcher.Form>
   );
 }

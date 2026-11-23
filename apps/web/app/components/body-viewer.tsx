@@ -37,6 +37,7 @@ export function BodyViewer({
   text,
   raw,
   images,
+  local,
 }: {
   /** The route that serves the sanitized HTML under its own CSP. */
   src: string;
@@ -46,8 +47,12 @@ export function BodyViewer({
   raw?: { href: string; hint?: React.ReactNode } | undefined;
   /** Inbound only: remote images are blocked until asked for. */
   images?: boolean | undefined;
+  /** Keep the chosen view in component state, for pages that show several bodies. */
+  local?: boolean | undefined;
 }) {
-  const [search, setSearch] = useSearchParams();
+  const [urlSearch, setUrlSearch] = useSearchParams();
+  const [ownSearch, setOwnSearch] = useState(() => new URLSearchParams());
+  const search = local === true ? ownSearch : urlSearch;
   const { t } = useT();
 
   const showImages = search.get("images") === "1";
@@ -60,7 +65,8 @@ export function BodyViewer({
   function setParam(update: (next: URLSearchParams) => void) {
     const next = new URLSearchParams(search);
     update(next);
-    setSearch(next, { preventScrollReset: true });
+    if (local === true) setOwnSearch(next);
+    else setUrlSearch(next, { preventScrollReset: true });
   }
 
   return (

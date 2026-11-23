@@ -70,7 +70,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <ThemeProvider>
             <MotionConfig reducedMotion="user">
               {children}
-              <Toaster position="bottom-right" />
+              <Toaster position="top-center" />
             </MotionConfig>
           </ThemeProvider>
         </LocaleProvider>

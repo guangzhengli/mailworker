@@ -1,5 +1,6 @@
-import { Ulid } from "@mailworker/core";
+import { isDomainError, Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
+import { useCompose } from "@web/app/components/compose-panel";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,10 +14,10 @@ import {
 } from "@web/app/components/ui/alert-dialog";
 import { Button } from "@web/app/components/ui/button";
 import { Card, CardContent } from "@web/app/components/ui/card";
-import { localeFromMatches, translate, useT } from "@web/app/i18n";
+import { errorMessage, isErrorCode, localeFromMatches, translate, useT } from "@web/app/i18n";
 import { localeFromRequest } from "@web/app/i18n/locale.server";
 import { Callout, Empty, Mono, PageHeader, Relative, Tag } from "@web/app/ui";
-import { ArrowRightIcon, ShieldAlertIcon } from "lucide-react";
+import { ArrowRightIcon, PenLineIcon, ShieldAlertIcon } from "lucide-react";
 import { useEffect } from "react";
 import { Form, Link, useNavigation } from "react-router";
 import { toast } from "sonner";
@@ -74,7 +75,13 @@ export async function loader({ context, request }: Route.LoaderArgs) {
           heldBecause: delivery.lastError,
           subject: preview?.subject ?? null,
           from: preview?.from ?? null,
+          to: preview === null ? [] : [...preview.to],
+          cc: preview === null ? [] : [...preview.cc],
+          bcc: preview === null ? [] : [...preview.bcc],
+          replyTo: preview?.replyTo ?? null,
+          inReplyToMessageId: preview?.inReplyToMessageId ?? null,
           text: preview?.text ?? null,
+          hasHtml: (preview?.html ?? "") !== "",
           attachmentCount: preview?.attachments.length ?? 0,
         };
       }),
@@ -94,26 +101,44 @@ export async function action({ context, request }: Route.ActionArgs) {
     const form = await request.formData();
     const id = Ulid.parse(String(form.get("id")));
 
-    if (form.get("intent") === "reject") {
-      const locale = localeFromRequest(request);
-      await services.delivery.reject(caller, id, translate(locale, "approvals.rejectReason"));
-      return { done: "rejected" as const };
-    }
+    try {
+      if (form.get("intent") === "reject") {
+        const locale = localeFromRequest(request);
+        await services.delivery.reject(caller, id, translate(locale, "approvals.rejectReason"));
+        return { done: "rejected" as const, id, error: null };
+      }
 
-    await services.delivery.approve(caller, id);
-    return { done: "approved" as const };
+      await services.delivery.approve(caller, id);
+      return { done: "approved" as const, id, error: null };
+    } catch (error) {
+      // Someone else may have decided it first; say so without leaving the queue.
+      if (isDomainError(error)) {
+        return { done: null, id, error: { code: error.code, message: error.message } };
+      }
+      throw error;
+    }
   });
 }
 
 export default function Approvals({ loaderData, actionData }: Route.ComponentProps) {
   const busy = useNavigation().state !== "idle";
   const { t } = useT();
-  const done = actionData?.done ?? null;
+  const compose = useCompose();
+  const { locale } = useT();
 
+  // Keyed on the result object, so approving two in a row toasts twice.
   useEffect(() => {
-    if (done === "approved") toast.success(t("approvals.approved"));
-    if (done === "rejected") toast.success(t("approvals.rejected"));
-  }, [done, t]);
+    if (actionData === undefined) return;
+    if (actionData.done === "approved") toast.success(t("approvals.approved"));
+    if (actionData.done === "rejected") toast.success(t("approvals.rejected"));
+    if (actionData.error !== null) {
+      toast.error(
+        isErrorCode(actionData.error.code)
+          ? errorMessage(locale, actionData.error.code)
+          : actionData.error.message,
+      );
+    }
+  }, [actionData, locale, t]);
 
   return (
     <>
@@ -205,46 +230,97 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {loaderData.mayApprove && (
-                    <>
-                      {loaderData.mode === "live" ? (
-                        <AlertDialog>
-                          <AlertDialogTrigger render={<Button size="sm" disabled={busy} />}>
-                            {t("approvals.approve")}
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                {t("approvals.approveLiveTitle")}
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                {t("approvals.approveLiveBody", {
-                                  recipients: held.recipients.join(", "),
-                                })}
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                              <Form method="post">
-                                <input type="hidden" name="id" value={held.id} />
-                                <AlertDialogAction
-                                  render={<Button type="submit" disabled={busy} />}
-                                >
-                                  {t("approvals.approveLiveConfirm")}
-                                </AlertDialogAction>
-                              </Form>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      ) : (
-                        <Form method="post">
-                          <input type="hidden" name="id" value={held.id} />
-                          <Button type="submit" size="sm" disabled={busy}>
-                            {t("approvals.approve")}
-                          </Button>
-                        </Form>
-                      )}
+                  {loaderData.mayApprove &&
+                    (loaderData.mode === "live" ? (
+                      <AlertDialog>
+                        <AlertDialogTrigger render={<Button size="sm" disabled={busy} />}>
+                          {t("approvals.approve")}
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              {t("approvals.approveLiveTitle")}
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              {t("approvals.approveLiveBody", {
+                                recipients: held.recipients.join(", "),
+                              })}
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                            <Form method="post">
+                              <input type="hidden" name="id" value={held.id} />
+                              <AlertDialogAction
+                                render={<Button type="submit" disabled={busy} />}
+                              >
+                                {t("approvals.approveLiveConfirm")}
+                              </AlertDialogAction>
+                            </Form>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    ) : (
+                      <Form method="post">
+                        <input type="hidden" name="id" value={held.id} />
+                        <Button type="submit" size="sm" disabled={busy}>
+                          {t("approvals.approve")}
+                        </Button>
+                      </Form>
+                    ))}
 
+                  {loaderData.mayApprove && compose.available && held.from !== null && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        compose.open({
+                          from: held.from ?? "",
+                          to: held.to.join(", "),
+                          cc: held.cc.join(", "),
+                          bcc: held.bcc.join(", "),
+                          ...(held.replyTo === null ? {} : { replyTo: held.replyTo }),
+                          subject: held.subject ?? "",
+                          text: held.text ?? "",
+                          ...(held.inReplyToMessageId === null
+                            ? {}
+                            : { inReplyToMessageId: held.inReplyToMessageId }),
+                          replacesDeliveryId: held.id,
+                          notices: [
+                            ...(held.attachmentCount > 0
+                              ? [
+                                  t("compose.notice.attachments", {
+                                    count: held.attachmentCount,
+                                  }),
+                                ]
+                              : []),
+                            ...(held.hasHtml ? [t("compose.notice.html")] : []),
+                          ],
+                        })
+                      }
+                    >
+                      <PenLineIcon />
+                      {t("approvals.editAndSend")}
+                    </Button>
+                  )}
+
+                  {held.inReplyToMessageId !== null && (
+                    <Button
+                      render={<Link to={`/mail/${held.inReplyToMessageId}?view=all`} />}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      {t("approvals.openThread")}
+                    </Button>
+                  )}
+
+                  <Button render={<Link to={`/sent/${held.id}`} />} variant="ghost" size="sm">
+                    {t("approvals.openDetail")}
+                    <ArrowRightIcon />
+                  </Button>
+                  {loaderData.mayApprove && (
+                    <span className="ml-auto">
                       <AlertDialog>
                         <AlertDialogTrigger
                           render={<Button variant="outline" size="sm" disabled={busy} />}
@@ -276,13 +352,8 @@ export default function Approvals({ loaderData, actionData }: Route.ComponentPro
                           </AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
-                    </>
+                    </span>
                   )}
-
-                  <Button render={<Link to={`/sent/${held.id}`} />} variant="ghost" size="sm">
-                    {t("approvals.openDetail")}
-                    <ArrowRightIcon />
-                  </Button>
                 </div>
               </CardContent>
             </Card>

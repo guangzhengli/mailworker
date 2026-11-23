@@ -1,20 +1,14 @@
-import { Ulid } from "@mailworker/core";
+import { isDomainError, Ulid } from "@mailworker/core";
 import { can, page } from "@web/app/auth";
+import type { ComposeResult } from "@web/app/components/compose-panel";
+import { useCompose } from "@web/app/components/compose-panel";
 import { Button } from "@web/app/components/ui/button";
-import { Card, CardContent } from "@web/app/components/ui/card";
-import { Input } from "@web/app/components/ui/input";
-import { Label } from "@web/app/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@web/app/components/ui/select";
-import { Textarea } from "@web/app/components/ui/textarea";
 import { localeFromMatches, translate, useT } from "@web/app/i18n";
-import { Callout, Mono, Note, PageHeader } from "@web/app/ui";
-import { Form, redirect, useNavigation } from "react-router";
+import { localeFromRequest } from "@web/app/i18n/locale.server";
+import { replySubject } from "@web/app/mail";
+import { Callout, PageHeader } from "@web/app/ui";
+import { useEffect } from "react";
+import { Link, redirect } from "react-router";
 import type { Route } from "./+types/compose";
 
 export const meta: Route.MetaFunction = ({ matches }) => [
@@ -22,18 +16,9 @@ export const meta: Route.MetaFunction = ({ matches }) => [
 ];
 
 /**
- * A human sending mail, which the dashboard could not do at all.
- *
- * The gap that made it worth building is inbound: an account already receiving
- * support and contact-us mail could read it and not answer it, so the inbox was
- * half a feature. Reply is the case this is really for; blank compose is what it
- * degrades to.
- *
- * Every send from here is attributed to the managed `console` identity rather
- * than to the session. A dashboard session is usually an admin key, and gate 2
- * exempts `admin` from the sender rule, the recipient allowlist and the quota —
- * so sending as the session would have made this the one unmetered way out of
- * the building.
+ * Every send from the dashboard is attributed to the managed `console` identity
+ * rather than to the session: a session is usually an admin key,
+ * and admin is exempt from the sender rule, the allowlist and the quota.
  */
 export async function loader({ context, request }: Route.LoaderArgs) {
   return await page(context, request, async ({ caller, services }) => {
@@ -42,16 +27,19 @@ export async function loader({ context, request }: Route.LoaderArgs) {
     const replyTo = url.searchParams.get("reply");
 
     const inboxes = await services.mailbox.listInboxes(caller, { limit: 100 });
-
     const quoted =
       replyTo === null
         ? null
         : await services.mailbox.getMessage(caller, Ulid.parse(replyTo)).catch(() => null);
 
     return {
-      // Only addresses that still accept mail: a reply from an expired inbox
-      // would be refused at the gate with a puzzling error.
-      inboxes: inboxes.items.map((inbox) => ({ id: inbox.id, address: inbox.address })),
+      inboxes: [...inboxes.items]
+        .sort(
+          (left, right) =>
+            Number(right.kind === "persistent") - Number(left.kind === "persistent") ||
+            left.address.localeCompare(right.address),
+        )
+        .map((inbox) => ({ id: inbox.id, address: inbox.address })),
       quoted:
         quoted === null
           ? null
@@ -59,147 +47,141 @@ export async function loader({ context, request }: Route.LoaderArgs) {
               id: quoted.id,
               inboxId: quoted.inboxId,
               subject: quoted.subject,
-              from: quoted.replyTo ?? quoted.from,
-              bodyText: quoted.bodyText,
+              to: quoted.replyTo ?? quoted.from,
             },
     };
   });
 }
 
 export async function action({ context, request }: Route.ActionArgs) {
-  return await page(context, request, async ({ caller, services }) => {
+  return await page(context, request, async ({ caller, services }): Promise<ComposeResult> => {
     if (!can(caller, "admin")) throw new Response("Admin access required.", { status: 403 });
     const form = await request.formData();
+    const stay = form.get("stay") === "1";
+    const field = (name: string) => String(form.get(name) ?? "").trim();
+    const addresses = (name: string) =>
+      field(name)
+        .split(/[,;\s]+/)
+        .filter((address) => address !== "");
 
-    // Provisioned on first use, so a deployment that never sends from here never
-    // grows the row.
-    const identity = await services.identity.ensureConsoleIdentity(caller);
-
-    const inReplyTo = String(form.get("inReplyToMessageId") ?? "").trim();
-    const result = await services.delivery.send(
-      { ...caller, identityId: identity.id },
-      {
-        from: String(form.get("from") ?? ""),
-        to: String(form.get("to") ?? "")
-          .split(",")
-          .map((address) => address.trim())
-          .filter((address) => address !== ""),
-        subject: String(form.get("subject") ?? ""),
-        text: String(form.get("text") ?? ""),
-        ...(inReplyTo === "" ? {} : { inReplyToMessageId: inReplyTo }),
-        // Never read from the form: accepting it over the wire would let a
-        // caller skip the approval hold by claiming to be a human.
-        source: "console",
-      },
+    const attachments = await Promise.all(
+      form
+        .getAll("attachments")
+        .filter((value): value is File => value instanceof File && value.size > 0)
+        .map(async (file) => ({
+          filename: file.name,
+          mime: file.type === "" ? "application/octet-stream" : file.type,
+          content: toBase64(new Uint8Array(await file.arrayBuffer())),
+          inline: false,
+          contentId: null,
+        })),
     );
 
-    throw redirect(`/sent/${result.delivery.id}?sent=1`);
+    const identity = await services.identity.ensureConsoleIdentity(caller);
+    const inReplyTo = field("inReplyToMessageId");
+    const replaces = field("replaces");
+    const cc = addresses("cc");
+    const bcc = addresses("bcc");
+    const replyTo = field("replyTo");
+
+    try {
+      // Checked before sending, so a draft someone else already approved or
+      // rejected does not get a second, human-written copy sent after it.
+      if (replaces !== "") {
+        const { delivery } = await services.delivery.timeline(caller, Ulid.parse(replaces));
+        if (delivery.status !== "pending_approval") {
+          return {
+            error: {
+              code: "invalid_state_transition",
+              message: `Delivery ${replaces} is ${delivery.status}, no longer awaiting approval.`,
+            },
+          };
+        }
+      }
+
+      const result = await services.delivery.send(
+        { ...caller, identityId: identity.id },
+        {
+          from: field("from"),
+          to: addresses("to"),
+          ...(cc.length === 0 ? {} : { cc }),
+          ...(bcc.length === 0 ? {} : { bcc }),
+          ...(replyTo === "" ? {} : { replyTo }),
+          subject: field("subject"),
+          text: String(form.get("text") ?? ""),
+          ...(inReplyTo === "" ? {} : { inReplyToMessageId: inReplyTo }),
+          ...(attachments.length === 0 ? {} : { attachments }),
+          // Never read from the form: accepting it over the wire would let a
+          // caller skip the approval hold by claiming to be a human.
+          source: "console",
+        },
+      );
+
+      // Sent first, withdrawn second: if the send is refused, the agent's draft
+      // is still in the queue rather than lost.
+      let replaced: string | null = null;
+      if (replaces !== "") {
+        replaced = await services.delivery
+          .reject(
+            caller,
+            Ulid.parse(replaces),
+            translate(localeFromRequest(request), "approvals.replacedReason", {
+              id: result.delivery.id,
+            }),
+          )
+          .then(() => replaces)
+          .catch(() => null);
+      }
+
+      if (!stay) throw redirect(`/sent/${result.delivery.id}?sent=1`);
+      return { sent: result.delivery.id, replaced };
+    } catch (error) {
+      if (stay && isDomainError(error)) {
+        return { error: { code: error.code, message: error.message } };
+      }
+      throw error;
+    }
   });
 }
 
-export default function Compose({ loaderData }: Route.ComponentProps) {
-  const busy = useNavigation().state !== "idle";
-  const { t, rich } = useT();
-  const quoted = loaderData.quoted;
-
-  if (loaderData.inboxes.length === 0) {
-    return (
-      <>
-        <PageHeader title={t("compose.title")} />
-        <Callout tone="warning">{t("compose.noInbox")}</Callout>
-      </>
-    );
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
   }
+  return btoa(binary);
+}
 
-  const defaultFrom =
-    quoted === null
-      ? loaderData.inboxes[0]!.address
-      : (loaderData.inboxes.find((inbox) => inbox.id === quoted.inboxId)?.address ??
-        loaderData.inboxes[0]!.address);
+/** A direct link to `/compose` opens the panel; the page itself is only its backdrop. */
+export default function Compose({ loaderData }: Route.ComponentProps) {
+  const { t } = useT();
+  const compose = useCompose();
+  const { quoted, inboxes } = loaderData;
 
-  const defaultSubject =
-    quoted === null
-      ? ""
-      : quoted.subject.toLowerCase().startsWith("re:")
-        ? quoted.subject
-        : `Re: ${quoted.subject}`;
+  useEffect(() => {
+    if (quoted === null) {
+      compose.open();
+      return;
+    }
+    const from = inboxes.find((inbox) => inbox.id === quoted.inboxId)?.address;
+    compose.open({
+      ...(from === undefined ? {} : { from }),
+      ...(quoted.to === null ? {} : { to: quoted.to }),
+      subject: replySubject(quoted.subject),
+      inReplyToMessageId: quoted.id,
+    });
+  }, [compose, quoted, inboxes]);
 
   return (
     <>
       <PageHeader title={quoted === null ? t("compose.title") : t("compose.replyTitle")} />
-
-      {quoted !== null && (
-        <Callout tone="info" className="mb-4">
-          {t("compose.quoting", {
-            subject: quoted.subject === "" ? t("common.noSubject") : quoted.subject,
-          })}
-        </Callout>
+      {inboxes.length === 0 ? (
+        <Callout tone="warning">{t("compose.noInbox")}</Callout>
+      ) : (
+        <Button render={<Link to="/mail" />} variant="outline" size="sm">
+          {t("compose.backToMail")}
+        </Button>
       )}
-
-      <Card>
-        <CardContent>
-          <Form method="post" className="flex flex-col gap-4">
-            {quoted !== null && (
-              <input type="hidden" name="inReplyToMessageId" value={quoted.id} />
-            )}
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="from">{t("compose.from")}</Label>
-              <Select
-                name="from"
-                defaultValue={defaultFrom}
-                items={Object.fromEntries(
-                  loaderData.inboxes.map((inbox) => [inbox.address, inbox.address]),
-                )}
-              >
-                <SelectTrigger id="from" className="font-mono">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {loaderData.inboxes.map((inbox) => (
-                    <SelectItem key={inbox.id} value={inbox.address}>
-                      {inbox.address}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* Under the field it qualifies: this is about who the send is
-                  attributed to, which is what the From address decides. */}
-              <Note className="mt-0">
-                {rich("compose.consoleNote", { identity: <Mono>console</Mono> })}
-              </Note>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="to">{t("compose.to")}</Label>
-              <Input
-                id="to"
-                name="to"
-                required
-                defaultValue={quoted?.from ?? ""}
-                placeholder={t("compose.toPlaceholder")}
-                className="font-mono"
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="subject">{t("compose.subject")}</Label>
-              <Input id="subject" name="subject" required defaultValue={defaultSubject} />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="text">{t("compose.body")}</Label>
-              <Textarea id="text" name="text" required rows={12} />
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button type="submit" disabled={busy}>
-                {t("compose.send")}
-              </Button>
-            </div>
-          </Form>
-        </CardContent>
-      </Card>
     </>
   );
 }
