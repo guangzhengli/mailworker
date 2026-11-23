@@ -17,12 +17,18 @@ import {
  * without it they are a convenient fiction, and every fast test that passes here
  * proves only that the fiction is self-consistent.
  */
-runRepositoryConformance("in-memory", () => ({
-  inboxes: new InMemoryInboxes(),
-  messages: new InMemoryMessages(),
-  deliveries: new InMemoryDeliveries(),
-  identities: new InMemoryIdentities(),
-  apiKeys: new InMemoryApiKeys(),
-  suppressions: new InMemorySuppressions(),
-  blobs: new InMemoryBlobs(),
-}));
+runRepositoryConformance("in-memory", () => {
+  const inboxes = new InMemoryInboxes();
+  const messages = new InMemoryMessages(inboxes);
+  return {
+    inboxes,
+    messages,
+    labels: messages.labels,
+    notes: messages.notes,
+    deliveries: new InMemoryDeliveries(),
+    identities: new InMemoryIdentities(),
+    apiKeys: new InMemoryApiKeys(),
+    suppressions: new InMemorySuppressions(),
+    blobs: new InMemoryBlobs(),
+  };
+});

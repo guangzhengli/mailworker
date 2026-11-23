@@ -18,6 +18,9 @@ import type {
   DomainEvent,
   DomainRouting,
   Inbox,
+  Label,
+  LabelUsage,
+  MessageNote,
   MessageSummary,
   Page,
   ProjectId,
@@ -30,7 +33,13 @@ import {
   CROCKFORD,
   clampLimit,
   EmailAddress,
+  invalidArgument,
+  LabelName,
+  MAX_LABELS_PER_ACCOUNT,
+  MAX_LABELS_PER_MESSAGE,
+  MAX_NOTES_PER_MESSAGE,
   Message,
+  notFound,
   RfcMessageId,
   SenderAuth,
   WaitCriteria,
@@ -54,15 +63,20 @@ import type {
   IdentityRepository,
   IdGenerator,
   InboxRepository,
+  InboxSettingsUpdate,
+  LabelRepository,
   ListDeliveriesQuery,
   ListInboxesQuery,
   ListMessagesQuery,
   LoopbackMessage,
   LoopbackSink,
   MailTransport,
+  MessageLabelChanges,
   MessageRepository,
+  MessageStateChange,
   MimeBuilder,
   MimeParser,
+  NoteRepository,
   ParsedAttachment,
   ParsedInbound,
   Secrets,
@@ -208,14 +222,28 @@ export class InMemoryInboxes implements InboxRepository {
     return { stored: true };
   }
 
-  async update(ctx: Caller, inbox: Inbox): Promise<void> {
+  update(ctx: Caller, inbox: Inbox): Promise<undefined>;
+  update(ctx: Caller, change: InboxSettingsUpdate): Promise<Inbox | null>;
+  async update(
+    ctx: Caller,
+    change: Inbox | InboxSettingsUpdate,
+  ): Promise<Inbox | null | undefined> {
     const rows = scoped(this.rows, ctx);
-    const index = rows.findIndex((row) => row.id === inbox.id);
-    if (index >= 0) rows[index] = inbox;
+    const index = rows.findIndex((row) => row.id === change.id);
+    if ("accountId" in change) {
+      if (index >= 0) rows[index] = change;
+      return;
+    }
+    const previous = rows[index];
+    if (previous === undefined || previous.deletedAt !== null) return null;
+    const updated = { ...previous, ...change };
+    rows[index] = updated;
+    return updated;
   }
 
   async list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>> {
     let rows = scoped(this.rows, ctx).filter((row) => row.deletedAt === null);
+    if (query.muted !== undefined) rows = rows.filter((row) => row.muted === query.muted);
     if (query.kind !== undefined) rows = rows.filter((row) => row.kind === query.kind);
     if (query.domain !== undefined) rows = rows.filter((row) => row.domain === query.domain);
     if (query.identityId !== undefined) {
@@ -252,6 +280,20 @@ export class InMemoryInboxes implements InboxRepository {
 export class InMemoryMessages implements MessageRepository {
   readonly rows = new Map<string, Message[]>();
   private readonly bodyKeys = new Map<string, string>();
+  readonly labels: InMemoryLabels;
+  readonly notes: InMemoryNotes;
+
+  constructor(
+    private readonly inboxes = new InMemoryInboxes(),
+    ids: IdGenerator = new DeterministicIds(),
+  ) {
+    this.labels = new InMemoryLabels(this.rows, ids);
+    this.notes = new InMemoryNotes(this.rows);
+  }
+
+  private withLabels(ctx: Caller, message: Message): Message {
+    return { ...message, labels: this.labels.namesForMessage(ctx, message.id) };
+  }
 
   async insert(
     ctx: Caller,
@@ -272,6 +314,16 @@ export class InMemoryMessages implements MessageRepository {
     ) {
       return { stored: false };
     }
+    if (message.labels.length > 0) {
+      this.labels.checkLimit(ctx, [message.id], message.labels, []);
+      const labels = this.labels.ensureNames(ctx, message.labels, message.receivedAt);
+      this.labels.attachLinks(
+        ctx,
+        [message.id],
+        labels.map((label) => label.id),
+        message.receivedAt,
+      );
+    }
     rows.push(message);
     if (options.bodyKey != null) {
       this.bodyKeys.set(`${ctx.accountId}/${message.id}`, options.bodyKey);
@@ -280,11 +332,13 @@ export class InMemoryMessages implements MessageRepository {
   }
 
   async findById(ctx: Caller, id: Ulid): Promise<Message | null> {
-    return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
+    const row = scoped(this.rows, ctx).find((row) => row.id === id);
+    return row === undefined ? null : this.withLabels(ctx, row);
   }
 
   async findByRfcMessageId(ctx: Caller, rfcId: RfcMessageId): Promise<Message | null> {
-    return scoped(this.rows, ctx).find((row) => row.rfcMessageId === rfcId) ?? null;
+    const row = scoped(this.rows, ctx).find((row) => row.rfcMessageId === rfcId);
+    return row === undefined ? null : this.withLabels(ctx, row);
   }
 
   async findPlacement(
@@ -293,14 +347,13 @@ export class InMemoryMessages implements MessageRepository {
     envelopeRecipient: EmailAddress | null,
     rfcId: RfcMessageId,
   ): Promise<Message | null> {
-    return (
-      scoped(this.rows, ctx).find(
-        (row) =>
-          row.inboxId === inboxId &&
-          row.envelopeRecipient === envelopeRecipient &&
-          row.rfcMessageId === rfcId,
-      ) ?? null
+    const row = scoped(this.rows, ctx).find(
+      (row) =>
+        row.inboxId === inboxId &&
+        row.envelopeRecipient === envelopeRecipient &&
+        row.rfcMessageId === rfcId,
     );
+    return row === undefined ? null : this.withLabels(ctx, row);
   }
 
   async findThreadIds(
@@ -320,6 +373,25 @@ export class InMemoryMessages implements MessageRepository {
 
   async list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>> {
     let rows = scoped(this.rows, ctx);
+    if (query.id !== undefined) rows = rows.filter((row) => row.id === query.id);
+    if (query.starred !== undefined) rows = rows.filter((row) => row.starred === query.starred);
+    if (query.archived !== undefined) {
+      rows = rows.filter((row) => (row.archivedAt !== null) === query.archived);
+    }
+    if (query.muted !== undefined) {
+      const matching = new Set(
+        scoped(this.inboxes.rows, ctx)
+          .filter((inbox) => inbox.deletedAt === null && inbox.muted === query.muted)
+          .map((inbox) => inbox.id),
+      );
+      rows = rows.filter((row) => matching.has(row.inboxId));
+    }
+    if (query.label !== undefined) {
+      const key = LabelName.key(query.label);
+      rows = rows.filter((row) =>
+        this.labels.namesForMessage(ctx, row.id).some((name) => LabelName.key(name) === key),
+      );
+    }
     if (query.identityId !== undefined) {
       rows = rows.filter((row) => row.identityId === query.identityId);
     }
@@ -346,19 +418,69 @@ export class InMemoryMessages implements MessageRepository {
             });
     }
     const page = paginate(rows, query);
-    return { items: page.items.map((row) => Message.summarize(row)), cursor: page.cursor };
+    return {
+      items: page.items.map((row) =>
+        Message.summarize(this.withLabels(ctx, row), this.notes.forMessage(ctx, row.id).length),
+      ),
+      cursor: page.cursor,
+    };
   }
 
   async listThread(ctx: Caller, threadId: ThreadId): Promise<Message[]> {
     return scoped(this.rows, ctx)
       .filter((row) => row.threadId === threadId)
-      .sort((a, b) => (a.id < b.id ? -1 : 1));
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((row) => this.withLabels(ctx, row));
   }
 
   async setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void> {
+    await this.updateState(ctx, [id], { seen });
+  }
+
+  async updateState(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+  ): Promise<void> {
+    this.writeState(ctx, ids, change);
+  }
+
+  async applyChanges(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+    options: MessageLabelChanges,
+  ): Promise<void> {
+    const available = new Set(
+      scoped(this.rows, ctx)
+        .filter((row) => options.identityId === null || row.identityId === options.identityId)
+        .map((row) => row.id),
+    );
+    const missing = ids.filter((id) => !available.has(id));
+    if (missing.length > 0) {
+      throw notFound("message_not_found", "One or more messages were not found.", {
+        ids: missing,
+      });
+    }
+    this.labels.checkLimit(ctx, ids, options.add, options.remove);
+    const added = this.labels.ensureNames(ctx, options.add, options.now);
+    const removed = this.labels.idsForKeys(ctx, options.remove);
+    this.labels.detachLinks(ctx, ids, removed);
+    this.labels.attachLinks(
+      ctx,
+      ids,
+      added.map((label) => label.id),
+      options.now,
+    );
+    this.writeState(ctx, ids, change);
+  }
+
+  private writeState(ctx: Caller, ids: readonly Ulid[], change: MessageStateChange): void {
     const rows = scoped(this.rows, ctx);
-    const index = rows.findIndex((row) => row.id === id);
-    if (index >= 0) rows[index] = Message.markSeen(rows[index]!, seen);
+    const wanted = new Set(ids);
+    for (const [index, row] of rows.entries()) {
+      if (wanted.has(row.id)) rows[index] = { ...row, ...change };
+    }
   }
 
   async countSentBetween(
@@ -386,12 +508,283 @@ export class InMemoryMessages implements MessageRepository {
         : [this.bodyKeys.get(`${ctx.accountId}/${row.id}`)!]),
       ...row.attachments.map((attachment) => attachment.storageKey),
     ]);
+    const doomedIds = doomed.map((row) => row.id);
+    this.labels.deleteForMessages(ctx, doomedIds);
+    this.notes.deleteForMessages(ctx, doomedIds);
     for (const row of doomed) this.bodyKeys.delete(`${ctx.accountId}/${row.id}`);
     this.rows.set(
       ctx.accountId,
       rows.filter((row) => row.inboxId !== inboxId),
     );
     return { storageKeys: keys };
+  }
+}
+
+interface LabelLink {
+  readonly messageId: Ulid;
+  readonly labelId: Ulid;
+  readonly createdAt: Date;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export class InMemoryLabels implements LabelRepository {
+  private readonly rows = new Map<string, Label[]>();
+  private readonly links = new Map<string, LabelLink[]>();
+
+  constructor(
+    private readonly messages: Map<string, Message[]>,
+    private readonly ids: IdGenerator,
+  ) {}
+
+  async ensure(ctx: Caller, names: readonly string[], now: Date): Promise<Label[]> {
+    return this.ensureNames(ctx, names, now);
+  }
+
+  ensureNames(ctx: Caller, names: readonly string[], now: Date): Label[] {
+    const normalized = names.map(LabelName.parse);
+    const rows = scoped(this.rows, ctx);
+    const byKey = new Map(rows.map((row) => [LabelName.key(row.name), row]));
+    const keys = normalized.map(LabelName.key);
+    const missing = new Set(keys.filter((key) => !byKey.has(key)));
+    if (rows.length + missing.size > MAX_LABELS_PER_ACCOUNT) {
+      throw invalidArgument(`An account can have at most ${MAX_LABELS_PER_ACCOUNT} labels.`);
+    }
+    return normalized.map((name, index) => {
+      const key = keys[index]!;
+      const existing = byKey.get(key);
+      if (existing !== undefined) return existing;
+      const label = { id: this.ids.ulid(), accountId: ctx.accountId, name, createdAt: now };
+      rows.push(label);
+      byKey.set(key, label);
+      return label;
+    });
+  }
+
+  async findByName(ctx: Caller, name: string): Promise<Label | null> {
+    const key = LabelName.key(name);
+    return scoped(this.rows, ctx).find((row) => LabelName.key(row.name) === key) ?? null;
+  }
+
+  async findById(ctx: Caller, id: Ulid): Promise<Label | null> {
+    return scoped(this.rows, ctx).find((row) => row.id === id) ?? null;
+  }
+
+  async listUsage(ctx: Caller, { identityId }: { identityId?: Ulid }): Promise<LabelUsage[]> {
+    const visible = new Map(
+      scoped(this.messages, ctx)
+        .filter((message) => identityId === undefined || message.identityId === identityId)
+        .map((message) => [message.id, message]),
+    );
+    const usage = new Map<
+      Ulid,
+      { messageCount: number; unreadCount: number; lastUsedAt: Date }
+    >();
+    for (const link of scoped(this.links, ctx)) {
+      const message = visible.get(link.messageId);
+      if (message === undefined) continue;
+      const stats = usage.get(link.labelId) ?? {
+        messageCount: 0,
+        unreadCount: 0,
+        lastUsedAt: link.createdAt,
+      };
+      stats.messageCount++;
+      if (message.direction === "inbound" && !message.seen && message.archivedAt === null)
+        stats.unreadCount++;
+      if (link.createdAt > stats.lastUsedAt) stats.lastUsedAt = link.createdAt;
+      usage.set(link.labelId, stats);
+    }
+    return scoped(this.rows, ctx)
+      .filter((label) => identityId === undefined || usage.has(label.id))
+      .map((label) => ({
+        ...label,
+        ...(usage.get(label.id) ?? { messageCount: 0, unreadCount: 0, lastUsedAt: null }),
+      }))
+      .sort(
+        (left, right) =>
+          (right.lastUsedAt?.getTime() ?? -Infinity) -
+            (left.lastUsedAt?.getTime() ?? -Infinity) || compareText(left.name, right.name),
+      );
+  }
+
+  async rename(ctx: Caller, id: Ulid, name: string): Promise<void> {
+    const normalized = LabelName.parse(name);
+    const key = LabelName.key(normalized);
+    const rows = scoped(this.rows, ctx);
+    const index = rows.findIndex((row) => row.id === id);
+    if (index < 0) return;
+    if (rows.some((row) => row.id !== id && LabelName.key(row.name) === key)) {
+      throw invalidArgument("A label with that name already exists.");
+    }
+    rows[index] = { ...rows[index]!, name: normalized };
+  }
+
+  async delete(ctx: Caller, id: Ulid): Promise<void> {
+    this.rows.set(
+      ctx.accountId,
+      scoped(this.rows, ctx).filter((row) => row.id !== id),
+    );
+    this.links.set(
+      ctx.accountId,
+      scoped(this.links, ctx).filter((link) => link.labelId !== id),
+    );
+  }
+
+  async attach(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+    labelIds: readonly Ulid[],
+    now: Date,
+  ): Promise<void> {
+    const wanted = new Set(labelIds);
+    const labels = scoped(this.rows, ctx).filter((label) => wanted.has(label.id));
+    const available = new Set(scoped(this.messages, ctx).map((message) => message.id));
+    const ids = messageIds.filter((id) => available.has(id));
+    this.checkLimit(
+      ctx,
+      ids,
+      labels.map((label) => label.name),
+      [],
+    );
+    this.attachLinks(
+      ctx,
+      ids,
+      labels.map((label) => label.id),
+      now,
+    );
+  }
+
+  attachLinks(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+    labelIds: readonly Ulid[],
+    now: Date,
+  ): void {
+    const links = scoped(this.links, ctx);
+    for (const messageId of messageIds) {
+      for (const labelId of labelIds) {
+        if (!links.some((link) => link.messageId === messageId && link.labelId === labelId)) {
+          links.push({ messageId, labelId, createdAt: now });
+        }
+      }
+    }
+  }
+
+  async detach(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+    labelIds: readonly Ulid[],
+  ): Promise<void> {
+    this.detachLinks(ctx, messageIds, labelIds);
+  }
+
+  detachLinks(ctx: Caller, messageIds: readonly Ulid[], labelIds: readonly Ulid[]): void {
+    const messages = new Set(messageIds);
+    const labels = new Set(labelIds);
+    this.links.set(
+      ctx.accountId,
+      scoped(this.links, ctx).filter(
+        (link) => !messages.has(link.messageId) || !labels.has(link.labelId),
+      ),
+    );
+  }
+
+  async countForMessage(ctx: Caller, messageId: Ulid): Promise<number> {
+    return scoped(this.links, ctx).filter((link) => link.messageId === messageId).length;
+  }
+
+  namesForMessage(ctx: Caller, messageId: Ulid): string[] {
+    const ids = new Set(
+      scoped(this.links, ctx)
+        .filter((link) => link.messageId === messageId)
+        .map((link) => link.labelId),
+    );
+    return scoped(this.rows, ctx)
+      .filter((label) => ids.has(label.id))
+      .sort((left, right) => compareText(LabelName.key(left.name), LabelName.key(right.name)))
+      .map((label) => label.name);
+  }
+
+  idsForKeys(ctx: Caller, keys: readonly string[]): Ulid[] {
+    const wanted = new Set(keys);
+    return scoped(this.rows, ctx)
+      .filter((label) => wanted.has(LabelName.key(label.name)))
+      .map((label) => label.id);
+  }
+
+  checkLimit(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+    add: readonly string[],
+    remove: readonly string[],
+  ): void {
+    const addKeys = add.map(LabelName.key);
+    const removeKeys = new Set(remove);
+    for (const id of messageIds) {
+      const retained = this.namesForMessage(ctx, id)
+        .map(LabelName.key)
+        .filter((key) => !removeKeys.has(key));
+      if (new Set([...retained, ...addKeys]).size > MAX_LABELS_PER_MESSAGE) {
+        throw invalidArgument(`A message can have at most ${MAX_LABELS_PER_MESSAGE} labels.`);
+      }
+    }
+  }
+
+  deleteForMessages(ctx: Caller, ids: readonly Ulid[]): void {
+    const doomed = new Set(ids);
+    this.links.set(
+      ctx.accountId,
+      scoped(this.links, ctx).filter((link) => !doomed.has(link.messageId)),
+    );
+  }
+}
+
+export class InMemoryNotes implements NoteRepository {
+  private readonly rows = new Map<string, MessageNote[]>();
+
+  constructor(private readonly messages: Map<string, Message[]>) {}
+
+  async insert(ctx: Caller, note: MessageNote): Promise<void> {
+    if (!scoped(this.messages, ctx).some((message) => message.id === note.messageId)) {
+      throw notFound("message_not_found", `No message ${note.messageId}.`, {
+        id: note.messageId,
+      });
+    }
+    if (this.forMessage(ctx, note.messageId).length >= MAX_NOTES_PER_MESSAGE) {
+      throw invalidArgument(`A message can have at most ${MAX_NOTES_PER_MESSAGE} notes.`);
+    }
+    scoped(this.rows, ctx).push({ ...note, accountId: ctx.accountId });
+  }
+
+  forMessage(ctx: Caller, messageId: Ulid): MessageNote[] {
+    return scoped(this.rows, ctx)
+      .filter((note) => note.messageId === messageId)
+      .sort((left, right) => compareText(left.id, right.id));
+  }
+
+  async listForMessage(ctx: Caller, messageId: Ulid): Promise<MessageNote[]> {
+    return this.forMessage(ctx, messageId);
+  }
+
+  async findById(ctx: Caller, id: Ulid): Promise<MessageNote | null> {
+    return scoped(this.rows, ctx).find((note) => note.id === id) ?? null;
+  }
+
+  async delete(ctx: Caller, id: Ulid): Promise<void> {
+    this.rows.set(
+      ctx.accountId,
+      scoped(this.rows, ctx).filter((note) => note.id !== id),
+    );
+  }
+
+  deleteForMessages(ctx: Caller, ids: readonly Ulid[]): void {
+    const doomed = new Set(ids);
+    this.rows.set(
+      ctx.accountId,
+      scoped(this.rows, ctx).filter((note) => !doomed.has(note.messageId)),
+    );
   }
 }
 
@@ -989,6 +1382,9 @@ export class SimpleMimeParser implements MimeParser {
       auth: SenderAuth.fromHeader(headers["authentication-results"] ?? null),
       sentAt: dateHeader === undefined ? null : safeDate(dateHeader),
       autoSubmitted: headers["auto-submitted"] ?? null,
+      listId: headers["list-id"] ?? null,
+      listUnsubscribe: headers["list-unsubscribe"] ?? null,
+      listUnsubscribePost: headers["list-unsubscribe-post"] ?? null,
       headers,
       attachments,
     };

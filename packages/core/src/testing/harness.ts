@@ -39,6 +39,8 @@ export interface Harness {
   readonly ids: DeterministicIds;
   readonly inboxes: InMemoryInboxes;
   readonly messages: InMemoryMessages;
+  readonly labels: InMemoryMessages["labels"];
+  readonly notes: InMemoryMessages["notes"];
   readonly deliveries: InMemoryDeliveries;
   readonly identities: InMemoryIdentities;
   readonly apiKeys: InMemoryApiKeys;
@@ -94,7 +96,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   const clock = options.now === undefined ? new FakeClock() : new FakeClock(options.now);
   const ids = new DeterministicIds();
   const inboxes = new InMemoryInboxes();
-  const messages = new InMemoryMessages();
+  const messages = new InMemoryMessages(inboxes, ids);
   const deliveries = new InMemoryDeliveries();
   const identities = new InMemoryIdentities();
   const apiKeys = new InMemoryApiKeys();
@@ -119,6 +121,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     secrets: new FakeSecrets(),
     inboxes,
     messages,
+    labels: messages.labels,
+    notes: messages.notes,
     deliveries,
     identities,
     apiKeys,
@@ -155,6 +159,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     ids,
     inboxes,
     messages,
+    labels: messages.labels,
+    notes: messages.notes,
     deliveries,
     identities,
     apiKeys,

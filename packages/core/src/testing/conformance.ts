@@ -1,10 +1,13 @@
-import type { Caller, Ulid } from "@core/domain";
+import type { Caller, MessageNote, Ulid } from "@core/domain";
 import {
   AccountId,
   AgentIdentity,
   Delivery,
   EmailAddress,
   Inbox,
+  MAX_LABELS_PER_ACCOUNT,
+  MAX_LABELS_PER_MESSAGE,
+  MAX_NOTES_PER_MESSAGE,
   Message,
   ProjectId,
   RfcMessageId,
@@ -16,7 +19,9 @@ import type {
   DeliveryRepository,
   IdentityRepository,
   InboxRepository,
+  LabelRepository,
   MessageRepository,
+  NoteRepository,
   SuppressionList,
 } from "@core/domain/ports";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -40,6 +45,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 export interface ConformanceSubject {
   readonly inboxes: InboxRepository;
   readonly messages: MessageRepository;
+  readonly labels: LabelRepository;
+  readonly notes: NoteRepository;
   readonly deliveries: DeliveryRepository;
   readonly identities: IdentityRepository;
   readonly apiKeys: ApiKeyRepository;
@@ -648,6 +655,340 @@ export function runRepositoryConformance(
         expect(await s.messages.findThreadIds(BOB, [message.rfcMessageId])).toEqual(new Map());
         expect((await s.messages.deleteByInbox(BOB, message.inboxId)).storageKeys).toEqual([]);
         expect(await s.messages.findById(ALICE, message.id)).not.toBeNull();
+      });
+    });
+
+    describe("mail client state", () => {
+      it("filters by inbox mute, archive and star state without hiding other messages by default", async () => {
+        const watched = anInbox(`watched@${CONFORMANCE_DOMAIN}`);
+        const muted = anInbox(`muted@${CONFORMANCE_DOMAIN}`, { muted: true });
+        const deleted = anInbox(`deleted@${CONFORMANCE_DOMAIN}`, { deletedAt: NOW });
+        for (const inbox of [watched, muted, deleted]) await s.inboxes.insert(ALICE, inbox);
+
+        const [incoming, archived, silent, gone, outbound] = [
+          aMessage({
+            inboxId: watched.id,
+            listId: "Digest <digest.example>",
+            unsubscribe: {
+              https: "https://digest.example/leave",
+              mailto: null,
+              oneClick: true,
+            },
+          }),
+          aMessage({ inboxId: watched.id, starred: true, archivedAt: NOW }),
+          aMessage({ inboxId: muted.id }),
+          aMessage({ inboxId: deleted.id }),
+          aMessage({ inboxId: watched.id, direction: "outbound" }),
+        ] as const;
+        for (const message of [incoming, archived, silent, gone, outbound])
+          await s.messages.insert(ALICE, message);
+        expect(await s.messages.findById(ALICE, incoming.id)).toEqual(incoming);
+        expect((await s.inboxes.list(ALICE, { muted: true })).items).toEqual([muted]);
+        expect((await s.inboxes.list(ALICE, { muted: false })).items).toEqual([watched]);
+        const main = await s.messages.list(ALICE, {
+          direction: "inbound",
+          archived: false,
+          muted: false,
+        });
+        expect(main.items.map((item) => item.id)).toEqual([incoming.id]);
+        expect(
+          (await s.messages.list(ALICE, { starred: true, archived: true })).items.map(
+            (item) => item.id,
+          ),
+        ).toEqual([archived.id]);
+        expect(
+          (await s.messages.list(ALICE, { muted: true })).items.map((item) => item.id),
+        ).toEqual([silent.id]);
+        expect((await s.messages.list(ALICE, {})).items).toHaveLength(5);
+
+        await s.messages.updateState(ALICE, [incoming.id, archived.id], {
+          starred: true,
+          archivedAt: null,
+          seen: true,
+        });
+        await s.messages.updateState(BOB, [incoming.id], { starred: false });
+        expect(
+          (
+            await s.messages.list(ALICE, { starred: true, archived: false, seen: true })
+          ).items.map((item) => item.id),
+        ).toEqual([archived.id, incoming.id]);
+        const changed = Inbox.rename(Inbox.setMuted(watched, true), "  Service inbox  ");
+        await s.inboxes.update(ALICE, changed);
+        expect(await s.inboxes.findById(ALICE, watched.id)).toEqual(changed);
+        expect(
+          (
+            await s.messages.list(ALICE, {
+              direction: "inbound",
+              archived: false,
+              muted: false,
+            })
+          ).items,
+        ).toEqual([]);
+      });
+
+      it("merges concurrent inbox settings updates while keeping deleted inboxes hidden", async () => {
+        const inbox = anInbox(`settings@${CONFORMANCE_DOMAIN}`);
+        await s.inboxes.insert(ALICE, inbox);
+        await Promise.all([
+          s.inboxes.update(ALICE, { id: inbox.id, muted: true }),
+          s.inboxes.update(ALICE, { id: inbox.id, displayName: "Support" }),
+        ]);
+        const updated = await s.inboxes.findById(ALICE, inbox.id);
+        expect(updated).toMatchObject({ muted: true, displayName: "Support" });
+        await expect(s.inboxes.update(BOB, { id: inbox.id, muted: false })).resolves.toBeNull();
+        await s.inboxes.update(ALICE, Inbox.markDeleted(updated!, NOW));
+        await expect(
+          s.inboxes.update(ALICE, { id: inbox.id, muted: false }),
+        ).resolves.toBeNull();
+      });
+
+      it("converges concurrent label ensures, preserves presentation and isolates accounts", async () => {
+        const [first, second] = await Promise.all([
+          s.labels.ensure(ALICE, ["  Bug  report  ", "Another", "BUG REPORT"], NOW),
+          s.labels.ensure(ALICE, ["bug report"], NOW),
+        ]);
+        expect(first[0]).toEqual(second[0]);
+        expect(first[0]).toEqual(first[2]);
+        expect(["Bug report", "bug report"]).toContain(first[0]!.name);
+        expect(await s.labels.findByName(ALICE, "bUg  Report")).toEqual(first[0]);
+        expect(await s.labels.findById(ALICE, first[0]!.id)).toEqual(first[0]);
+        expect(await s.labels.findById(BOB, first[0]!.id)).toBeNull();
+        expect(await s.labels.findByName(BOB, "Bug report")).toBeNull();
+        expect(await s.labels.listUsage(ALICE, {})).toHaveLength(2);
+        const [otherAccount] = await s.labels.ensure(BOB, ["Bug report"], NOW);
+        expect(otherAccount!.id).not.toBe(first[0]!.id);
+        await expect(s.labels.rename(ALICE, first[0]!.id, "ANOTHER")).rejects.toMatchObject({
+          code: "invalid_argument",
+        });
+        await s.labels.rename(ALICE, first[0]!.id, "Incident");
+        expect(await s.labels.findByName(ALICE, "incident")).toMatchObject({
+          id: first[0]!.id,
+          name: "Incident",
+        });
+      });
+
+      it("enforces the account label limit atomically and allows existing names at capacity", async () => {
+        const names = Array.from(
+          { length: MAX_LABELS_PER_ACCOUNT - 1 },
+          (_, index) => `label ${index}`,
+        );
+        await s.labels.ensure(ALICE, names, NOW);
+        await expect(s.labels.ensure(ALICE, ["Extra A", "Extra B"], NOW)).rejects.toMatchObject(
+          { code: "invalid_argument" },
+        );
+        expect(await s.labels.findByName(ALICE, "Extra A")).toBeNull();
+        const [existing] = await s.labels.ensure(ALICE, [names[0]!, "Extra C"], NOW);
+        expect(await s.labels.ensure(ALICE, ["LABEL 0"], NOW)).toEqual([existing]);
+        await expect(s.labels.ensure(ALICE, ["Extra D"], NOW)).rejects.toMatchObject({
+          code: "invalid_argument",
+        });
+        expect(await s.labels.listUsage(ALICE, {})).toHaveLength(MAX_LABELS_PER_ACCOUNT);
+      });
+
+      it("reads attached labels in key order and reports per-identity usage", async () => {
+        const aliceIdentity = nextId();
+        const bobIdentity = nextId();
+        const later = new Date(NOW.getTime() + 1000);
+        const threadId = ThreadId.parse("support@corp.com");
+        const messages = [
+          aMessage({ identityId: aliceIdentity, threadId, labels: ["zebra", "Beta"] }),
+          aMessage({ identityId: aliceIdentity, threadId, seen: true }),
+          aMessage({ identityId: aliceIdentity, threadId, archivedAt: NOW }),
+          aMessage({ identityId: aliceIdentity, threadId, direction: "outbound", seen: false }),
+          aMessage({ identityId: bobIdentity, threadId }),
+        ];
+        for (const message of messages) await s.messages.insert(ALICE, message);
+        const [beta, privateLabel] = await s.labels.ensure(
+          ALICE,
+          ["beta", "Private", "Unused"],
+          NOW,
+        );
+        const ids = messages.map(({ id }) => id);
+        await s.labels.attach(ALICE, ids, [beta!.id], NOW);
+        await s.labels.attach(ALICE, [ids[4]!], [privateLabel!.id], later);
+        await s.labels.attach(ALICE, [ids[0]!], [beta!.id], later);
+        await s.labels.attach(BOB, ids, [beta!.id], later);
+
+        expect(await s.labels.countForMessage(ALICE, ids[0]!)).toBe(2);
+        expect(await s.labels.countForMessage(BOB, ids[0]!)).toBe(0);
+        expect(await s.messages.findById(ALICE, ids[0]!)).toMatchObject({
+          labels: ["Beta", "zebra"],
+        });
+        expect((await s.messages.listThread(ALICE, threadId))[0]!.labels).toEqual([
+          "Beta",
+          "zebra",
+        ]);
+        expect((await s.messages.list(ALICE, { label: "  bEtA  " })).items).toHaveLength(5);
+        expect(await s.messages.list(ALICE, { label: "Missing" })).toEqual({
+          items: [],
+          cursor: null,
+        });
+        expect(await s.labels.listUsage(ALICE, { identityId: aliceIdentity })).toMatchObject([
+          { name: "Beta", messageCount: 4, unreadCount: 1, lastUsedAt: NOW },
+          { name: "zebra", messageCount: 1, unreadCount: 1, lastUsedAt: NOW },
+        ]);
+        expect(await s.labels.listUsage(ALICE, {})).toMatchObject([
+          { name: "Private", messageCount: 1, unreadCount: 1, lastUsedAt: later },
+          { name: "Beta", messageCount: 5, unreadCount: 2, lastUsedAt: NOW },
+          { name: "zebra", messageCount: 1, unreadCount: 1, lastUsedAt: NOW },
+          { name: "Unused", messageCount: 0, unreadCount: 0, lastUsedAt: null },
+        ]);
+
+        await s.labels.rename(ALICE, beta!.id, "Alpha");
+        expect((await s.messages.list(ALICE, { label: "alpha" })).items).toHaveLength(5);
+        await s.labels.detach(ALICE, [ids[0]!], [beta!.id]);
+        expect(await s.messages.findById(ALICE, ids[0]!)).toMatchObject({ labels: ["zebra"] });
+        await s.labels.delete(BOB, beta!.id);
+        expect(await s.labels.findById(ALICE, beta!.id)).not.toBeNull();
+        await s.labels.delete(ALICE, beta!.id);
+        expect(await s.labels.findById(ALICE, beta!.id)).toBeNull();
+        expect(await s.labels.countForMessage(ALICE, ids[1]!)).toBe(0);
+      });
+
+      it("applies state and label changes atomically across accessible messages", async () => {
+        const identityId = nextId();
+        const owned = aMessage({ identityId });
+        const full = aMessage({
+          identityId,
+          labels: Array.from(
+            { length: MAX_LABELS_PER_MESSAGE },
+            (_, index) => `existing ${index}`,
+          ),
+        });
+        const foreign = aMessage({ identityId: nextId() });
+        for (const message of [owned, full, foreign]) await s.messages.insert(ALICE, message);
+        const options = { identityId, now: NOW, add: ["New"], remove: [] };
+        const absent = nextId();
+        await expect(
+          s.messages.applyChanges(
+            ALICE,
+            [owned.id, foreign.id, absent],
+            { seen: true },
+            options,
+          ),
+        ).rejects.toMatchObject({
+          code: "message_not_found",
+          details: { ids: [foreign.id, absent] },
+        });
+        expect(await s.labels.findByName(ALICE, "new")).toBeNull();
+        await expect(
+          s.messages.applyChanges(ALICE, [owned.id, full.id], { seen: true }, options),
+        ).rejects.toMatchObject({ code: "invalid_argument" });
+        expect(await s.labels.findByName(ALICE, "new")).toBeNull();
+        expect(await s.messages.findById(ALICE, owned.id)).toMatchObject({
+          seen: false,
+          labels: [],
+        });
+        expect(await s.labels.countForMessage(ALICE, full.id)).toBe(MAX_LABELS_PER_MESSAGE);
+
+        const replacement = { ...options, remove: ["existing 0", "missing"] };
+        await s.messages.applyChanges(
+          ALICE,
+          [owned.id, full.id],
+          { seen: true, archivedAt: NOW },
+          replacement,
+        );
+        await s.messages.applyChanges(
+          ALICE,
+          [owned.id, full.id],
+          { starred: true },
+          replacement,
+        );
+        expect(await s.labels.countForMessage(ALICE, full.id)).toBe(MAX_LABELS_PER_MESSAGE);
+        expect(await s.messages.findById(ALICE, owned.id)).toMatchObject({
+          seen: true,
+          starred: true,
+          archivedAt: NOW,
+          labels: ["New"],
+        });
+      });
+
+      it("fills a 100-message page with multiple labels per message", async () => {
+        const ids: Ulid[] = [];
+        for (let index = 0; index < 100; index++) {
+          const message = aMessage();
+          await s.messages.insert(ALICE, message);
+          ids.push(message.id);
+        }
+        await s.messages.applyChanges(
+          ALICE,
+          ids,
+          { starred: true },
+          {
+            identityId: null,
+            now: NOW,
+            add: ["投诉", "Bug"],
+            remove: [],
+          },
+        );
+        const result = await s.messages.list(ALICE, { limit: 100, starred: true });
+        expect(result.items).toHaveLength(100);
+        expect(result.items.every((message) => message.labels.join(",") === "Bug,投诉")).toBe(
+          true,
+        );
+      });
+
+      it("stores notes in id order, projects note counts, and cascades inbox deletion", async () => {
+        const inbox = anInbox(`annotated@${CONFORMANCE_DOMAIN}`);
+        await s.inboxes.insert(ALICE, inbox);
+        const message = aMessage({ inboxId: inbox.id, labels: ["Bug"] });
+        await s.messages.insert(ALICE, message);
+        const note: MessageNote = {
+          id: nextId(),
+          accountId: ALICE.accountId,
+          messageId: message.id,
+          authorSubject: ALICE.subject,
+          authorIdentityId: nextId(),
+          body: "Investigate <b>plain text</b>",
+          createdAt: NOW,
+        };
+        const second = { ...note, id: nextId(), body: "Later ID" };
+        await s.notes.insert(ALICE, second);
+        await s.notes.insert(ALICE, note);
+        await expect(s.notes.insert(BOB, note)).rejects.toMatchObject({
+          code: "message_not_found",
+        });
+        expect(await s.notes.findById(BOB, note.id)).toBeNull();
+        expect(await s.notes.listForMessage(BOB, message.id)).toEqual([]);
+        expect(await s.notes.findById(ALICE, note.id)).toEqual(note);
+        expect(await s.notes.listForMessage(ALICE, message.id)).toEqual([note, second]);
+        expect((await s.messages.list(ALICE, {})).items[0]!.noteCount).toBe(2);
+        await s.notes.delete(ALICE, note.id);
+        expect((await s.messages.list(ALICE, {})).items[0]!.noteCount).toBe(1);
+        await s.messages.deleteByInbox(ALICE, inbox.id);
+        expect(await s.labels.countForMessage(ALICE, message.id)).toBe(0);
+        expect(await s.labels.listUsage(ALICE, {})).toMatchObject([
+          { name: "Bug", messageCount: 0, lastUsedAt: null },
+        ]);
+        expect(await s.notes.findById(ALICE, second.id)).toBeNull();
+      });
+
+      it("enforces the note limit under concurrent writes", async () => {
+        const message = aMessage();
+        await s.messages.insert(ALICE, message);
+        const note = () => ({
+          id: nextId(),
+          accountId: ALICE.accountId,
+          messageId: message.id,
+          authorSubject: ALICE.subject,
+          authorIdentityId: null,
+          body: "Note",
+          createdAt: NOW,
+        });
+        for (let index = 0; index < MAX_NOTES_PER_MESSAGE - 1; index++) {
+          await s.notes.insert(ALICE, note());
+        }
+        const writes = await Promise.allSettled([
+          s.notes.insert(ALICE, note()),
+          s.notes.insert(ALICE, note()),
+        ]);
+        expect(writes.filter((write) => write.status === "fulfilled")).toHaveLength(1);
+        expect(writes.find((write) => write.status === "rejected")).toMatchObject({
+          reason: { code: "invalid_argument" },
+        });
+        expect(await s.notes.listForMessage(ALICE, message.id)).toHaveLength(
+          MAX_NOTES_PER_MESSAGE,
+        );
       });
     });
 

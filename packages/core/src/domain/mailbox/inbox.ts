@@ -24,9 +24,10 @@ export interface Inbox {
   readonly domain: string;
   readonly displayName: string | null;
   readonly kind: InboxKind;
+  readonly muted: boolean;
   /** The agent identity this inbox sends as, if any. */
   readonly identityId: Ulid | null;
-  /** Opaque caller-supplied labels (test run id, ticket, …). */
+  /** Opaque caller-supplied metadata (test run ID, ticket, …). */
   readonly metadata: Readonly<Record<string, string>> | null;
   /** Null means never expires. Always null for `persistent`. */
   readonly expiresAt: Date | null;
@@ -41,6 +42,7 @@ export interface CreateInboxInput {
   readonly kind: InboxKind;
   readonly now: Date;
   readonly displayName?: string | null;
+  readonly muted?: boolean;
   readonly identityId?: Ulid | null;
   readonly metadata?: Record<string, string> | null;
   readonly expiresAt?: Date | null;
@@ -87,20 +89,36 @@ export const Inbox = {
       }
     }
 
-    return {
-      id: input.id,
-      accountId: input.accountId,
-      address: parsed.matchKey,
-      localPart: parsed.localPart,
-      domain: parsed.domain,
-      displayName: input.displayName ?? null,
-      kind: input.kind,
-      identityId: input.identityId ?? null,
-      metadata: metadata === null ? null : Object.freeze({ ...metadata }),
-      expiresAt,
-      deletedAt: null,
-      createdAt: input.now,
-    };
+    return Inbox.rename(
+      {
+        id: input.id,
+        accountId: input.accountId,
+        address: parsed.matchKey,
+        localPart: parsed.localPart,
+        domain: parsed.domain,
+        displayName: null,
+        kind: input.kind,
+        muted: input.muted ?? input.kind === "ephemeral",
+        identityId: input.identityId ?? null,
+        metadata: metadata === null ? null : Object.freeze({ ...metadata }),
+        expiresAt,
+        deletedAt: null,
+        createdAt: input.now,
+      },
+      input.displayName ?? null,
+    );
+  },
+
+  setMuted(inbox: Inbox, muted: boolean): Inbox {
+    return { ...inbox, muted };
+  },
+
+  rename(inbox: Inbox, displayName: string | null): Inbox {
+    const name = displayName?.trim() || null;
+    if (name !== null && name.length > 255) {
+      throw invalidArgument("Inbox display name exceeds 255 characters.");
+    }
+    return { ...inbox, displayName: name };
   },
 
   expiryFromTtl(now: Date, ttlMs: number): Date {

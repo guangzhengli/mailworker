@@ -341,6 +341,7 @@ describe("ingestion.ingest", () => {
     if (result.outcome !== "stored") throw new Error(`expected stored, got ${result.outcome}`);
     expect(result.inbox.address).toBe(`agent-42@${TEST_DOMAIN}`);
     expect(result.inbox.kind).toBe("ephemeral");
+    expect(result.inbox.muted).toBe(true);
     expect(eventsOfType(harness.events.published, "inbox.created")).toHaveLength(1);
   });
 

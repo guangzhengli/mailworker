@@ -11,7 +11,10 @@ import type {
   DomainRouting,
   EmailAddress,
   Inbox,
+  Label,
+  LabelUsage,
   Message,
+  MessageNote,
   MessageSummary,
   Page,
   PageRequest,
@@ -46,14 +49,20 @@ export interface InboxRepository {
    */
   insert(ctx: Caller, inbox: Inbox): Promise<{ stored: boolean }>;
   update(ctx: Caller, inbox: Inbox): Promise<void>;
+  /** Update selected settings on an existing, non-deleted inbox. */
+  update(ctx: Caller, change: InboxSettingsUpdate): Promise<Inbox | null>;
   list(ctx: Caller, query: ListInboxesQuery): Promise<Page<Inbox>>;
   /** Expired inboxes, oldest expiry first — drives the retention sweep. */
   findExpired(ctx: Caller, expiredBefore: Date, limit: number): Promise<Inbox[]>;
   deleteById(ctx: Caller, id: Ulid): Promise<void>;
 }
 
+export type InboxSettingsUpdate = Pick<Inbox, "id"> &
+  Partial<Pick<Inbox, "muted" | "displayName">>;
+
 export interface ListInboxesQuery extends PageRequest {
   readonly kind?: "ephemeral" | "persistent";
+  readonly muted?: boolean;
   readonly domain?: string;
   /** Internal resource grant attached by the service, never a public query field. */
   readonly identityId?: Ulid;
@@ -102,6 +111,14 @@ export interface MessageRepository {
   ): Promise<ReadonlyMap<string, ThreadId>>;
   list(ctx: Caller, query: ListMessagesQuery): Promise<Page<MessageSummary>>;
   listThread(ctx: Caller, threadId: ThreadId): Promise<Message[]>;
+  updateState(ctx: Caller, ids: readonly Ulid[], change: MessageStateChange): Promise<void>;
+  /** Atomically validate access, apply state and attach/detach labels by name. */
+  applyChanges(
+    ctx: Caller,
+    ids: readonly Ulid[],
+    change: MessageStateChange,
+    options: MessageLabelChanges,
+  ): Promise<void>;
   setSeen(ctx: Caller, id: Ulid, seen: boolean): Promise<void>;
   /**
    * How many messages we sent from `from` to `to` since `since`.
@@ -116,7 +133,25 @@ export interface MessageRepository {
   deleteByInbox(ctx: Caller, inboxId: Ulid): Promise<{ storageKeys: string[] }>;
 }
 
+export interface MessageStateChange {
+  readonly seen?: boolean;
+  readonly starred?: boolean;
+  readonly archivedAt?: Date | null;
+}
+
+export interface MessageLabelChanges {
+  readonly identityId: Ulid | null;
+  readonly add: readonly string[];
+  readonly remove: readonly string[];
+  readonly now: Date;
+}
+
 export interface ListMessagesQuery extends PageRequest {
+  readonly id?: Ulid;
+  readonly label?: string;
+  readonly starred?: boolean;
+  readonly archived?: boolean;
+  readonly muted?: boolean;
   readonly inboxId?: Ulid;
   readonly threadId?: ThreadId;
   readonly direction?: Direction;
@@ -128,6 +163,30 @@ export interface ListMessagesQuery extends PageRequest {
   readonly after?: Ulid;
   /** Internal resource grant attached by the service, never a public query field. */
   readonly identityId?: Ulid;
+}
+
+export interface LabelRepository {
+  ensure(ctx: Caller, names: readonly string[], now: Date): Promise<Label[]>;
+  findByName(ctx: Caller, name: string): Promise<Label | null>;
+  findById(ctx: Caller, id: Ulid): Promise<Label | null>;
+  listUsage(ctx: Caller, options: { readonly identityId?: Ulid }): Promise<LabelUsage[]>;
+  rename(ctx: Caller, id: Ulid, name: string): Promise<void>;
+  delete(ctx: Caller, id: Ulid): Promise<void>;
+  attach(
+    ctx: Caller,
+    messageIds: readonly Ulid[],
+    labelIds: readonly Ulid[],
+    now: Date,
+  ): Promise<void>;
+  detach(ctx: Caller, messageIds: readonly Ulid[], labelIds: readonly Ulid[]): Promise<void>;
+  countForMessage(ctx: Caller, messageId: Ulid): Promise<number>;
+}
+
+export interface NoteRepository {
+  insert(ctx: Caller, note: MessageNote): Promise<void>;
+  listForMessage(ctx: Caller, messageId: Ulid): Promise<MessageNote[]>;
+  findById(ctx: Caller, id: Ulid): Promise<MessageNote | null>;
+  delete(ctx: Caller, id: Ulid): Promise<void>;
 }
 
 export interface DeliveryRepository {

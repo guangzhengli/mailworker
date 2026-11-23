@@ -64,6 +64,54 @@ describe("identity resource isolation", () => {
     ).rejects.toMatchObject({ code: "message_not_found" });
   });
 
+  it("keeps inbox updates, annotations and the entire message batch identity-scoped", async () => {
+    const alice = await identity("alice");
+    const bob = await identity("bob");
+    const aliceInbox = await h.seedInbox(`alice@${TEST_DOMAIN}`, { identityId: alice.id });
+    const bobInbox = await h.seedInbox(`bob@${TEST_DOMAIN}`, { identityId: bob.id });
+    await deliver(aliceInbox.address, "alice@sender.test");
+    await deliver(bobInbox.address, "bob@sender.test");
+
+    const [own, foreign] = h.waiter.notified.map((message) => message.id);
+    const aliceCaller = h.asIdentity(alice.id, ["inbox:write", "message:read"]);
+    const mailbox = h.services.mailbox;
+    await expect(
+      mailbox.updateInbox(aliceCaller, bobInbox.id, { muted: true }),
+    ).rejects.toMatchObject({ code: "inbox_not_found" });
+    await expect(
+      mailbox.updateInbox(aliceCaller, aliceInbox.id, { muted: true }),
+    ).resolves.toMatchObject({ muted: true });
+    await expect(
+      mailbox.updateMessages(aliceCaller, [own!, foreign!], { seen: true, addLabels: ["New"] }),
+    ).rejects.toMatchObject({ code: "message_not_found", details: { ids: [foreign] } });
+    expect(await mailbox.getMessage(aliceCaller, own!)).toMatchObject({
+      seen: false,
+      labels: [],
+    });
+    expect(await mailbox.listLabels(h.ctx)).toEqual([]);
+
+    await mailbox.updateMessages(h.ctx, [foreign!], { addLabels: ["Private"] });
+    expect(await mailbox.listLabels(aliceCaller)).toEqual([]);
+    const [label] = await mailbox.listLabels(h.ctx);
+    await expect(mailbox.renameLabel(aliceCaller, label!.id, "Other")).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(mailbox.deleteLabel(aliceCaller, label!.id)).rejects.toMatchObject({
+      code: "forbidden",
+    });
+
+    const note = await mailbox.addNote(h.ctx, foreign!, "private");
+    await expect(mailbox.addNote(aliceCaller, foreign!, "comment")).rejects.toMatchObject({
+      code: "message_not_found",
+    });
+    await expect(mailbox.listNotes(aliceCaller, foreign!)).rejects.toMatchObject({
+      code: "message_not_found",
+    });
+    // Answered like a missing note, and nothing is deleted.
+    await expect(mailbox.deleteNote(aliceCaller, note.id)).resolves.toBeUndefined();
+    expect(await mailbox.listNotes(h.ctx, foreign!)).toEqual([note]);
+  });
+
   it("limits wait look-back to the caller's identity", async () => {
     const alice = await identity("alice");
     const bob = await identity("bob");

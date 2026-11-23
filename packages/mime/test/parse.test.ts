@@ -5,6 +5,30 @@ const parser = new PostalMimeParser();
 const parse = (raw: string) => parser.parse(new TextEncoder().encode(raw));
 
 describe("PostalMimeParser", () => {
+  it("exposes mailing-list header values and uses null when absent", async () => {
+    const parsed = await parse(
+      [
+        "From: sender@example.com",
+        "To: recipient@example.com",
+        "List-Id: Weekly Digest <digest.example.com>",
+        "List-Unsubscribe: <mailto:leave@example.com>, <https://example.com/leave>",
+        "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+        "",
+        "Hello",
+      ].join("\r\n"),
+    );
+    expect(parsed).toMatchObject({
+      listId: "Weekly Digest <digest.example.com>",
+      listUnsubscribe: "<mailto:leave@example.com>, <https://example.com/leave>",
+      listUnsubscribePost: "List-Unsubscribe=One-Click",
+    });
+    await expect(parse("From: sender@example.com\r\n\r\nHello")).resolves.toMatchObject({
+      listId: null,
+      listUnsubscribe: null,
+      listUnsubscribePost: null,
+    });
+  });
+
   it("parses a multipart/alternative message into both bodies", async () => {
     const parsed = await parse(
       [

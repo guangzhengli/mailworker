@@ -149,6 +149,11 @@ export interface DeliveryPayload {
   readonly html: string | null;
   readonly messageId: RfcMessageId;
   readonly inReplyTo: RfcMessageId | null;
+  /**
+   * The stored parent, when the caller named one. The RFC id alone is ambiguous:
+   * one Message-ID can be placed in several inboxes. Absent on older payloads.
+   */
+  readonly inReplyToMessageId?: Ulid | null;
   readonly references: readonly RfcMessageId[];
   readonly headers: Record<string, string>;
   /**
@@ -172,6 +177,8 @@ export interface DeliveryPreview {
   readonly text: string | null;
   readonly html: string | null;
   readonly attachments: readonly AttachmentManifestEntry[];
+  /** The stored message this replies to, when it is one the caller can read. */
+  readonly inReplyToMessageId: Ulid | null;
 }
 
 export interface AttachmentManifestEntry {
@@ -480,6 +487,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
       }
 
       let inReplyTo: RfcMessageId | null = null;
+      let inReplyToMessageId: Ulid | null = null;
       let references: RfcMessageId[] = [];
       let inboundAutoSubmitted: string | null = null;
       if (input.inReplyToMessageId !== undefined) {
@@ -501,6 +509,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
           );
         }
         inReplyTo = parent.rfcMessageId;
+        inReplyToMessageId = parent.id;
         references = [...parent.references, parent.rfcMessageId];
         inboundAutoSubmitted = parent.autoSubmitted;
       }
@@ -560,6 +569,7 @@ export function createDeliveryService(deps: DeliveryDeps) {
         html: input.html ?? null,
         messageId: rfcMessageId,
         inReplyTo,
+        inReplyToMessageId,
         references,
         headers: {
           ...input.headers,
@@ -1525,7 +1535,18 @@ export function createDeliveryService(deps: DeliveryDeps) {
       }
 
       const payload = decodePayload(bytes);
+      const parent =
+        payload.inReplyToMessageId !== undefined && payload.inReplyToMessageId !== null
+          ? await deps.messages.findById(ctx, payload.inReplyToMessageId)
+          : payload.inReplyTo === null
+            ? null
+            : await deps.messages.findByRfcMessageId(ctx, payload.inReplyTo);
+      const identityId = resourceIdentity(ctx);
       return {
+        inReplyToMessageId:
+          parent === null || (identityId !== null && parent.identityId !== identityId)
+            ? null
+            : parent.id,
         subject: payload.subject,
         from: payload.from,
         to: [...payload.to],

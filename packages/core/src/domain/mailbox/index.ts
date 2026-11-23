@@ -9,10 +9,13 @@
  */
 
 export * from "@core/domain/mailbox/inbox";
+export * from "@core/domain/mailbox/label";
+export * from "@core/domain/mailbox/list-unsubscribe";
 export * from "@core/domain/mailbox/mailbox-address";
 export * from "@core/domain/mailbox/message";
 export * from "@core/domain/mailbox/message-body";
 export * from "@core/domain/mailbox/message-id";
+export * from "@core/domain/mailbox/note";
 export * from "@core/domain/mailbox/retention-policy";
 export * from "@core/domain/mailbox/sender-auth";
 export * from "@core/domain/mailbox/threading-policy";

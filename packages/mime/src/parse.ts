@@ -54,6 +54,9 @@ export class PostalMimeParser implements MimeParser {
       auth: SenderAuth.fromHeader(headers["authentication-results"] ?? null),
       sentAt: parseDate(email.date),
       autoSubmitted: headers["auto-submitted"] ?? null,
+      listId: headers["list-id"] ?? null,
+      listUnsubscribe: headers["list-unsubscribe"] ?? null,
+      listUnsubscribePost: headers["list-unsubscribe-post"] ?? null,
       headers,
       attachments: email.attachments.map((attachment) => toAttachment(attachment)),
     };

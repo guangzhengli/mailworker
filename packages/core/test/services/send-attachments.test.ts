@@ -1,7 +1,7 @@
 import type { DeliveryService } from "@core/application";
 import { AgentIdentity, Attachment, SENDING_LIMITS } from "@core/domain";
 import type { Harness } from "@core/testing";
-import { createHarness, TEST_DOMAIN } from "@core/testing";
+import { createHarness, rawEmail, TEST_DOMAIN } from "@core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 
 let h: Harness;
@@ -231,5 +231,40 @@ describe("delivery.preview", () => {
 
     const preview = await h.services.delivery.preview(h.ctx, result.delivery.id);
     expect(preview.text).toBe("Please check.");
+  });
+
+  it("names the stored message a reply answers, so an edit can stay in its thread", async () => {
+    const inbox = await h.seedInbox(`support@${TEST_DOMAIN}`);
+    const inbound = await h.services.ingestion.ingest(h.ctx, {
+      recipient: inbox.address,
+      envelopeFrom: "customer@corp.com",
+      raw: rawEmail({
+        from: "customer@corp.com",
+        to: inbox.address,
+        messageId: "ask@corp.com",
+      }),
+    });
+    if (inbound.outcome !== "stored") throw new Error("expected stored");
+
+    const reply = await send(h.ctx, {
+      from: inbox.address,
+      to: ["customer@corp.com"],
+      subject: "Re: help",
+      text: "On it.",
+      inReplyToMessageId: inbound.message.id,
+    });
+    const fresh = await send(h.ctx, {
+      from: inbox.address,
+      to: ["customer@corp.com"],
+      subject: "Hello",
+      text: "New thread.",
+    });
+
+    expect(
+      (await h.services.delivery.preview(h.ctx, reply.delivery.id)).inReplyToMessageId,
+    ).toBe(inbound.message.id);
+    expect(
+      (await h.services.delivery.preview(h.ctx, fresh.delivery.id)).inReplyToMessageId,
+    ).toBeNull();
   });
 });

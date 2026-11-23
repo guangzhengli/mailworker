@@ -1,6 +1,7 @@
 import { EmailAddress } from "@core/domain/email-address";
 import { invalidArgument } from "@core/domain/errors";
 import type { AccountId } from "@core/domain/identity/account-id";
+import type { Unsubscribe } from "@core/domain/mailbox/list-unsubscribe";
 import { MailboxAddress } from "@core/domain/mailbox/mailbox-address";
 import { truncateUtf8 } from "@core/domain/mailbox/message-body";
 import type { RfcMessageId, ThreadId } from "@core/domain/mailbox/message-id";
@@ -91,6 +92,11 @@ export interface Message {
   readonly attachments: readonly AttachmentMeta[];
 
   readonly seen: boolean;
+  readonly starred: boolean;
+  readonly archivedAt: Date | null;
+  readonly labels: readonly string[];
+  readonly listId: string | null;
+  readonly unsubscribe: Unsubscribe | null;
   /**
    * The `Date` header. DISPLAY ONLY — never sort by this. A message with a
    * three-year-old Date arriving today would insert mid-sequence and invalidate
@@ -101,7 +107,9 @@ export interface Message {
 }
 
 /** List projection: no bodies, no attachment rows. */
-export interface MessageSummary extends Omit<Message, "bodyText" | "bodyHtml" | "attachments"> {
+export interface MessageSummary
+  extends Omit<Message, "bodyText" | "bodyHtml" | "attachments" | "listId" | "unsubscribe"> {
+  readonly noteCount: number;
   readonly attachmentCount: number;
   readonly hasHtml: boolean;
   readonly hasText: boolean;
@@ -141,6 +149,11 @@ export interface CreateMessageInput {
   readonly size?: number;
   readonly attachments?: readonly AttachmentMeta[];
   readonly seen?: boolean;
+  readonly starred?: boolean;
+  readonly archivedAt?: Date | null;
+  readonly labels?: readonly string[];
+  readonly listId?: string | null;
+  readonly unsubscribe?: Unsubscribe | null;
   readonly sentAt?: Date | null;
 }
 
@@ -210,16 +223,29 @@ export const Message = {
       })),
       // Inbound arrives unread; our own sent copy is already read.
       seen: input.seen ?? input.direction === "outbound",
+      starred: input.starred ?? false,
+      archivedAt: input.archivedAt ?? null,
+      labels: input.labels ?? [],
+      listId: truncateUtf8(input.listId ?? null, MAX_STORED_HEADER_BYTES),
+      unsubscribe: storedUnsubscribe(input.unsubscribe ?? null),
       sentAt: input.sentAt ?? null,
       receivedAt: input.receivedAt,
     };
   },
 
-  summarize(message: Message): MessageSummary {
-    const { bodyText, bodyHtml, attachments, ...rest } = message;
+  summarize(message: Message, noteCount = 0): MessageSummary {
+    const {
+      bodyText,
+      bodyHtml,
+      attachments,
+      listId: _listId,
+      unsubscribe: _unsubscribe,
+      ...rest
+    } = message;
     return {
       ...rest,
       attachmentCount: attachments.length,
+      noteCount,
       hasHtml: (bodyHtml ?? "").trim().length > 0,
       hasText: (bodyText ?? "").trim().length > 0,
       preview: Message.preview(message),
@@ -260,6 +286,28 @@ export const Message = {
     return result;
   },
 } as const;
+
+function storedUnsubscribe(unsubscribe: Unsubscribe | null): Unsubscribe | null {
+  if (unsubscribe === null) return null;
+  const encoder = new TextEncoder();
+  const { https, mailto } = unsubscribe;
+  // Truncating a URI can change its target.
+  const storedHttps =
+    https !== null && encoder.encode(https).byteLength <= MAX_STORED_HEADER_BYTES
+      ? https
+      : null;
+  const storedMailto =
+    mailto !== null && encoder.encode(mailto).byteLength <= MAX_STORED_HEADER_BYTES
+      ? mailto
+      : null;
+  return storedHttps === null && storedMailto === null
+    ? null
+    : {
+        https: storedHttps,
+        mailto: storedMailto,
+        oneClick: storedHttps !== null && unsubscribe.oneClick,
+      };
+}
 
 /**
  * Compatibility fallback for fixtures and pre-route-aware callers. Production

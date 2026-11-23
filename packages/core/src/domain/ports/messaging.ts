@@ -62,6 +62,9 @@ export interface ParsedInbound {
   readonly auth: SenderAuth;
   readonly sentAt: Date | null;
   readonly autoSubmitted: string | null;
+  readonly listId: string | null;
+  readonly listUnsubscribe: string | null;
+  readonly listUnsubscribePost: string | null;
   readonly headers: Readonly<Record<string, string>>;
   readonly attachments: readonly ParsedAttachment[];
 }

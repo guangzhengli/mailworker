@@ -2,7 +2,10 @@ import type {
   AttachmentMeta,
   DomainEvent,
   InboxKind,
+  Label,
+  LabelUsage,
   Message,
+  MessageNote,
   MessageSummary,
   Page,
   ThreadId,
@@ -12,6 +15,8 @@ import {
   DomainError,
   Inbox,
   invalidArgument,
+  LabelName,
+  MAX_LABELS_PER_MESSAGE,
   notFound,
   RetentionPolicy,
   Ulid,
@@ -25,9 +30,11 @@ import type {
   IdentityRepository,
   IdGenerator,
   InboxRepository,
+  LabelRepository,
   ListInboxesQuery,
   ListMessagesQuery,
   MessageRepository,
+  NoteRepository,
   Secrets,
   Waiter,
 } from "@core/domain/ports";
@@ -37,6 +44,8 @@ export interface MailboxDeps {
   readonly secrets: Secrets;
   readonly inboxes: InboxRepository;
   readonly messages: MessageRepository;
+  readonly labels: LabelRepository;
+  readonly notes: NoteRepository;
   readonly domains: DomainRepository;
   readonly identities: IdentityRepository;
   readonly blobs: BlobStore;
@@ -60,10 +69,26 @@ export interface CreateInboxRequest {
   readonly domain?: string;
   readonly ttlMs?: number;
   readonly kind?: InboxKind;
+  readonly muted?: boolean;
   readonly displayName?: string;
   readonly identityName?: string;
   readonly metadata?: Record<string, string>;
 }
+
+export interface UpdateInboxRequest {
+  readonly muted?: boolean;
+  readonly displayName?: string | null;
+}
+
+export interface MessageChange {
+  readonly seen?: boolean;
+  readonly starred?: boolean;
+  readonly archived?: boolean;
+  readonly addLabels?: readonly string[];
+  readonly removeLabels?: readonly string[];
+}
+
+export const MAX_MESSAGES_PER_UPDATE = 100;
 
 export const DEFAULT_EPHEMERAL_TTL_MS = 60 * 60 * 1000;
 const RANDOM_SUFFIX_BYTES = 6;
@@ -170,6 +195,7 @@ export function createMailboxService(deps: MailboxDeps) {
         expiresAt,
         identityId,
         now,
+        ...(input.muted === undefined ? {} : { muted: input.muted }),
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       });
@@ -240,6 +266,35 @@ export function createMailboxService(deps: MailboxDeps) {
       }
       assertInboxAccess(ctx, inbox);
       return inbox;
+    },
+
+    async updateInbox(ctx: Caller, id: Ulid, change: UpdateInboxRequest): Promise<Inbox> {
+      Caller.require(ctx, "inbox:write");
+      const inbox = await deps.inboxes.findById(ctx, id);
+      if (inbox === null || Inbox.isDeleted(inbox)) {
+        throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
+      }
+      assertInboxAccess(ctx, inbox);
+      if (change.muted === undefined && change.displayName === undefined) {
+        throw invalidArgument("Pass at least one inbox change.");
+      }
+      const { muted } = change;
+      const displayName =
+        change.displayName === undefined
+          ? undefined
+          : Inbox.rename(inbox, change.displayName).displayName;
+      const updated = await deps.inboxes.update(
+        ctx,
+        muted === undefined
+          ? { id, displayName: displayName ?? null }
+          : {
+              id,
+              muted: Inbox.setMuted(inbox, muted).muted,
+              ...(displayName === undefined ? {} : { displayName }),
+            },
+      );
+      if (updated === null) throw notFound("inbox_not_found", `No inbox ${id}.`, { id });
+      return updated;
     },
 
     /**
@@ -351,10 +406,91 @@ export function createMailboxService(deps: MailboxDeps) {
 
     async markSeen(ctx: Caller, id: Ulid, seen = true): Promise<void> {
       Caller.require(ctx, "message:read");
-      const message = await deps.messages.findById(ctx, id);
-      if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
-      assertMessageAccess(ctx, message);
+      await accessibleMessage(deps, ctx, id);
       await deps.messages.setSeen(ctx, id, seen);
+    },
+
+    async updateMessages(
+      ctx: Caller,
+      ids: readonly Ulid[],
+      change: MessageChange,
+    ): Promise<{ updated: number }> {
+      return await updateMessages(deps, ctx, ids, change);
+    },
+
+    async getMessageSummary(ctx: Caller, id: Ulid): Promise<MessageSummary> {
+      Caller.require(ctx, "message:read");
+      const identityId = resourceIdentity(ctx);
+      const {
+        items: [message],
+      } = await deps.messages.list(ctx, {
+        id,
+        ...(identityId === null ? {} : { identityId }),
+      });
+      if (message === undefined)
+        throw notFound("message_not_found", `No message ${id}.`, { id });
+      return message;
+    },
+
+    async listLabels(ctx: Caller): Promise<LabelUsage[]> {
+      Caller.require(ctx, "message:read");
+      const identityId = resourceIdentity(ctx);
+      return await deps.labels.listUsage(ctx, identityId === null ? {} : { identityId });
+    },
+
+    async renameLabel(ctx: Caller, id: Ulid, name: string): Promise<Label> {
+      Caller.require(ctx, "admin");
+      const normalized = LabelName.parse(name);
+      const label = await deps.labels.findById(ctx, id);
+      if (label === null) throw invalidArgument(`No label ${id}.`, { id });
+      await deps.labels.rename(ctx, id, normalized);
+      return { ...label, name: normalized };
+    },
+
+    async deleteLabel(ctx: Caller, id: Ulid): Promise<void> {
+      Caller.require(ctx, "admin");
+      await deps.labels.delete(ctx, id);
+    },
+
+    async addNote(ctx: Caller, messageId: Ulid, body: string): Promise<MessageNote> {
+      Caller.require(ctx, "message:read");
+      await accessibleMessage(deps, ctx, messageId);
+      const text = body.trim();
+      if (text.length === 0 || text.length > 4000) {
+        throw invalidArgument("A note must contain 1 to 4000 characters.");
+      }
+      const note: MessageNote = {
+        id: deps.ids.ulid(),
+        accountId: ctx.accountId,
+        messageId,
+        authorSubject: ctx.subject,
+        authorIdentityId: ctx.identityId,
+        body: text,
+        createdAt: deps.clock.now(),
+      };
+      await deps.notes.insert(ctx, note);
+      return note;
+    },
+
+    async listNotes(ctx: Caller, messageId: Ulid): Promise<MessageNote[]> {
+      Caller.require(ctx, "message:read");
+      await accessibleMessage(deps, ctx, messageId);
+      return await deps.notes.listForMessage(ctx, messageId);
+    },
+
+    async deleteNote(ctx: Caller, noteId: Ulid): Promise<void> {
+      Caller.require(ctx, "message:read");
+      const note = await deps.notes.findById(ctx, noteId);
+      if (note === null) return;
+      // A note on a message the caller cannot see is answered exactly like a
+      // missing one, so its existence and parent stay unobservable.
+      const parent = await deps.messages.findById(ctx, note.messageId);
+      const identityId = resourceIdentity(ctx);
+      if (parent === null || (identityId !== null && parent.identityId !== identityId)) return;
+      if (note.authorSubject !== ctx.subject && !Caller.has(ctx, "admin")) {
+        throw new DomainError("forbidden", "Only the author or an admin can delete this note.");
+      }
+      await deps.notes.delete(ctx, noteId);
     },
 
     /**
@@ -508,6 +644,68 @@ export function createMailboxService(deps: MailboxDeps) {
       return result;
     },
   };
+}
+
+async function accessibleMessage(deps: MailboxDeps, ctx: Caller, id: Ulid): Promise<Message> {
+  const message = await deps.messages.findById(ctx, id);
+  if (message === null) throw notFound("message_not_found", `No message ${id}.`, { id });
+  assertMessageAccess(ctx, message);
+  return message;
+}
+
+async function updateMessages(
+  deps: MailboxDeps,
+  ctx: Caller,
+  ids: readonly Ulid[],
+  change: MessageChange,
+): Promise<{ updated: number }> {
+  Caller.require(ctx, "message:read");
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0 || uniqueIds.length > MAX_MESSAGES_PER_UPDATE) {
+    throw invalidArgument(`Pass 1 to ${MAX_MESSAGES_PER_UPDATE} distinct message IDs.`);
+  }
+
+  const { seen, starred, archived } = change;
+  const add = new Map<string, string>();
+  for (const raw of change.addLabels ?? []) {
+    const name = LabelName.parse(raw);
+    const key = LabelName.key(name);
+    if (!add.has(key)) add.set(key, name);
+  }
+  const remove = [...new Set((change.removeLabels ?? []).map(LabelName.key))];
+  if (remove.some((key) => add.has(key))) {
+    throw invalidArgument("A label cannot be added and removed in the same update.");
+  }
+  if (add.size > MAX_LABELS_PER_MESSAGE) {
+    throw invalidArgument(`A message can have at most ${MAX_LABELS_PER_MESSAGE} labels.`);
+  }
+  if (
+    seen === undefined &&
+    starred === undefined &&
+    archived === undefined &&
+    add.size === 0 &&
+    remove.length === 0
+  ) {
+    throw invalidArgument("Pass at least one message change.");
+  }
+
+  const now = deps.clock.now();
+  await deps.messages.applyChanges(
+    ctx,
+    uniqueIds,
+    {
+      ...(seen === undefined ? {} : { seen }),
+      ...(starred === undefined ? {} : { starred }),
+      ...(archived === undefined ? {} : { archivedAt: archived ? now : null }),
+    },
+    {
+      identityId: resourceIdentity(ctx),
+      add: [...add.values()],
+      remove,
+      now,
+    },
+  );
+  return { updated: uniqueIds.length };
 }
 
 /** Existing unbound keys retain account-wide access; identity keys are scoped. */
